@@ -114,8 +114,11 @@ pub struct StartPage {
 }
 
 impl StartPage {
+    /// True only when sections exist but every one is empty, i.e. a fresh
+    /// profile that should see the welcome card. `start_sections=none`
+    /// deliberately has no sections and is not "empty".
     pub fn is_empty(&self) -> bool {
-        self.sections.iter().all(|(_, items)| items.is_empty())
+        !self.sections.is_empty() && self.sections.iter().all(|(_, items)| items.is_empty())
     }
 
     pub fn build(store: &Store, raw_sections: Option<&str>) -> relay_extensions::Result<Self> {
@@ -207,6 +210,9 @@ mod tests {
         assert_eq!(parse_sections(Some("history top apps")), vec![Section::Recent, Section::Frequent, Section::Apps]);
         assert_eq!(parse_sections(Some("nope")), Section::ALL.to_vec());
         assert!(parse_sections(Some("none")).is_empty());
+        let none = StartPage::build(&Store::in_memory().unwrap(), Some("none")).unwrap();
+        assert!(none.sections.is_empty());
+        assert!(!none.is_empty(), "an explicit none is a deliberate blank page, not the welcome state");
         assert_eq!(parse_sections(Some("RECENT")), vec![Section::Recent]);
     }
 

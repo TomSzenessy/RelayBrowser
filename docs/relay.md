@@ -91,7 +91,7 @@ one quiet search field that opens the ⌘K palette, and up to four sections from
 **Apps** (installed web apps from the `web_apps` table), and **Bookmarks**
 (with their folder as the note). Each section caps at five rows so four
 sections fit a 980×760 window. Section order and visibility come from the
-`start_sections` setting (`recent,frequent,apps,bookmarks`; `none` hides all);
+`start_sections` setting (`recent,frequent,apps,bookmarks`; `none` hides all and leaves the title/search field);
 unknown names are ignored and an empty value falls back to the default order.
 Set it deliberately with `relay config set start_sections "apps,recent"`; the
 CLI rejects unknown or empty values and leaves the previous order in place.
