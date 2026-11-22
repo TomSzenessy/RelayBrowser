@@ -3,7 +3,7 @@
 //! the same `SharedHub` the MCP server reads; MCP requests reach WebKit via
 //! the pump loop below.
 
-use crate::inspector::{self, Panel, Tree};
+use crate::inspector::{self, ConsoleRow, ElementRow, NetworkRow, Panel, Tree};
 use crate::palette::{self, Command, Item, Palette, Sources};
 use crate::startpage::{Section, StartItem, StartPage};
 use crate::tabstrip;
@@ -14,7 +14,7 @@ use gpui::{
     actions, canvas, div, img, prelude::*, px, Bounds, ClipboardItem, Context, FocusHandle, Image, ImageFormat,
     KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, Pixels, SharedString, Window,
 };
-use relay_bridge::{BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabState};
+use relay_bridge::{BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
 use relay_extensions::store::{SessionTab, Store, WebAppRecord};
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
@@ -238,6 +238,29 @@ fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
     ]
 }
 
+/// Inspector row data built once per hub version/tab/panel/filter, then
+/// painted without walking the DOM or formatting network/console entries
+/// again on every frame.
+#[derive(Debug)]
+enum InspectorRows {
+    Elements(Vec<ElementRow>),
+    Network(Vec<NetworkRow>),
+    Console(Vec<ConsoleRow>),
+    Cookies(Vec<relay_bridge::Cookie>),
+    Empty(&'static str),
+}
+
+#[derive(Debug)]
+struct InspectorCache {
+    version: u64,
+    tab: TabId,
+    panel: Panel,
+    tree_epoch: u64,
+    console_min: ConsoleLevel,
+    failed_only: bool,
+    rows: InspectorRows,
+}
+
 /// The ⌘F bar: what is being searched in which tab, and the last answer.
 struct FindBar {
     tab: TabId,
@@ -297,6 +320,8 @@ pub struct RelayApp {
     inspector_open: bool,
     panel: Panel,
     tree: Tree,
+    tree_epoch: u64,
+    inspector_cache: Option<InspectorCache>,
     console_min: ConsoleLevel,
     network_failed_only: bool,
     split: Option<TabId>,
@@ -314,8 +339,12 @@ pub struct RelayApp {
     placements: Rc<RefCell<Vec<(TabId, Bounds<Pixels>)>>>,
     snapshots: HashMap<TabId, Arc<Image>>,
     mcp_socket: String,
+    /// `current_exe` is a syscall; compute the setup line once per process.
+    mcp_setup: String,
     /// Last title pushed to the native window; avoids a call every frame.
     window_title: String,
+    /// Document title cached for `seen_version` (title updates tick the hub).
+    title_cache: (u64, String),
     /// One long-lived subscription: `subscribe()` per 16 ms tick allocated a
     /// receiver and dropped it, which also made the pump look busy.
     hub_events: tokio::sync::watch::Receiver<u64>,
@@ -409,6 +438,8 @@ impl RelayApp {
             inspector_open: false,
             panel: Panel::Elements,
             tree: Tree::default(),
+            tree_epoch: 0,
+            inspector_cache: None,
             console_min: ConsoleLevel::Log,
             network_failed_only: false,
             split: None,
@@ -426,7 +457,9 @@ impl RelayApp {
             snapshots: HashMap::new(),
             mcp_socket,
             hub_events,
+            mcp_setup: mcp_setup_command(),
             window_title: String::new(),
+            title_cache: (u64::MAX, String::new()),
             saved_session: vec![],
             session_enabled: false,
             compat_tabs: Default::default(),
@@ -449,7 +482,11 @@ impl RelayApp {
             app.load_installed_extensions();
             app.restore_session();
         }
-        cx.set_menus(app_menus_named(app_name.as_deref()));
+        let menus = match app_name.as_deref() {
+            Some(name) => app_menus_named(Some(name)),
+            None => app_menus(),
+        };
+        cx.set_menus(menus);
         if let Some(icon) = app_icon {
             app.web.borrow().set_application_icon(&icon);
         }
@@ -1298,7 +1335,7 @@ impl RelayApp {
             Command::Settings => self.toggle_settings(),
             Command::ImportChrome => self.import_chrome(cx),
             Command::CopyMcpSetup => {
-                cx.write_to_clipboard(ClipboardItem::new_string(mcp_setup_command()));
+                cx.write_to_clipboard(ClipboardItem::new_string(self.mcp_setup.clone()));
                 self.toast("Copied: claude mcp add relay -- relay mcp");
             }
             Command::CopyCleanUrl => {
@@ -1465,7 +1502,6 @@ impl RelayApp {
             return;
         };
         let imported = store.import(&preview.bookmarks, &preview.history);
-        drop(store);
         match imported {
             Ok(c) => {
                 self.refresh_start_page();
@@ -1599,8 +1635,11 @@ impl RelayApp {
         let (active, user, agents) = {
             let h = self.hub.lock();
             let active = h.active();
-            let user: Vec<TabState> = h.tabs().filter(|x| x.owner == Owner::User).cloned().collect();
-            let agents: Vec<TabState> = h.tabs().filter(|x| x.owner == Owner::Agent).cloned().collect();
+            let mut user = vec![];
+            let mut agents = vec![];
+            for view in h.tab_views() {
+                if view.owner == Owner::Agent { agents.push(view) } else { user.push(view) }
+            }
             (active, user, agents)
         };
         let vertical = strip.placement.is_vertical();
@@ -1663,7 +1702,7 @@ impl RelayApp {
         }
     }
 
-    fn tab_row(&self, tab: &TabState, active: Option<TabId>, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn tab_row(&self, tab: &TabView, active: Option<TabId>, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let id = tab.id;
         let is_active = active == Some(id);
@@ -1921,7 +1960,7 @@ impl RelayApp {
     fn render_start_page(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let title = self.app_name.clone().unwrap_or_else(|| "Relay".to_string());
-        let mut page = div()
+        let page = div()
             .flex_1()
             .h_full()
             .flex()
@@ -2070,11 +2109,11 @@ impl RelayApp {
                     .text_size(px(12.))
                     .text_color(t.muted)
                     .font_family("Menlo")
-                    .child(SharedString::from(format!("Agents: {}\nSocket: {}", mcp_setup_command(), self.mcp_socket))),
+                    .child(SharedString::from(format!("Agents: {}\nSocket: {}", self.mcp_setup, self.mcp_socket))),
             )
     }
 
-    fn render_inspector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_inspector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut tabs = div().flex().gap_1().px_2().h(px(32.)).items_center().border_b_1().border_color(t.border);
         for p in Panel::ALL {
@@ -2160,20 +2199,85 @@ impl RelayApp {
             .child(div().id("inspector-body").flex_1().overflow_y_scroll().p_1().text_size(px(12.)).child(body))
     }
 
-    fn render_panel_body(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let t = self.theme;
+    fn build_inspector_rows(&self, tab: TabId) -> InspectorRows {
         let h = self.hub.lock();
-        let Some(tab) = h.active().and_then(|a| h.tab(a)) else {
-            return div().p_2().text_color(t.muted).child("No tab").into_any_element();
-        };
-        let tab_id = tab.id;
-        let mut col = div().flex().flex_col();
+        let Some(tab) = h.tab(tab) else { return InspectorRows::Empty("No tab") };
         match self.panel {
             Panel::Elements => {
                 let rows = self.tree.rows(tab, 1500);
+                if rows.is_empty() { InspectorRows::Empty("Waiting for page…") } else { InspectorRows::Elements(rows) }
+            }
+            Panel::Network => {
+                let rows = if self.network_failed_only {
+                    inspector::network_rows_filtered(tab, "", true)
+                } else {
+                    inspector::network_rows(tab, "")
+                };
                 if rows.is_empty() {
-                    return div().p_2().text_color(t.muted).child("Waiting for page…").into_any_element();
+                    let empty = if self.network_failed_only { "No failed requests" } else { "No requests yet" };
+                    InspectorRows::Empty(empty)
+                } else {
+                    InspectorRows::Network(rows.into_iter().take(500).collect())
                 }
+            }
+            Panel::Console => {
+                let rows = inspector::console_rows(tab, self.console_min);
+                if rows.is_empty() {
+                    InspectorRows::Empty("Console is empty")
+                } else {
+                    InspectorRows::Console(rows.into_iter().rev().take(500).collect())
+                }
+            }
+            Panel::Cookies => {
+                if tab.cookies.is_empty() {
+                    InspectorRows::Empty("No cookies for this site")
+                } else {
+                    InspectorRows::Cookies(tab.cookies.clone())
+                }
+            }
+        }
+    }
+
+    /// Build the panel rows only when the version, tab, panel, expansion, or
+    /// filters changed; painting a frame reuses the cached strings.
+    fn inspector_rows(&mut self) -> &InspectorRows {
+        let tab = self.active();
+        let valid = self.inspector_cache.as_ref().is_some_and(|c| {
+            c.version == self.seen_version
+                && c.tab == tab.unwrap_or(0)
+                && c.panel == self.panel
+                && c.tree_epoch == self.tree_epoch
+                && c.console_min == self.console_min
+                && c.failed_only == self.network_failed_only
+        });
+        if !valid {
+            let rows = match tab {
+                Some(tab) => self.build_inspector_rows(tab),
+                None => InspectorRows::Empty("No tab"),
+            };
+            self.inspector_cache = Some(InspectorCache {
+                version: self.seen_version,
+                tab: tab.unwrap_or(0),
+                panel: self.panel,
+                tree_epoch: self.tree_epoch,
+                console_min: self.console_min,
+                failed_only: self.network_failed_only,
+                rows,
+            });
+        }
+        &self.inspector_cache.as_ref().expect("cache was just filled").rows
+    }
+
+    fn render_panel_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let Some(tab_id) = self.active() else {
+            return div().p_2().text_color(t.muted).child("No tab").into_any_element();
+        };
+        let rows = self.inspector_rows();
+        let mut col = div().flex().flex_col();
+        match rows {
+            InspectorRows::Empty(message) => return div().p_2().text_color(t.muted).child(*message).into_any_element(),
+            InspectorRows::Elements(rows) => {
                 for r in rows {
                     let id = r.id;
                     let marker = if !r.has_children { "  " } else if r.expanded { "▾ " } else { "▸ " };
@@ -2191,23 +2295,15 @@ impl RelayApp {
                             }))
                             .on_click(cx.listener(move |app, _, _, cx| {
                                 app.tree.toggle(id);
+                                app.tree_epoch = app.tree_epoch.wrapping_add(1);
                                 cx.notify();
                             }))
                             .child(SharedString::from(format!("{marker}{}", r.label))),
                     );
                 }
             }
-            Panel::Network => {
-                let rows = if self.network_failed_only {
-                    inspector::network_rows_filtered(tab, "", true)
-                } else {
-                    inspector::network_rows(tab, "")
-                };
-                if rows.is_empty() {
-                    let empty = if self.network_failed_only { "No failed requests" } else { "No requests yet" };
-                    return div().p_2().text_color(t.muted).child(empty).into_any_element();
-                }
-                for r in rows.into_iter().take(500) {
+            InspectorRows::Network(rows) => {
+                for r in rows {
                     col = col.child(
                         div()
                             .flex()
@@ -2215,19 +2311,15 @@ impl RelayApp {
                             .h(px(18.))
                             .px_1()
                             .text_color(if r.failed { t.error } else { t.text })
-                            .child(div().w(px(36.)).child(SharedString::from(r.method)))
-                            .child(div().w(px(32.)).child(SharedString::from(r.status)))
-                            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(r.url)))
-                            .child(div().text_color(t.muted).child(SharedString::from(r.time))),
+                            .child(div().w(px(36.)).child(SharedString::from(r.method.clone())))
+                            .child(div().w(px(32.)).child(SharedString::from(r.status.clone())))
+                            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(r.url.clone())))
+                            .child(div().text_color(t.muted).child(SharedString::from(r.time.clone()))),
                     );
                 }
             }
-            Panel::Console => {
-                let rows = inspector::console_rows(tab, self.console_min);
-                if rows.is_empty() {
-                    return div().p_2().text_color(t.muted).child("Console is empty").into_any_element();
-                }
-                for r in rows.into_iter().rev().take(500) {
+            InspectorRows::Console(rows) => {
+                for r in rows {
                     let color = match r.level {
                         ConsoleLevel::Error => t.error,
                         ConsoleLevel::Warn => t.warn,
@@ -2240,16 +2332,13 @@ impl RelayApp {
                             .border_b_1()
                             .border_color(t.border)
                             .text_color(color)
-                            .child(SharedString::from(r.text))
-                            .when(!r.source.is_empty(), |d| d.child(div().text_color(t.muted).child(SharedString::from(r.source)))),
+                            .child(SharedString::from(r.text.clone()))
+                            .when(!r.source.is_empty(), |d| d.child(div().text_color(t.muted).child(SharedString::from(r.source.clone())))),
                     );
                 }
             }
-            Panel::Cookies => {
-                if tab.cookies.is_empty() {
-                    return div().p_2().text_color(t.muted).child("No cookies for this site").into_any_element();
-                }
-                for c in &tab.cookies {
+            InspectorRows::Cookies(rows) => {
+                for c in rows {
                     col = col.child(
                         div()
                             .px_1()
@@ -2578,7 +2667,13 @@ impl RelayApp {
 impl Render for RelayApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.theme = Theme::for_appearance(window.appearance());
-        let title = self.document_title();
+        let title = if self.title_cache.0 == self.seen_version {
+            self.title_cache.1.clone()
+        } else {
+            let title = self.document_title();
+            self.title_cache = (self.seen_version, title.clone());
+            title
+        };
         if title != self.window_title {
             self.window_title = title.clone();
             window.set_window_title(&title);

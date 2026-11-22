@@ -327,6 +327,20 @@ impl DomStore {
     }
 }
 
+/// The cheap fields the tab strip needs. Deliberately not a `TabState`:
+/// rendering must never clone the DOM, console, network, or cookie rings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabView {
+    pub id: TabId,
+    pub url: String,
+    pub title: String,
+    pub owner: Owner,
+    pub sleeping: bool,
+    pub challenge: Option<Challenge>,
+    pub playing_audio: bool,
+    pub pinned: bool,
+}
+
 /// Everything known about one tab.
 #[derive(Debug, Clone)]
 pub struct TabState {
@@ -566,6 +580,22 @@ impl Hub {
 
     pub fn tab_ids(&self) -> &[TabId] {
         &self.order
+    }
+
+    /// Small view models in display order, safe to build every frame.
+    pub fn tab_views(&self) -> Vec<TabView> {
+        self.tabs()
+            .map(|t| TabView {
+                id: t.id,
+                url: t.url.clone(),
+                title: t.title.clone(),
+                owner: t.owner,
+                sleeping: t.sleeping,
+                challenge: t.challenge,
+                playing_audio: t.playing_audio,
+                pinned: t.pinned,
+            })
+            .collect()
     }
 
     /// Pin or unpin a tab. Pinned tabs form a block at the top of the order:
@@ -830,6 +860,21 @@ mod tests {
         let h = hub.lock();
         let t = h.tab(tab).unwrap();
         assert_eq!((t.load_seq, t.url.as_str(), t.challenge), (1, "https://b.test/", None));
+    }
+
+    #[test]
+    fn tab_views_keep_order_and_small_fields() {
+        let hub = SharedHub::new();
+        let (a, b) = hub.update(|h| {
+            let a = h.create_tab("https://a.test", Owner::User);
+            let b = h.create_tab("https://b.test", Owner::Agent);
+            h.set_active(a);
+            (a, b)
+        });
+        hub.update(|h| h.tab_mut(a).unwrap().title = "A".into());
+        let views = hub.lock().tab_views();
+        assert_eq!(views.iter().map(|v| (v.id, v.owner)).collect::<Vec<_>>(), vec![(a, Owner::User), (b, Owner::Agent)]);
+        assert_eq!((views[0].title.as_str(), views[0].url.as_str()), ("A", "https://a.test"));
     }
 
     #[test]

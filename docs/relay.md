@@ -51,7 +51,12 @@ GPUI window. Every 16 ms `RelayApp::pump`:
 5. checks idle tabs for sleep every 30 s.
 
 The pump keeps one `watch::Receiver` for its lifetime; it does not build a
-new subscription every 16 ms. `SharedHub::take_hotkeys` drains the page's
+new subscription every 16 ms. The tab strip renders `TabView` rows (id, title,
+url, owner, state) built from `Hub::tab_views`, never cloned `TabState`s with
+their DOM/console/network rings. The Inspector caches its row data per hub
+version, tab, panel, expansion epoch, and filter, so a repaint paints cached
+strings instead of walking the DOM again. The document title and the
+`claude mcp add` line are cached until the hub version or process changes. `SharedHub::take_hotkeys` drains the page's
 hotkey queue without ticking the watch, so an idle window settles instead of
 waking itself every frame.
 
