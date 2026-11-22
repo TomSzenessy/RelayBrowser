@@ -361,6 +361,9 @@ pub struct TabState {
     pub sleeping: bool,
     /// Why the last navigation failed (WebKit's message), cleared on reload.
     pub load_error: Option<String>,
+    /// Protocol version from the page's last `hello`; compared in tests/docs
+    /// with [`crate::protocol::PROTOCOL_VERSION`].
+    pub bridge_version: Option<u32>,
     /// Hotkeys from the page, drained by the shell (`Hub::take_hotkeys`).
     pub hotkeys: Vec<String>,
     /// Last Markdown rendering of the page (`Op::Markdown`); cleared on load.
@@ -385,6 +388,7 @@ impl TabState {
             playing_audio: false,
             sleeping: false,
             load_error: None,
+            bridge_version: None,
             hotkeys: vec![],
             markdown: None,
         }
@@ -669,8 +673,9 @@ impl Hub {
         }
         let Some(t) = self.tabs.get_mut(&tab) else { return };
         match msg {
-            PageMessage::Hello { url, .. } => {
+            PageMessage::Hello { url, version } => {
                 t.url = url;
+                t.bridge_version = Some(version);
                 t.load_seq += 1;
                 t.dom = DomStore::default();
                 t.challenge = None;

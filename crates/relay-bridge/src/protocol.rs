@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// Wire protocol version. `js/bridge.js` sends the same value in `hello`.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// Compact numeric element id assigned by the bridge (`data-relay-id`).
 pub type NodeId = u32;
 

@@ -10,4 +10,4 @@ pub mod protocol;
 
 pub use channel::{BrowserRequest, ChannelBrowser};
 pub use hub::{run_op, Actor, Browser, Cookie, DomStore, Hub, HubError, Owner, SharedHub, TabId, TabState, TabSummary, TabView};
-pub use protocol::{Challenge, Command, CommandResult, ConsoleEntry, ConsoleLevel, DomNode, NetworkEntry, NodeId, Op, PageMessage, BRIDGE_JS};
+pub use protocol::{Challenge, Command, CommandResult, ConsoleEntry, ConsoleLevel, DomNode, NetworkEntry, NodeId, Op, PageMessage, BRIDGE_JS, PROTOCOL_VERSION};

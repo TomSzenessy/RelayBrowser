@@ -673,6 +673,29 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn file_backed_clear_history_reclaims_the_marker() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("Relay/profile.sqlite");
+        let store = Store::open(&p).unwrap();
+        store.record_visit("https://deleted-marker.test/", "UNIQUE-CLEAR-MARKER", 1).unwrap();
+        assert_eq!(store.clear_history().unwrap(), 1);
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] {
+            let path = std::path::PathBuf::from(format!("{}{suffix}", p.display()));
+            if !path.exists() {
+                continue;
+            }
+            let bytes = std::fs::read(&path).unwrap();
+            assert!(
+                !String::from_utf8_lossy(&bytes).contains("UNIQUE-CLEAR-MARKER"),
+                "{} still contains deleted history text",
+                path.display()
+            );
+        }
+    }
+
     #[test]
     fn clear_history_and_bookmarks() {
         let s = Store::in_memory().unwrap();
