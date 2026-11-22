@@ -65,9 +65,12 @@ the page would swallow them.
 The Edit menu (`Cut`, `Copy`, `Paste`, `Select All`, `Undo`, `Redo`) does not
 use AppKit's `cut:` selectors directly. Each action reaches
 `RelayApp::apply_edit`, which handles paste into the palette or find bar when
-an overlay is open and otherwise calls `Engine::edit` — one
-`NSApplication.sendAction:to:from:` through the responder chain, so the page's
-own editing still works. Minimize is forwarded the same way.
+an overlay is open and otherwise calls `Engine::edit`. That sends the selector
+to the window's **first responder** with `tryToPerform:with:` rather than
+`NSApplication.sendAction:`: GPUI's app delegate also implements `copy:` and
+`paste:` for its own menu items, and the app-level chain could route the
+command back into Relay instead of the page. The focused page's first responder
+is WebKit's content view, which owns the real editing implementation.
 
 ## Tab strip
 

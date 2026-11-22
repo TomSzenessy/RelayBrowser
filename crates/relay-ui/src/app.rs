@@ -697,6 +697,9 @@ impl RelayApp {
         if self.split == Some(tab) {
             self.split = None;
         }
+        if self.hovered_tab == Some(tab) {
+            self.hovered_tab = None;
+        }
         self.snapshots.remove(&tab);
         self.compat_tabs.remove(&tab);
         self.web.borrow_mut().apply(BrowserRequest::Close(tab));
@@ -1684,7 +1687,7 @@ impl RelayApp {
             .on_click(cx.listener(|app, _, _, cx| {
                 app.toggle_tab_strip(cx);
             }))
-            .child(div().text_size(px(11.)).text_color(t.muted).child(arrow));
+            .child(div().text_size(px(if vertical { 11. } else { 10. })).text_color(t.muted).child(arrow));
         if vertical {
             let rail = rail.w(px(strip.width())).h_full();
             match strip.placement {
@@ -2505,7 +2508,7 @@ impl Render for RelayApp {
         }
         select!(SelectTab1 => 0, SelectTab2 => 1, SelectTab3 => 2, SelectTab4 => 3, SelectTab5 => 4, SelectTab6 => 5, SelectTab7 => 6, SelectTab8 => 7, SelectTab9 => 8);
         root = root.child(main);
-        if !self.app_mode || self.toast.is_some() {
+        if !self.app_mode || self.toast.is_some() || self.hints.is_some() {
             root = root.child(self.render_status());
         }
         if let Some(f) = &self.find {

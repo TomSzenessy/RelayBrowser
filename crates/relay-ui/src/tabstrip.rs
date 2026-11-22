@@ -60,7 +60,7 @@ pub const VERTICAL_WIDTH: f32 = 220.0;
 /// The folded rail keeps a visible, clickable edge to pull the strip back out.
 pub const VERTICAL_FOLDED_WIDTH: f32 = 14.0;
 pub const TOP_HEIGHT: f32 = 38.0;
-pub const TOP_FOLDED_HEIGHT: f32 = 10.0;
+pub const TOP_FOLDED_HEIGHT: f32 = 14.0;
 
 /// The tab strip's persisted presentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

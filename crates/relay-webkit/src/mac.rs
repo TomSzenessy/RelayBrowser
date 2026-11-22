@@ -416,9 +416,12 @@ impl Engine {
         }
     }
 
-    /// Send a standard editing selector through the responder chain. The
-    /// menu key equivalent reaches Relay first; this hands the command back
-    /// to WKWebView (or whatever is first responder) so page editing works.
+    /// Send a standard editing selector to the window's first responder.
+    /// Deliberately not `NSApplication.sendAction:`: GPUI's app delegate also
+    /// implements `copy:`/`paste:` for its own menu items, so the app-level
+    /// chain could route the command back into Relay instead of the page.
+    /// The first responder in a focused page is WebKit's content view, which
+    /// owns the real editing implementation.
     pub fn edit(&self, command: EditCommand) {
         let action = match command {
             EditCommand::Undo => sel!(undo:),
@@ -429,8 +432,10 @@ impl Engine {
             EditCommand::SelectAll => sel!(selectAll:),
         };
         let app = NSApplication::sharedApplication(self.mtm);
+        let Some(window) = app.keyWindow() else { return };
+        let Some(responder) = window.firstResponder() else { return };
         unsafe {
-            app.sendAction_to_from(action, None, None);
+            responder.tryToPerform_with(action, None);
         }
     }
 
