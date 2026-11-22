@@ -51,6 +51,7 @@ impl Browser for SimPage {
             "click" => json!({"id": cmd["target"], "tag": "button", "text": "Pay now"}),
             "type" => json!({"id": cmd["target"], "tag": "input", "text": cmd["text"]}),
             "read_text" => json!("Your cart\nPay now"),
+            "page_info" => json!({"url": "https://shop.test/cart", "title": "Checkout", "scroll_x": 0, "scroll_y": 120}),
             _ => Value::Null,
         };
         let ok = cmd["target"].as_u64() != Some(99);
@@ -83,7 +84,10 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let client = ().serve(client_io).await.unwrap();
 
     let tools: Vec<String> = client.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
-    for t in ["navigate", "click_element", "type_text", "read_dom", "get_console_logs", "get_network_requests", "list_tabs", "open_tab"] {
+    for t in [
+        "navigate", "click_element", "type_text", "read_dom", "get_console_logs", "get_network_requests", "list_tabs", "open_tab", "wait_for",
+        "get_page_info",
+    ] {
         assert!(tools.contains(&t.to_string()), "missing tool {t}: {tools:?}");
     }
 
@@ -106,11 +110,27 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     assert!(dom.contains("[2] h1 \"Your cart\"") && dom.contains("[3] input[type=email] \"Email\""), "{dom}");
 
     let (err, msg) = call(&client, "type_text", json!({"element_id": 3, "text": "a@b.test"})).await;
-    assert!(!err && msg.contains("a@b.test"), "{msg}");
+    assert!(!err && msg.contains("Typed") && msg.contains("a@b.test"), "{msg}");
     let (err, msg) = call(&client, "click_element", json!({"element_id": 4})).await;
-    assert!(!err && msg.contains("Pay now"), "{msg}");
+    assert!(!err && msg.contains("Clicked button") && msg.contains("Pay now"), "{msg}");
     let (err, msg) = call(&client, "click_element", json!({"element_id": 99})).await;
     assert!(err && msg.contains("re-read the DOM"), "{msg}");
+
+    // Agent wait: resolves from streamed state, no page round-trip.
+    let (err, msg) = call(&client, "wait_for", json!({"text": "pay now"})).await;
+    assert!(!err && msg.contains("Found after") && msg.contains("[4] button"), "{msg}");
+    let (err, msg) = call(&client, "wait_for", json!({"selector": "#pay", "timeout_ms": 500})).await;
+    assert!(!err && msg.contains("[4] button"), "{msg}");
+    let started = std::time::Instant::now();
+    let (err, msg) = call(&client, "wait_for", json!({"text": "coupon applied", "timeout_ms": 120})).await;
+    assert!(err && msg.contains("did not appear"), "{msg}");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(100), "timeout returned early");
+
+    let (err, info) = call(&client, "get_page_info", json!({})).await;
+    assert!(!err, "{info}");
+    let info: Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(info["title"], "Checkout");
+    assert_eq!(info["scroll_y"], 120);
 
     let (_, logs) = call(&client, "get_console_logs", json!({"min_level": "warn"})).await;
     assert!(logs.contains("[Error] TypeError: cart.total is undefined (app.js:10:3)"), "{logs}");
@@ -136,7 +156,7 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let (err, _) = call(&client, "close_tab", json!({"tab_id": tab})).await;
     assert!(!err);
 
-    assert_eq!(*page.log.lock().unwrap(), vec!["type", "click", "click", "read_text"]);
+    assert_eq!(*page.log.lock().unwrap(), vec!["type", "click", "click", "page_info", "read_text"]);
     client.cancel().await.unwrap();
 }
 

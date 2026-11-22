@@ -68,6 +68,12 @@ the page, and their status line goes in the status bar.
 - Pages can only open `http(s)` URLs in new tabs.
 - Agents may open only `http(s)`/`about:blank` URLs and may close only their own
   tabs.
+- The MCP tools are `list_tabs`, `open_tab`, `navigate`, `go_back`,
+  `read_dom`, `find_elements`, `wait_for`, `get_page_info`, `click_element`,
+  `type_text`, `highlight_element`, `read_text`, `scroll`, `get_console_logs`,
+  `get_network_requests`, `get_cookies`, and `close_tab`. `wait_for` polls the
+  streamed DOM (no page round-trip), so an agent can wait for a result after a
+  click without racing the page.
 - The MCP socket is `relay_home()/mcp.sock`, mode 0600 inside a 0700 directory,
   so only the user's own processes connect.
 
@@ -111,9 +117,10 @@ Four layers, cheapest first:
   (`WKWebExtension`); on older systems Relay runs without them.
 
 - `cargo test --workspace` runs everywhere. On Linux,
-  `cargo check --workspace --exclude relay-ui --target aarch64-apple-darwin`
-  type-checks the macOS code in `relay-webkit` and `relay-extensions`
-  (including the `smoke` example). `relay-ui` cannot be checked for the Darwin
+  `bash scripts/mac-check.sh` (or its `cargo check --workspace --exclude
+  relay-ui --target aarch64-apple-darwin` body) type-checks the macOS code in
+  `relay-webkit` and `relay-extensions` (including the `smoke` example); the
+  script skips with a message when the Apple std is not installed. `relay-ui` cannot be checked for the Darwin
   target here: gpui's macOS build compiles C and Metal code (`ring`, shaders),
   which needs the Apple SDK. Its macOS-only `web.rs` is first compiled by the
   macOS CI job.

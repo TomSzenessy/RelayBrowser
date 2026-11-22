@@ -224,10 +224,9 @@ status = "active"
 owner = "TomSzenessy"
 quality_oracle = "cargo tests (bridge state, MCP round-trip with a real MCP client, importer, CRX, rules, sleep) plus a macOS type-check of the WebKit/AppKit code; the running app is judged on a Mac"
 extra_paths = ["Cargo.toml", "Cargo.lock", "third_party"]
-setup = [["rustup", "target", "add", "aarch64-apple-darwin"]]
 verification = [
   ["cargo", "test", "--workspace", "--locked"],
-  ["cargo", "check", "--workspace", "--locked", "--exclude", "relay-ui", "--target", "aarch64-apple-darwin"],
+  ["bash", "scripts/mac-check.sh"],
 ]
 
 [[surfaces]]

@@ -132,6 +132,90 @@ pub struct ScrollArgs {
     pub dy: f64,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WaitForArgs {
+    pub tab_id: Option<TabId>,
+    /// Case-insensitive substring of visible text or an accessible label.
+    pub text: Option<String>,
+    /// Simple selector: `#id`, `.class`, `tag`, `tag#id`, `[attr]`, `[attr=value]`.
+    pub selector: Option<String>,
+    /// How long to wait; default 5000 ms, capped at 30000 ms.
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PageInfoArgs {
+    pub tab_id: Option<TabId>,
+}
+
+/// One LLM-sized line for an element: `[12] button "Pay now"`.
+fn node_line(n: &relay_bridge::DomNode) -> String {
+    let label = if !n.text.is_empty() {
+        Some(n.text.clone())
+    } else {
+        ["aria-label", "placeholder", "title", "alt", "value", "name"].iter().find_map(|k| n.attrs.get(*k).cloned())
+    };
+    match label {
+        Some(l) if !l.is_empty() => format!("[{}] {} {l:?}", n.id, n.tag),
+        _ => format!("[{}] {}", n.id, n.tag),
+    }
+}
+
+/// The small selector subset an LLM actually writes. Anything else matches
+/// nothing rather than guessing.
+fn selector_matches(n: &relay_bridge::DomNode, selector: &str) -> bool {
+    let sel = selector.trim();
+    if sel.is_empty() {
+        return false;
+    }
+    if let Some(id) = sel.strip_prefix('#') {
+        return n.attrs.get("id").is_some_and(|v| v == id);
+    }
+    if let Some(class) = sel.strip_prefix('.') {
+        return n.attrs.get("class").is_some_and(|v| v.split_whitespace().any(|c| c == class));
+    }
+    if let Some(rest) = sel.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        return match rest.split_once('=') {
+            Some((k, v)) => {
+                let v = v.trim().trim_matches('"').trim_matches('\'');
+                n.attrs.get(k.trim()).is_some_and(|x| x == v)
+            }
+            None => n.attrs.contains_key(rest.trim()),
+        };
+    }
+    let (tag, id) = match sel.split_once('#') {
+        Some((t, i)) => (t, Some(i)),
+        None => (sel, None),
+    };
+    let tag_ok = tag.is_empty() || n.tag.eq_ignore_ascii_case(tag);
+    tag_ok && id.is_none_or(|i| n.attrs.get("id").is_some_and(|v| v == i))
+}
+
+fn text_matches(n: &relay_bridge::DomNode, needle: &str) -> bool {
+    let needle = needle.to_lowercase();
+    let direct = n.text.to_lowercase().contains(&needle);
+    let label = ["aria-label", "placeholder", "title", "alt", "value", "name"]
+        .iter()
+        .filter_map(|k| n.attrs.get(*k))
+        .any(|v| v.to_lowercase().contains(&needle));
+    direct || label
+}
+
+fn matching_nodes(root: &relay_bridge::DomNode, text: Option<&str>, selector: Option<&str>, limit: usize) -> Vec<relay_bridge::DomNode> {
+    let mut out = vec![];
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if text.is_none_or(|t| text_matches(n, t)) && selector.is_none_or(|s| selector_matches(n, s)) {
+            out.push(n.clone());
+            if out.len() >= limit {
+                break;
+            }
+        }
+        stack.extend(n.children.iter().rev());
+    }
+    out
+}
+
 fn ok(text: impl Into<String>) -> CallToolResult {
     CallToolResult::success(vec![ContentBlock::text(text.into())])
 }
@@ -262,6 +346,48 @@ impl RelayMcp {
         })())
     }
 
+    #[tool(description = "Wait until text or a simple selector appears in the live DOM; returns its element id for click_element. Use after a click or navigation that loads content asynchronously.")]
+    async fn wait_for(&self, Parameters(a): Parameters<WaitForArgs>) -> Result<CallToolResult, ErrorData> {
+        reply(async {
+            let tab = self.tab(a.tab_id)?;
+            self.ensure_awake(tab).await?;
+            let what = match (&a.text, &a.selector) {
+                (Some(t), _) => format!("text {t:?}"),
+                (None, Some(sel)) => format!("selector {sel:?}"),
+                (None, None) => return Err(HubError::Browser("pass text or selector".into())),
+            };
+            let timeout = Duration::from_millis(a.timeout_ms.unwrap_or(5_000).min(30_000));
+            let start = std::time::Instant::now();
+            loop {
+                let snapshot = {
+                    let h = self.hub.lock();
+                    let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
+                    t.dom
+                        .root()
+                        .and_then(|r| t.dom.tree(r, 80))
+                        .map(|root| (matching_nodes(&root, a.text.as_deref(), a.selector.as_deref(), 1), t.title.clone(), t.url.clone()))
+                };
+                if let Some((hits, title, url)) = snapshot {
+                    if let Some(n) = hits.first() {
+                        return Ok(ok(format!("Found after {} ms: {}\n{title} — {url}", start.elapsed().as_millis(), node_line(n))));
+                    }
+                }
+                if start.elapsed() >= timeout {
+                    return Err(HubError::Browser(format!("{what} did not appear within {} ms", timeout.as_millis())));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }.await)
+    }
+
+    #[tool(description = "URL, title, and scroll position of a tab (works while the page is still loading).")]
+    async fn get_page_info(&self, Parameters(a): Parameters<PageInfoArgs>) -> Result<CallToolResult, ErrorData> {
+        reply(async {
+            let tab = self.tab(a.tab_id)?;
+            Ok(json(&self.op(tab, Op::PageInfo).await?))
+        }.await)
+    }
+
     #[tool(description = "Find elements by CSS selector or visible text. Returns ids, tags, and text.")]
     async fn find_elements(&self, Parameters(a): Parameters<FindArgs>) -> Result<CallToolResult, ErrorData> {
         reply(async {
@@ -280,7 +406,9 @@ impl RelayMcp {
         reply(async {
             let tab = self.tab(a.tab_id)?;
             let v = self.op(tab, Op::Click { target: a.element_id }).await?;
-            Ok(ok(format!("Clicked {v}")))
+            let tag = v["tag"].as_str().unwrap_or("element");
+            let text = v["text"].as_str().unwrap_or("").trim();
+            Ok(ok(if text.is_empty() { format!("Clicked {tag}") } else { format!("Clicked {tag} {text:?}") }))
         }.await)
     }
 
@@ -289,7 +417,9 @@ impl RelayMcp {
         reply(async {
             let tab = self.tab(a.tab_id)?;
             let v = self.op(tab, Op::Type { target: a.element_id, text: a.text, submit: a.submit, clear: true }).await?;
-            Ok(ok(format!("Typed into {v}")))
+            let tag = v["tag"].as_str().unwrap_or("element");
+            let text = v["text"].as_str().unwrap_or("").trim();
+            Ok(ok(format!("Typed {text:?} into {tag}{}", if a.submit { " and submitted" } else { "" })))
         }.await)
     }
 
