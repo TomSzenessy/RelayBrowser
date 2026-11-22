@@ -4,6 +4,7 @@
 //! the pump loop below.
 
 use crate::inspector::{self, ConsoleRow, ElementRow, NetworkRow, Panel, Tree};
+use crate::library::{Library, Mode};
 use crate::palette::{self, Command, Item, Palette, Sources};
 use crate::startpage::{Section, StartItem, StartPage};
 use crate::tabstrip;
@@ -73,6 +74,8 @@ actions!(
         Redo,
         Minimize,
         Help,
+        ShowHistory,
+        ShowBookmarks,
     ]
 );
 
@@ -127,6 +130,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-z", Undo, None),
         KeyBinding::new("secondary-shift-z", Redo, None),
         KeyBinding::new("secondary-m", Minimize, None),
+        KeyBinding::new("secondary-y", ShowHistory, None),
+        KeyBinding::new("secondary-shift-b", ShowBookmarks, None),
     ]
 }
 
@@ -197,13 +202,15 @@ fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
         },
         Menu {
             name: "History".into(),
-            items: vec![item("Back", Back), item("Forward", Forward)],
+            items: vec![item("Back", Back), item("Forward", Forward), sep(), item("Show All History…", ShowHistory)],
         },
         Menu {
             name: "Bookmarks".into(),
             items: vec![
                 item("Bookmark This Page", ToggleBookmark),
                 item("Pin / Unpin Tab", TogglePin),
+                sep(),
+                item("Show All Bookmarks…", ShowBookmarks),
                 sep(),
                 item("Copy Clean URL", CopyCleanUrl),
                 item("Copy Page as Markdown", CopyMarkdown),
@@ -318,6 +325,8 @@ pub struct RelayApp {
     confirm_clear_history: bool,
     sources: Sources,
     inspector_open: bool,
+    /// History/Bookmarks modal; `None` when closed.
+    library: Option<Library>,
     panel: Panel,
     tree: Tree,
     tree_epoch: u64,
@@ -436,6 +445,7 @@ impl RelayApp {
             confirm_clear_history: false,
             sources: Sources::default(),
             inspector_open: false,
+            library: None,
             panel: Panel::Elements,
             tree: Tree::default(),
             tree_epoch: 0,
@@ -1174,9 +1184,112 @@ impl RelayApp {
         self.open_url(url, true);
     }
 
+    fn open_library(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        let Some(store) = &self.store else {
+            self.toast("Profile store unavailable");
+            return;
+        };
+        match Library::open(store, mode) {
+            Ok(lib) => {
+                self.palette = None;
+                self.settings_open = false;
+                self.find = None;
+                self.end_hints();
+                self.library = Some(lib);
+                self.web.borrow().focus_shell();
+            }
+            Err(e) => self.toast(format!("Could not open {}: {e}", mode.title())),
+        }
+        cx.notify();
+    }
+
+    fn close_library(&mut self) {
+        self.library = None;
+        self.focus_active_page();
+    }
+
+    fn refresh_library(&mut self) {
+        let Some(store) = &self.store else { return };
+        if let Some(lib) = self.library.as_mut() {
+            if let Err(e) = lib.refresh(store) {
+                eprintln!("relay: could not refresh the library: {e}");
+            }
+        }
+    }
+
+    fn open_library_row(&mut self, index: usize) {
+        let url = self.library.as_ref().and_then(|l| l.rows.get(index)).map(|r| r.url.clone());
+        self.library = None;
+        if let Some(url) = url {
+            self.open_url(url, false);
+        }
+    }
+
+    fn delete_library_row(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(store) = &self.store else { return };
+        let result = {
+            let Some(lib) = self.library.as_mut() else { return };
+            let Some(row) = lib.rows.get(index).cloned() else { return };
+            let result = match lib.mode {
+                Mode::History => store.delete_history(&row.url),
+                Mode::Bookmarks => store.remove_bookmark(&row.url),
+            };
+            let _ = lib.refresh(store);
+            result
+        };
+        match result {
+            Ok(true) => {}
+            Ok(false) => self.toast("Already gone"),
+            Err(e) => self.toast(format!("Could not delete: {e}")),
+        }
+        cx.notify();
+    }
+
+    fn save_library_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(store) = &self.store else { return };
+        let Some(lib) = self.library.as_mut() else { return };
+        let Some(input) = lib.folder_input.clone() else { return };
+        let Some(row) = lib.chosen().cloned() else { return };
+        let folder: Vec<String> = input.split('/').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+        match store.move_bookmark(&row.url, &folder) {
+            Ok(true) => {
+                lib.folder_input = None;
+                let _ = lib.refresh(store);
+            }
+            Ok(false) => self.toast("That bookmark is gone"),
+            Err(e) => self.toast(format!("Could not move the bookmark: {e}")),
+        }
+        cx.notify();
+    }
+
+    fn bookmark_current_in_library(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active() else {
+            self.toast("Open a page first");
+            return;
+        };
+        let (url, title) = {
+            let h = self.hub.lock();
+            let Some(t) = h.tab(tab) else { return };
+            (t.url.clone(), t.title.clone())
+        };
+        if !url.starts_with("http") {
+            self.toast("Only web pages can be bookmarked");
+            return;
+        }
+        let Some(store) = &self.store else { return };
+        match store.toggle_bookmark(&url, &title) {
+            Ok(true) => self.toast("Bookmarked"),
+            Ok(false) => self.toast("Bookmark removed"),
+            Err(e) => self.toast(format!("Could not save the bookmark: {e}")),
+        }
+        self.refresh_library();
+        cx.notify();
+    }
+
     fn open_find(&mut self) {
         let Some(tab) = self.active() else { return };
         self.palette = None;
+        self.library = None;
         self.end_hints();
         let query = self.find.take().map(|f| f.query).unwrap_or_default();
         self.find = Some(FindBar { tab, query, found: None });
@@ -1242,6 +1355,7 @@ impl RelayApp {
     }
 
     fn open_palette(&mut self, prefill: Option<String>, new_tab: bool) {
+        self.library = None;
         self.settings_open = false;
         self.find = None;
         self.confirm_clear_history = false;
@@ -1274,6 +1388,7 @@ impl RelayApp {
             self.close_settings();
         } else {
             self.palette = None;
+            self.library = None;
             self.confirm_clear_history = false;
             self.settings_open = true;
             self.web.borrow().focus_shell();
@@ -1362,6 +1477,8 @@ impl RelayApp {
             Command::NextTabPlacement => self.rotate_tab_strip(cx),
             Command::InstallWebApp => self.install_web_app(cx),
             Command::RemoveWebApp => self.remove_web_app(cx),
+            Command::ShowHistory => self.open_library(Mode::History, cx),
+            Command::ShowBookmarks => self.open_library(Mode::Bookmarks, cx),
         }
     }
 
@@ -1521,6 +1638,75 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.library.as_ref().is_some_and(|l| l.folder_input.is_some()) {
+            match k.key.as_str() {
+                "escape" => {
+                    if let Some(lib) = self.library.as_mut() {
+                        lib.folder_input = None;
+                    }
+                }
+                "enter" => self.save_library_folder(cx),
+                "backspace" => {
+                    if let Some(lib) = self.library.as_mut() {
+                        if let Some(input) = lib.folder_input.as_mut() {
+                            input.pop();
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                        if let Some(lib) = self.library.as_mut() {
+                            if let Some(input) = lib.folder_input.as_mut() {
+                                input.push_str(c);
+                            }
+                        }
+                    }
+                }
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.library.is_some() {
+            match k.key.as_str() {
+                "escape" => self.close_library(),
+                "enter" => {
+                    let selected = self.library.as_ref().map(|l| l.selected).unwrap_or(0);
+                    self.open_library_row(selected);
+                }
+                "up" => {
+                    if let Some(lib) = self.library.as_mut() {
+                        lib.move_selection(-1);
+                    }
+                }
+                "down" | "tab" => {
+                    if let Some(lib) = self.library.as_mut() {
+                        lib.move_selection(1);
+                    }
+                }
+                "backspace" => {
+                    if let Some(lib) = self.library.as_mut() {
+                        if k.modifiers.secondary() || k.modifiers.alt {
+                            lib.query.clear();
+                        } else {
+                            lib.query.pop();
+                        }
+                    }
+                    self.refresh_library();
+                }
+                _ => {
+                    if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                        if let Some(lib) = self.library.as_mut() {
+                            lib.query.push_str(c);
+                        }
+                        self.refresh_library();
+                    }
+                }
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if let Some(h) = self.hints.as_mut() {
             match k.key.as_str() {
                 "escape" => self.end_hints(),
@@ -2360,6 +2546,171 @@ impl RelayApp {
         col.into_any_element()
     }
 
+    fn render_library(&self, lib: &Library, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mut list = div().id("library-list").flex().flex_col().py_1().max_h(px(400.)).overflow_y_scroll();
+        if lib.rows.is_empty() {
+            list = list.child(div().px_4().py_6().text_size(px(13.)).text_color(t.muted).child(lib.mode.empty()));
+        }
+        for (i, row) in lib.rows.iter().enumerate() {
+            let on = i == lib.selected;
+            list = list.child(
+                div()
+                    .id(("lib", i))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .h(px(36.))
+                    .px_3()
+                    .mx_1()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .when(on, |d| d.bg(t.active))
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.open_library_row(i);
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .overflow_hidden()
+                            .child(div().text_size(px(13.)).text_color(t.text).whitespace_nowrap().text_ellipsis().child(SharedString::from(row.title.clone())))
+                            .child(div().text_size(px(11.)).text_color(t.muted).whitespace_nowrap().text_ellipsis().child(SharedString::from(row.note.clone()))),
+                    )
+                    .when(lib.mode == Mode::Bookmarks, |d| {
+                        d.child(
+                            div()
+                                .id(("lib-move", i))
+                                .px_1()
+                                .h(px(20.))
+                                .flex()
+                                .items_center()
+                                .rounded(px(4.))
+                                .text_size(px(10.))
+                                .text_color(t.muted)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover).text_color(t.text))
+                                .on_click(cx.listener(move |app, _, _, cx| {
+                                    cx.stop_propagation();
+                                    let note = app.library.as_ref().and_then(|l| l.rows.get(i)).map(|r| r.note.clone()).unwrap_or_default();
+                                    if let Some(lib) = app.library.as_mut() {
+                                        lib.folder_input = Some(if note == "Bookmark" { String::new() } else { note });
+                                    }
+                                    cx.notify();
+                                }))
+                                .child("move"),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id(("lib-del", i))
+                            .w(px(20.))
+                            .h(px(20.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.))
+                            .text_size(px(14.))
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.error))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                cx.stop_propagation();
+                                app.delete_library_row(i, cx);
+                            }))
+                            .child("×"),
+                    ),
+            );
+        }
+        let title = if lib.query.is_empty() { format!("Search {}", lib.mode.title().to_lowercase()) } else { lib.query.clone() };
+        let panel = div()
+            .id("library")
+            .w(px(680.))
+            .flex()
+            .flex_col()
+            .rounded(px(10.))
+            .bg(t.surface)
+            .border_1()
+            .border_color(t.border)
+            .shadow_lg()
+            .overflow_hidden()
+            .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_library()))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .h(px(40.))
+                    .px_4()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(div().text_size(px(14.)).text_color(t.text).child(lib.mode.title()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(lib.mode == Mode::Bookmarks, |d| {
+                                d.child(
+                                    div()
+                                        .id("lib-add")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(4.))
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .text_size(px(11.))
+                                        .text_color(t.text)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover))
+                                        .on_click(cx.listener(|app, _, _, cx| {
+                                            app.bookmark_current_in_library(cx);
+                                        }))
+                                        .child("+ Bookmark this page"),
+                                )
+                            })
+                            .child(div().text_size(px(11.)).text_color(t.muted).child(lib.mode.hint())),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h(px(42.))
+                    .px_4()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .text_size(px(14.))
+                    .text_color(if lib.query.is_empty() { t.muted } else { t.text })
+                    .child(SharedString::from(title))
+                    .child(div().w(px(1.5)).h(px(18.)).ml_0p5().bg(t.accent)),
+            );
+        let panel = if let Some(input) = &lib.folder_input {
+            panel.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(38.))
+                    .px_4()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .text_size(px(12.))
+                    .text_color(t.text)
+                    .child("Move to folder:")
+                    .child(div().flex_1().child(SharedString::from(if input.is_empty() { "top level".to_string() } else { input.clone() })))
+                    .child(div().text_color(t.muted).child("↩ saves · esc cancels")),
+            )
+        } else {
+            panel
+        };
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(80.)).bg(t.scrim).child(panel.child(list))
+    }
+
     fn render_palette(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut list = div().flex().flex_col().py_1();
@@ -2681,7 +3032,7 @@ impl Render for RelayApp {
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
-        let overlay_open = self.palette.is_some() || self.settings_open;
+        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some();
         if overlay_open {
             // Keep native views from covering the palette or settings overlay.
             self.web.borrow().layout(&[]);
@@ -2834,6 +3185,12 @@ impl Render for RelayApp {
             .on_action(cx.listener(|app, _: &Help, _, cx| {
                 app.open_help();
                 cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ShowHistory, _, cx| {
+                app.open_library(Mode::History, cx);
+            }))
+            .on_action(cx.listener(|app, _: &ShowBookmarks, _, cx| {
+                app.open_library(Mode::Bookmarks, cx);
             }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
@@ -2853,6 +3210,9 @@ impl Render for RelayApp {
         }
         if self.settings_open {
             root = root.child(self.render_settings(cx));
+        }
+        if let Some(lib) = &self.library {
+            root = root.child(self.render_library(lib, cx));
         }
         root
     }
@@ -3172,9 +3532,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 42);
+        assert_eq!(bindings.len(), 44);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 42] = [
+        let required: [&'static str; 44] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -3217,6 +3577,8 @@ mod tests {
             Undo.name(),
             Redo.name(),
             Minimize.name(),
+            ShowHistory.name(),
+            ShowBookmarks.name(),
         ];
         for name in required {
             assert!(bound.contains(name), "missing key binding for {name}");

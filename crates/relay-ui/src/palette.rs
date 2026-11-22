@@ -49,10 +49,12 @@ pub enum Command {
     NextTabPlacement,
     InstallWebApp,
     RemoveWebApp,
+    ShowHistory,
+    ShowBookmarks,
 }
 
 impl Command {
-    pub const ALL: [Command; 28] = [
+    pub const ALL: [Command; 30] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -81,6 +83,8 @@ impl Command {
         Command::NextTabPlacement,
         Command::InstallWebApp,
         Command::RemoveWebApp,
+        Command::ShowHistory,
+        Command::ShowBookmarks,
     ];
 
     pub fn title(self) -> &'static str {
@@ -113,6 +117,8 @@ impl Command {
             Command::NextTabPlacement => "Move Tab Strip",
             Command::InstallWebApp => "Install This Site as an App",
             Command::RemoveWebApp => "Remove This Site's App",
+            Command::ShowHistory => "Show History",
+            Command::ShowBookmarks => "Show Bookmarks",
         }
     }
 
@@ -146,6 +152,8 @@ impl Command {
             | Command::ToggleCompatMode
             | Command::InstallWebApp
             | Command::RemoveWebApp => "",
+            Command::ShowHistory => "⌘Y",
+            Command::ShowBookmarks => "⇧⌘B",
         }
     }
 }
@@ -251,6 +259,7 @@ fn encode_query(q: &str) -> String {
 
 /// Fuzzy subsequence score (higher is better); `None` when not all query
 /// characters appear in order. Rewards prefixes, word starts, and runs.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
     let q: Vec<char> = query.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
     fuzzy_score_chars(&q, candidate)
@@ -514,8 +523,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 28);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp] {
+        assert_eq!(Command::ALL.len(), 30);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }

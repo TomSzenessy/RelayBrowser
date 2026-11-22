@@ -130,6 +130,17 @@ A brand-new profile whose configured sections are all empty shows the welcome
 card (Import from Chrome, MCP setup); a profile with data in an unconfigured
 section keeps the grid and says "Nothing yet" for the shown empty section.
 
+## History and bookmarks library
+
+`⌘Y` opens History and `⇧⌘B` opens Bookmarks in the same modal overlay
+(`library.rs`). History uses `recent_sites` for an empty query and the store's
+search for a typed one; Bookmarks are filtered across title, URL, and folder
+path and sorted foldered-first. `↑`/`↓` wrap the selection, `↩` opens,
+`×` deletes (one history row or every folder entry for that bookmark), and a
+Bookmarks row's **move** button edits the folder path (`/` separated) before
+`↩` calls `Store::move_bookmark`. The overlay hides native web views and
+returns keyboard focus to the page when it closes.
+
 ## Installed web apps
 
 The palette command **Install This Site as an App** (and File → Install This
