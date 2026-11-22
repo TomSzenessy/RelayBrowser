@@ -1,7 +1,7 @@
 # Relay
 
 <!-- repoctl:description -->
-A 120fps, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents.
+A fast, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents.
 <!-- /repoctl:description -->
 <!-- repoctl:project-readme -->
 > Project initialized: **relay** (`desktop`)
