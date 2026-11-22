@@ -7,7 +7,9 @@ pub mod channel;
 pub mod hub;
 pub mod paths;
 pub mod protocol;
+pub mod url_policy;
 
 pub use channel::{BrowserRequest, ChannelBrowser};
 pub use hub::{run_op, Actor, Browser, Cookie, DomStore, Hub, HubError, Owner, SharedHub, TabId, TabState, TabSummary, TabView};
 pub use protocol::{Challenge, Command, CommandResult, ConsoleEntry, ConsoleLevel, DomNode, NetworkEntry, NodeId, Op, PageMessage, BRIDGE_JS, PROTOCOL_VERSION};
+pub use url_policy::{is_http_url, is_openable_url};
