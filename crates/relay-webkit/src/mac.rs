@@ -300,6 +300,15 @@ impl Engine {
         });
     }
 
+    /// Override a tab's user agent for its next requests (`None` restores
+    /// WebKit's default). No-op for sleeping tabs.
+    pub fn set_user_agent(&self, tab: TabId, ua: Option<&str>) {
+        if let Some(t) = self.tabs.get(&tab) {
+            let ua = ua.map(NSString::from_str);
+            unsafe { t.view.setCustomUserAgent(ua.as_deref()) };
+        }
+    }
+
     /// Set a tab's page zoom (1.0 = 100%). No-op for sleeping tabs.
     pub fn set_zoom(&self, tab: TabId, zoom: f64) {
         if let Some(t) = self.tabs.get(&tab) {

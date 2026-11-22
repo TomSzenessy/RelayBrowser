@@ -44,10 +44,11 @@ pub enum Command {
     ZoomOut,
     ZoomReset,
     ToggleSiteBlocking,
+    ToggleCompatMode,
 }
 
 impl Command {
-    pub const ALL: [Command; 23] = [
+    pub const ALL: [Command; 24] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -71,6 +72,7 @@ impl Command {
         Command::ZoomOut,
         Command::ZoomReset,
         Command::ToggleSiteBlocking,
+        Command::ToggleCompatMode,
     ];
 
     pub fn title(self) -> &'static str {
@@ -98,6 +100,7 @@ impl Command {
             Command::ZoomOut => "Zoom Out",
             Command::ZoomReset => "Actual Size",
             Command::ToggleSiteBlocking => "Toggle Blocking on This Site",
+            Command::ToggleCompatMode => "Toggle Compatibility Mode on This Site",
         }
     }
 
@@ -122,7 +125,7 @@ impl Command {
             Command::ZoomIn => "⌘=",
             Command::ZoomOut => "⌘-",
             Command::ZoomReset => "⌘0",
-            Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs | Command::ToggleSiteBlocking => "",
+            Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs | Command::ToggleSiteBlocking | Command::ToggleCompatMode => "",
         }
     }
 }
@@ -464,7 +467,7 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 23);
+        assert_eq!(Command::ALL.len(), 24);
         for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());

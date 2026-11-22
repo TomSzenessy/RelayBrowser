@@ -115,7 +115,14 @@ The palette command "Toggle Blocking on This Site" flips the host's
 `rules_json` appends one final `ignore-previous-rules` rule whose
 `if-domain` lists every such host (`Compiled::allow_sites`, subdomains
 included), so requests and element hiding on those pages are left alone.
-Compat mode (Safari user agent per site) is not wired yet.
+
+"Toggle Compatibility Mode on This Site" flips `SitePrefs.compat_mode`: the
+tab then sends a Safari-shaped user agent (`SAFARI_USER_AGENT`, via
+`Engine::set_user_agent` / `customUserAgent`) for sites that reject WebKit's
+default one. On every load `apply_site_prefs` reconciles the tab's agent with
+its host: a compat site first fetched with the default agent reloads once
+(`compat_change`, tested against loops); leaving it restores the default.
+Sleeping or closing a tab forgets its agent, since a woken view starts fresh.
 
 ## Cookie banners
 

@@ -152,6 +152,8 @@ pub struct RelayApp {
     window_title: String,
     /// The session as last written, so the periodic save skips no-op writes.
     saved_session: Vec<SessionTab>,
+    /// Tabs whose web view currently sends the compat (Safari) user agent.
+    compat_tabs: std::collections::HashSet<TabId>,
     /// `restore_session` setting: when off, no tabs are written at all.
     session_enabled: bool,
 }
@@ -222,6 +224,7 @@ impl RelayApp {
             window_title: String::new(),
             saved_session: vec![],
             session_enabled: false,
+            compat_tabs: Default::default(),
         };
         app.load_installed_extensions();
         app.restore_session();
@@ -390,7 +393,7 @@ impl RelayApp {
         }
         for tab in loads {
             self.web.borrow_mut().after_load(tab);
-            self.apply_site_zoom(tab);
+            self.apply_site_prefs(tab);
         }
         // Keep the sleep snapshot until the reloaded page has a DOM; it is
         // what covers the white WebKit view while the tab warms up.
@@ -436,6 +439,8 @@ impl RelayApp {
                 .unwrap_or((0.0, 0.0));
             let _ = this.update(cx, |app, cx| {
                 if still(app, tab) {
+                    // The woken view starts with WebKit's default agent.
+                    app.compat_tabs.remove(&tab);
                     app.web.borrow_mut().sleep(tab, scroll);
                     cx.notify();
                 }
@@ -500,6 +505,7 @@ impl RelayApp {
             self.split = None;
         }
         self.snapshots.remove(&tab);
+        self.compat_tabs.remove(&tab);
         self.web.borrow_mut().apply(BrowserRequest::Close(tab));
         if let Some(next) = self.active() {
             self.activate(next);
@@ -524,13 +530,56 @@ impl RelayApp {
         }
     }
 
-    /// The saved zoom for the tab's host (1.0 when none), applied on load.
-    fn apply_site_zoom(&self, tab: TabId) {
+    /// Apply the tab's host prefs after each load: zoom (1.0 when none) and
+    /// compat mode. A compat site first fetched with WebKit's own user agent
+    /// is reloaded once with the Safari one.
+    fn apply_site_prefs(&mut self, tab: TabId) {
         let Some(host) = self.hub.lock().tab(tab).map(|t| crate::clean_url::host_of(&t.url)).filter(|h| !h.is_empty()) else {
             return;
         };
-        let zoom = self.store.as_ref().and_then(|s| s.site_pref(&host).ok()).map_or(1.0, |p| p.zoom);
-        self.web.borrow().set_zoom(tab, zoom);
+        let prefs = self.store.as_ref().and_then(|s| s.site_pref(&host).ok()).unwrap_or_default();
+        self.web.borrow().set_zoom(tab, prefs.zoom);
+        match compat_change(self.compat_tabs.contains(&tab), prefs.compat_mode) {
+            CompatChange::None => {}
+            CompatChange::Enable => {
+                self.compat_tabs.insert(tab);
+                self.web.borrow().set_user_agent(tab, Some(SAFARI_USER_AGENT));
+                self.web.borrow_mut().apply(BrowserRequest::Reload(tab));
+            }
+            CompatChange::Disable => {
+                self.compat_tabs.remove(&tab);
+                self.web.borrow().set_user_agent(tab, None);
+            }
+        }
+    }
+
+    /// Palette: send a Safari user agent on this site (for sites that reject
+    /// WebKit's default one), or stop doing so, and reload.
+    fn toggle_compat_mode(&mut self) {
+        let Some(tab) = self.active() else { return };
+        let Some(host) = self.hub.lock().tab(tab).filter(|t| is_http_url(&t.url)).map(|t| crate::clean_url::host_of(&t.url)) else {
+            self.toast("Compatibility mode applies to web pages only");
+            return;
+        };
+        let Some(store) = &self.store else {
+            self.toast("Site settings are unavailable: the profile could not be opened");
+            return;
+        };
+        let mut prefs = store.site_pref(&host).unwrap_or_default();
+        prefs.compat_mode = !prefs.compat_mode;
+        let on = prefs.compat_mode;
+        if let Err(e) = store.set_site_pref(&host, prefs) {
+            self.toast(format!("Could not save the site setting: {e}"));
+            return;
+        }
+        if on {
+            self.compat_tabs.insert(tab);
+        } else {
+            self.compat_tabs.remove(&tab);
+        }
+        self.web.borrow().set_user_agent(tab, on.then_some(SAFARI_USER_AGENT));
+        self.web.borrow_mut().apply(BrowserRequest::Reload(tab));
+        self.toast(if on { format!("Compatibility mode on for {host}") } else { format!("Compatibility mode off for {host}") });
     }
 
     /// ⌘= / ⌘- / ⌘0: step the active page's zoom and remember it per host.
@@ -757,6 +806,7 @@ impl RelayApp {
             Command::ZoomOut => self.zoom(-1),
             Command::ZoomReset => self.zoom(0),
             Command::ToggleSiteBlocking => self.toggle_site_blocking(),
+            Command::ToggleCompatMode => self.toggle_compat_mode(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
         }
     }
@@ -832,6 +882,7 @@ impl RelayApp {
                 self.split = None;
             }
             self.snapshots.remove(&id);
+            self.compat_tabs.remove(&id);
             self.web.borrow_mut().apply(BrowserRequest::Close(id));
             self.hub.update(|h| h.close_tab(id));
         }
@@ -1967,6 +2018,28 @@ fn page_loaded_since(recorded_seq: Option<u64>, load_seq: u64) -> bool {
     load_seq > 0 && recorded_seq != Some(load_seq)
 }
 
+/// What compat mode sends: Safari's user agent shape (WebKit's default omits
+/// the `Version/… Safari/…` tokens some sites sniff for).
+const SAFARI_USER_AGENT: &str =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
+
+#[derive(Debug, PartialEq)]
+enum CompatChange {
+    None,
+    /// Switch to the Safari agent and reload once (this load used the default).
+    Enable,
+    /// Back to the default agent for the next requests; no reload needed.
+    Disable,
+}
+
+fn compat_change(view_has_compat: bool, site_wants_compat: bool) -> CompatChange {
+    match (view_has_compat, site_wants_compat) {
+        (false, true) => CompatChange::Enable,
+        (true, false) => CompatChange::Disable,
+        _ => CompatChange::None,
+    }
+}
+
 /// Browser-style zoom presets; `direction` 1 / -1 steps, 0 resets.
 const ZOOM_STEPS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
@@ -2109,6 +2182,15 @@ mod tests {
         assert!(page_loaded_since(None, 1), "first hello");
         assert!(!page_loaded_since(Some(1), 1), "already handled");
         assert!(page_loaded_since(Some(1), 2), "next navigation");
+    }
+
+    #[test]
+    fn compat_reloads_only_when_a_compat_site_used_the_default_agent() {
+        assert_eq!(compat_change(false, true), CompatChange::Enable);
+        assert_eq!(compat_change(true, true), CompatChange::None, "after the one reload, no loop");
+        assert_eq!(compat_change(true, false), CompatChange::Disable);
+        assert_eq!(compat_change(false, false), CompatChange::None);
+        assert!(SAFARI_USER_AGENT.contains("Version/") && SAFARI_USER_AGENT.ends_with("Safari/605.1.15"));
     }
 
     #[test]

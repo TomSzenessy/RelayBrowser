@@ -112,6 +112,10 @@ mod imp {
             self.engine.set_zoom(tab, zoom);
         }
 
+        pub fn set_user_agent(&self, tab: TabId, ua: Option<&str>) {
+            self.engine.set_user_agent(tab, ua);
+        }
+
         /// Select the next (or previous) match; the answer arrives as
         /// [`WebEvent::Found`].
         pub fn find(&self, tab: TabId, text: &str, backwards: bool) {
@@ -191,6 +195,7 @@ mod imp {
         }
         pub fn restore_asleep(&mut self, _tab: TabId, _url: &str, _scroll_y: f64) {}
         pub fn set_zoom(&self, _tab: TabId, _zoom: f64) {}
+        pub fn set_user_agent(&self, _tab: TabId, _ua: Option<&str>) {}
         pub fn find(&self, _tab: TabId, _text: &str, _backwards: bool) {}
         pub fn slept_scroll_y(&self, _tab: TabId) -> Option<f64> {
             None
