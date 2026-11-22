@@ -297,6 +297,10 @@ write per title change.
 
 ## Palette smart input
 
+Palette scoring lowercases the query once and iterates each candidate without
+building a `Vec<char>` or a shortened URL string per candidate; `short_url`
+still allocates only for the few items that are shown.
+
 [`bangs.rs`](../crates/relay-ui/src/bangs.rs), [`calc.rs`](../crates/relay-ui/src/calc.rs)
 and [`clean_url.rs`](../crates/relay-ui/src/clean_url.rs) are pure string
 modules the palette calls before its normal URL/search item:
