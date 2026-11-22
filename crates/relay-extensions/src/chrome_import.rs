@@ -111,13 +111,9 @@ pub fn read_history(profile: &Path, limit: usize) -> Result<Vec<HistoryEntry>, E
     let src = profile.join("History");
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let tmp = std::env::temp_dir().join(format!("relay-chrome-history-{}-{nonce}.sqlite", std::process::id()));
-    std::fs::copy(&src, &tmp)?;
-    // The copy holds the user's browsing history: keep it private until removed.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
+    // The copy holds the user's browsing history: create it 0600 in one step.
+    // If anything fails, the copy is removed before the error leaves here.
+    copy_private(&src, &tmp)?;
     let result = (|| {
         let conn = rusqlite::Connection::open_with_flags(&tmp, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut stmt = conn.prepare(
@@ -134,6 +130,29 @@ pub fn read_history(profile: &Path, limit: usize) -> Result<Vec<HistoryEntry>, E
         rows.collect::<Result<Vec<_>, _>>().map_err(Error::from)
     })();
     let _ = std::fs::remove_file(&tmp);
+    result
+}
+
+/// Copy `src` into a new `dst` that nobody else can read. On any failure the
+/// partial destination is removed, so an interrupted import never leaves a
+/// readable history database in the temp directory.
+fn copy_private(src: &Path, dst: &Path) -> Result<(), Error> {
+    let result = (|| -> Result<(), Error> {
+        let mut input = std::fs::File::open(src)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut output = options.open(dst)?;
+        std::io::copy(&mut input, &mut output)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(dst);
+    }
     result
 }
 
@@ -208,6 +227,21 @@ pub fn preview(profile: &Path, history_limit: usize) -> ImportPreview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_copy_is_0600_and_cleans_up_on_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("History");
+        let dst = d.path().join("copy.sqlite");
+        std::fs::write(&src, b"sqlite").unwrap();
+        copy_private(&src, &dst).unwrap();
+        assert_eq!(std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_file(&dst).unwrap();
+        assert!(copy_private(&d.path().join("missing"), &dst).is_err());
+        assert!(!dst.exists(), "a failed import leaves no temp copy");
+    }
 
     fn fake_profile() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

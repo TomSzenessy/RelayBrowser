@@ -281,6 +281,15 @@ which restores their scroll once the real page says `hello` (`load_seq > 0`;
 `relay clear-data --history` or `--session`, and Settings → Clear history,
 erase the saved session.
 
+## History visits
+
+`visit_decision(load_seq, title, recorded)` in `app.rs` separates "a page
+loaded" from "its title changed". A new `load_seq` records exactly one visit;
+a title-only change updates the in-memory record and is written with the next
+real load, so an SPA that rewrites `document.title` every second does not
+inflate `history.visit_count` or the ⌘K frecency ranking. There is no SQL
+write per title change.
+
 ## Palette smart input
 
 [`bangs.rs`](../crates/relay-ui/src/bangs.rs), [`calc.rs`](../crates/relay-ui/src/calc.rs)

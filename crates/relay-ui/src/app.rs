@@ -251,6 +251,33 @@ struct Hints {
     typed: String,
 }
 
+/// The last load recorded for a tab. Title changes within one load must not
+/// count as another visit; they refresh this in memory for the next load.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecordedVisit {
+    load_seq: u64,
+    title: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VisitDecision {
+    Record,
+    TitleOnly,
+    Ignore,
+}
+
+fn visit_decision(load_seq: u64, title: &str, recorded: Option<&RecordedVisit>) -> VisitDecision {
+    if load_seq == 0 {
+        return VisitDecision::Ignore;
+    }
+    match recorded {
+        None => VisitDecision::Record,
+        Some(old) if old.load_seq != load_seq => VisitDecision::Record,
+        Some(old) if old.title != title => VisitDecision::TitleOnly,
+        Some(_) => VisitDecision::Ignore,
+    }
+}
+
 pub struct RelayApp {
     hub: SharedHub,
     web: Rc<RefCell<WebHost>>,
@@ -281,7 +308,7 @@ pub struct RelayApp {
     /// `bangs` setting, parsed; invalid settings are ignored with a log line.
     custom_bangs: Vec<(String, String)>,
     seen_version: u64,
-    recorded: HashMap<TabId, (u64, String)>,
+    recorded: HashMap<TabId, RecordedVisit>,
     sleep_policy: SleepPolicy,
     last_sleep_check: Instant,
     placements: Rc<RefCell<Vec<(TabId, Bounds<Pixels>)>>>,
@@ -599,18 +626,26 @@ impl RelayApp {
             let h = self.hub.lock();
             for t in h.tabs() {
                 let rec = self.recorded.get(&t.id);
-                if page_loaded_since(rec.map(|r| r.0), t.load_seq) {
+                if page_loaded_since(rec.map(|r| r.load_seq), t.load_seq) {
                     loads.push(t.id);
                 }
                 if t.dom.root().is_some() {
                     ready.push(t.id);
                 }
-                if t.load_seq > 0 && rec != Some(&(t.load_seq, t.title.clone())) {
-                    if let (Some(store), Owner::User) = (&self.store, t.owner) {
-                        let _ = store.record_visit(&t.url, &t.title, now_unix());
-                        visited = true;
+                match visit_decision(t.load_seq, &t.title, rec) {
+                    VisitDecision::Record => {
+                        if let (Some(store), Owner::User) = (&self.store, t.owner) {
+                            let _ = store.record_visit(&t.url, &t.title, now_unix());
+                            visited = true;
+                        }
+                        self.recorded.insert(t.id, RecordedVisit { load_seq: t.load_seq, title: t.title.clone() });
                     }
-                    self.recorded.insert(t.id, (t.load_seq, t.title.clone()));
+                    VisitDecision::TitleOnly => {
+                        if let Some(old) = self.recorded.get_mut(&t.id) {
+                            old.title = t.title.clone();
+                        }
+                    }
+                    VisitDecision::Ignore => {}
                 }
             }
         }
@@ -2998,6 +3033,17 @@ mod tests {
         assert!(page_loaded_since(None, 1), "first hello");
         assert!(!page_loaded_since(Some(1), 1), "already handled");
         assert!(page_loaded_since(Some(1), 2), "next navigation");
+    }
+
+    #[test]
+    fn title_changes_do_not_count_as_visits() {
+        let rec = RecordedVisit { load_seq: 7, title: "First".into() };
+        assert_eq!(visit_decision(7, "First", Some(&rec)), VisitDecision::Ignore);
+        assert_eq!(visit_decision(7, "Second", Some(&rec)), VisitDecision::TitleOnly);
+        assert_eq!(visit_decision(7, "Third", Some(&rec)), VisitDecision::TitleOnly, "one visit per load, not per title");
+        assert_eq!(visit_decision(8, "Second", Some(&rec)), VisitDecision::Record, "a new load records again");
+        assert_eq!(visit_decision(0, "Second", None), VisitDecision::Ignore);
+        assert_eq!(visit_decision(1, "Second", None), VisitDecision::Record);
     }
 
     #[test]

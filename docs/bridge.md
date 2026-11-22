@@ -26,8 +26,12 @@ with the Rust parser.
 | `hotkey` | `f` pressed with the page focused, outside text fields | `key` (the shell starts link hints) |
 | `result` | reply to a command | `id`, `ok`, `value`, `error` |
 
-Limits: 4,000 nodes per snapshot, 160-character text, script/style/head
-skipped. Password input values are never sent.
+Limits: 4,000 nodes per snapshot, 160-character text, script/style/title
+skipped (head itself is kept as an attrs-only node). Values are never sent for
+password inputs, `autocomplete` values starting with `cc-`,
+`autocomplete="one-time-code"`, or any input carrying `data-relay-private`.
+Those fields still expose id/tag/type/name/label so agents can address them;
+ordinary text/search fields keep their values for debugging.
 
 ## Rust → page
 

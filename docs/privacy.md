@@ -66,6 +66,11 @@ behavior—test an authenticated production-like browser.
 Relay is a local-only desktop browser. It operates no cloud sync service,
 telemetry pipeline, crash-upload endpoint, or analytics SDK.
 
+- **Profile creation:** the profile directory is created `0700` and the
+  SQLite file `0600` before it is opened, on the CLI entry points as well as
+  the GUI; a directory that already exists with a wider mode is tightened.
+  The temporary copy of Chrome's History is created `0600` in one step and
+  removed on both success and failure.
 - **Local profile storage:** History, bookmarks, settings, saved session tabs (http/https URL, title, pinned, scroll offset; max 200; replaced on every save; erased by `relay clear-data` and Settings → Clear history; not written at all with `restore_session off`), per-site preferences (zoom, compat, blocking, hidden selectors), installed
   extension metadata, and installed web app records (name, start URL, bundle
   path, install time) live in `$RELAY_HOME/profile.sqlite` (default
