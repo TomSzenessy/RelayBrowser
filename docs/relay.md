@@ -111,7 +111,9 @@ relaunches.
 ## Per-site blocking
 
 The palette command "Toggle Blocking on This Site" flips the host's
-`SitePrefs.blocking_off`, recompiles the rule list, and reloads the page.
+`SitePrefs.blocking_off`, recompiles the rule list, and reloads the page once
+WebKit has applied it (`Engine::load_content_rules_then` →
+`WebEvent::RulesApplied`), never before. IP-literal hosts are refused.
 `rules_json` appends one final `ignore-previous-rules` rule whose
 `if-domain` lists every such host (`Compiled::allow_sites`, subdomains
 included), so requests and element hiding on those pages are left alone.
@@ -123,6 +125,10 @@ default one. On every load `apply_site_prefs` reconciles the tab's agent with
 its host: a compat site first fetched with the default agent reloads once
 (`compat_change`, tested against loops); leaving it restores the default.
 Sleeping or closing a tab forgets its agent, since a woken view starts fresh.
+Known gaps: the agent is decided on the host where a load finishes, so a
+site that redirects to another host before sniffing is not covered; a compat
+site loads twice in a fresh view (default agent, then the reload), and that
+reload can resubmit a POST that landed there.
 
 ## Cookie banners
 
@@ -130,7 +136,9 @@ With blocking on, the compiled rule list also includes
 `content_rules::CMP_FILTERS`: `css-display-none` rules for the outer
 containers of common consent platforms (OneTrust, Cookiebot, Usercentrics,
 TrustArc, iubenda, Complianz, Osano, CookieYes, Klaro), by vendor-specific id
-or class. Hiding a banner gives no consent. Platforms whose modal locks page
+or class. Hiding a banner records no choice, so the site's configured
+default applies (opt-in regions usually keep non-essential cookies off;
+opt-out regions may set them). Platforms whose modal locks page
 scrolling (Sourcepoint, Didomi popups, Quantcast) are left out, because a
 hidden modal would leave the page unscrollable.
 

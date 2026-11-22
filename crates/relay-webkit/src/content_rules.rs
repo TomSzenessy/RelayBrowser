@@ -20,6 +20,12 @@ pub struct Compiled {
     pub skipped: usize,
 }
 
+/// A host `allow_sites` can express as a WebKit `if-domain` (DNS names; not
+/// IPv6 literals or hosts with odd characters).
+pub fn is_site_host(host: &str) -> bool {
+    !host.is_empty() && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
+
 impl Compiled {
     pub fn to_json(&self) -> String {
         serde_json::to_string(&self.rules).expect("rules serialize")
@@ -32,10 +38,15 @@ impl Compiled {
         let domains: Vec<String> = hosts
             .iter()
             .map(|h| h.as_ref().trim().trim_start_matches("www.").to_ascii_lowercase())
-            .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+            .filter(|h| is_site_host(h))
             .map(|h| format!("*{h}"))
             .collect();
         if !domains.is_empty() {
+            // Stay within WebKit's cap, or the whole list fails to compile.
+            if self.rules.len() >= WEBKIT_MAX_RULES {
+                self.skipped += self.rules.len() + 1 - WEBKIT_MAX_RULES;
+                self.rules.truncate(WEBKIT_MAX_RULES - 1);
+            }
             self.rules.push(json!({ "trigger": { "url-filter": ".*", "if-domain": domains }, "action": { "type": "ignore-previous-rules" } }));
         }
     }
@@ -64,8 +75,10 @@ pub const BUILTIN_FILTERS: &str = "\
 
 /// Conservative cookie-consent (CMP) banner hiding: only the outer containers
 /// of widely deployed consent platforms, by their vendor-specific ids and
-/// classes, so no site content shares the selector. Hiding a banner gives no
-/// consent; compliant CMPs then keep their non-essential cookies off. Modal
+/// classes, so no site content shares the selector. Hiding a banner clicks
+/// nothing, so it records no choice: the site's configured default applies
+/// (opt-in regions usually keep non-essential cookies off; opt-out regions
+/// may set them). Modal
 /// CMPs that lock page scrolling while open (Sourcepoint, Didomi popups,
 /// Quantcast) are left out: hiding them would leave the page unscrollable.
 /// Applied with the built-in blocklist (off when blocking is off).
@@ -280,6 +293,12 @@ mod tests {
             allowed.rules.last().unwrap(),
             &json!({"trigger":{"url-filter":".*","if-domain":["*news.example","*shop.test"]},"action":{"type":"ignore-previous-rules"}})
         );
+        let mut full = Compiled { rules: vec![json!({}); WEBKIT_MAX_RULES], skipped: 0 };
+        full.allow_sites(&["a.test"]);
+        assert_eq!(full.rules.len(), WEBKIT_MAX_RULES, "the exception fits under the cap");
+        assert_eq!(full.rules.last().unwrap()["action"]["type"], "ignore-previous-rules");
+        assert_eq!(full.skipped, 1);
+        assert!(!is_site_host("[") && !is_site_host("::1") && is_site_host("news.example"));
         let mut none = compile(BUILTIN_FILTERS);
         none.allow_sites::<&str>(&[]);
         assert_eq!(none.rules.len(), before, "no sites, no extra rule");

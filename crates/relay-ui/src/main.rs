@@ -194,7 +194,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
         }
         "bangs" => {
             let pairs = bangs::parse_custom(trimmed).map_err(|bad| {
-                anyhow::anyhow!("invalid bangs entry {bad:?}: use space-separated trigger=https://...%s pairs (trigger: letters, digits, - or _)")
+                anyhow::anyhow!("invalid bangs entry {bad:?}: use space-separated trigger=https://...%s pairs (trigger: 1-16 letters or digits)")
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }

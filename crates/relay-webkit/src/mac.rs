@@ -171,6 +171,13 @@ impl Engine {
     /// Compile WebKit content-blocker JSON once (cached by WebKit across launches)
     /// and apply it to every tab.
     pub fn load_content_rules(&self, json: &str) {
+        self.load_content_rules_then(json, || {});
+    }
+
+    /// [`Engine::load_content_rules`], calling `applied` once the compiled
+    /// list is on every tab (not on failure, nor if blocking was turned off
+    /// meanwhile). Reload a page from `applied`, never right after the call.
+    pub fn load_content_rules_then(&self, json: &str, applied: impl Fn() + 'static) {
         self.blocking_enabled.set(true);
         let Some(store) = (unsafe { WKContentRuleListStore::defaultStore(self.mtm) }) else { return };
         let slot = self.rules.clone();
@@ -188,6 +195,7 @@ impl Engine {
                     }
                 }
                 *slot.borrow_mut() = Some(list);
+                applied();
             } else if let Some(e) = unsafe { err.as_ref() } {
                 eprintln!("relay: content rules failed to compile: {}", e.localizedDescription());
             }

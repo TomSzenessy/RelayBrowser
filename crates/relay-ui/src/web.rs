@@ -12,6 +12,8 @@ use relay_bridge::{BrowserRequest, SharedHub, TabId};
 pub enum WebEvent {
     OpenInNewTab { opener: TabId, url: String },
     Slept(TabId),
+    /// Recompiled content rules are live: reload this tab now.
+    RulesApplied { reload: TabId },
     /// Reply to [`WebHost::find`]: whether the text occurs in the page.
     Found { tab: TabId, found: bool },
 }
@@ -68,6 +70,13 @@ mod imp {
 
         pub fn clear_content_rules(&self) {
             self.engine.clear_content_rules();
+        }
+
+        /// Recompile the rules, then reload `tab` once they apply
+        /// ([`WebEvent::RulesApplied`]).
+        pub fn load_content_rules_and_reload(&self, json: &str, tab: TabId) {
+            let events = self.events.clone();
+            self.engine.load_content_rules_then(json, move || events.borrow_mut().push(WebEvent::RulesApplied { reload: tab }));
         }
 
         pub fn apply(&mut self, req: BrowserRequest) {
@@ -186,6 +195,7 @@ mod imp {
         }
         pub fn load_content_rules(&self, _json: &str) {}
         pub fn clear_content_rules(&self) {}
+        pub fn load_content_rules_and_reload(&self, _json: &str, _tab: TabId) {}
         pub fn apply(&mut self, _req: BrowserRequest) {}
         pub fn wake(&mut self, _tab: TabId) {}
         pub fn after_load(&mut self, _tab: TabId) {}

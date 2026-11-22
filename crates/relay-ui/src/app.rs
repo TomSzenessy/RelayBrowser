@@ -337,6 +337,9 @@ impl RelayApp {
                     });
                     self.web.borrow_mut().apply(BrowserRequest::Open { tab, url });
                 }
+                WebEvent::RulesApplied { reload } => {
+                    self.web.borrow_mut().apply(BrowserRequest::Reload(reload));
+                }
                 WebEvent::Found { tab, found } => {
                     if let Some(f) = self.find.as_mut().filter(|f| f.tab == tab) {
                         f.found = Some(found);
@@ -606,6 +609,10 @@ impl RelayApp {
             self.toast("Blocking applies to web pages only");
             return;
         };
+        if !relay_webkit::content_rules::is_site_host(&host) {
+            self.toast("Per-site blocking needs a domain name, not an IP literal");
+            return;
+        }
         let Some(store) = &self.store else {
             self.toast("Site settings are unavailable: the profile could not be opened");
             return;
@@ -618,8 +625,8 @@ impl RelayApp {
             return;
         }
         if self.blocking {
-            self.web.borrow().load_content_rules(&rules_json(self.store.as_ref()));
-            self.web.borrow_mut().apply(BrowserRequest::Reload(tab));
+            // Reload only once WebKit has applied the recompiled list.
+            self.web.borrow().load_content_rules_and_reload(&rules_json(self.store.as_ref()), tab);
         }
         self.toast(match (off, self.blocking) {
             (true, _) => format!("Blocking off on {host}"),
