@@ -150,6 +150,8 @@ pub struct RelayApp {
     window_title: String,
     /// The session as last written, so the periodic save skips no-op writes.
     saved_session: Vec<SessionTab>,
+    /// `restore_session` setting: when off, no tabs are written at all.
+    session_enabled: bool,
 }
 
 impl RelayApp {
@@ -207,9 +209,16 @@ impl RelayApp {
             mcp_socket,
             window_title: String::new(),
             saved_session: vec![],
+            session_enabled: false,
         };
         app.load_installed_extensions();
         app.restore_session();
+        // Menu, Dock, logout and ⌘Q all end here, not only the ⌘Q action.
+        cx.on_app_quit(|app, _| {
+            app.save_session();
+            async {}
+        })
+        .detach();
         app.start_pump(cx);
         app
     }
@@ -218,7 +227,10 @@ impl RelayApp {
     /// previously active tab loads now. Off with `restore_session = off`.
     fn restore_session(&mut self) {
         let Some(store) = &self.store else { return };
-        if !setting_enabled(store.setting("restore_session").ok().flatten().as_deref()) {
+        self.session_enabled = setting_enabled(store.setting("restore_session").ok().flatten().as_deref());
+        if !self.session_enabled {
+            // Turning restore off also drops whatever an earlier run saved.
+            let _ = store.clear_session();
             return;
         }
         let saved = store.load_session().unwrap_or_default();
@@ -234,6 +246,9 @@ impl RelayApp {
 
     /// Persist the user's open tabs when they changed since the last write.
     fn save_session(&mut self) {
+        if !self.session_enabled {
+            return;
+        }
         let Some(store) = &self.store else { return };
         let web = self.web.borrow();
         let tabs = session_snapshot(&self.hub.lock(), |t| web.slept_scroll_y(t));
@@ -296,7 +311,9 @@ impl RelayApp {
                     let tab = self.hub.update(|h| {
                         let id = h.create_tab(&url, owner);
                         if let Some(pos) = h.tab_ids().iter().position(|t| *t == opener) {
-                            h.move_tab(id, pos + 1);
+                            // Never inside the pinned block at the top.
+                            let pinned = h.tabs().filter(|t| t.pinned).count();
+                            h.move_tab(id, (pos + 1).max(pinned));
                         }
                         if owner == Owner::User {
                             h.set_active(id);
@@ -345,7 +362,7 @@ impl RelayApp {
             let h = self.hub.lock();
             for t in h.tabs() {
                 let rec = self.recorded.get(&t.id);
-                if rec.map(|r| r.0) != Some(t.load_seq) {
+                if page_loaded_since(rec.map(|r| r.0), t.load_seq) {
                     loads.push(t.id);
                 }
                 if t.dom.root().is_some() {
@@ -385,7 +402,7 @@ impl RelayApp {
             self.sleep_policy.due(&h, &visible, Instant::now())
         };
         for tab in due {
-            self.sleep_with_scroll(tab, cx, |app, tab| {
+            let _ = self.sleep_with_scroll(tab, cx, |app, tab| {
                 // The user (or an agent) may have used the tab meanwhile.
                 app.sleep_minutes != 0 && {
                     let h = app.hub.lock();
@@ -397,8 +414,8 @@ impl RelayApp {
 
     /// Ask the page for its scroll offset, then sleep it if `still` holds
     /// when the reply (or a 500 ms timeout) arrives.
-    fn sleep_with_scroll(&mut self, tab: TabId, cx: &mut Context<Self>, still: fn(&RelayApp, TabId) -> bool) {
-        let Ok((script, rx)) = self.hub.begin_command(tab, Op::PageInfo) else { return };
+    fn sleep_with_scroll(&mut self, tab: TabId, cx: &mut Context<Self>, still: fn(&RelayApp, TabId) -> bool) -> bool {
+        let Ok((script, rx)) = self.hub.begin_command(tab, Op::PageInfo) else { return false };
         self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
         cx.spawn(async move |this, cx| {
             let reply = futures_timeout(rx, Duration::from_millis(500), cx).await;
@@ -413,6 +430,7 @@ impl RelayApp {
             });
         })
         .detach();
+        true
     }
 
     // -------------------------------------------------------- helpers
@@ -486,8 +504,12 @@ impl RelayApp {
             self.split = None;
         }
         self.cycle(1);
-        self.sleep_with_scroll(tab, cx, |app, tab| app.active() != Some(tab) && !app.visible_tabs().contains(&tab));
-        self.toast("Pinned tab put to sleep");
+        let asleep = self.hub.lock().tab(tab).is_some_and(|t| t.sleeping);
+        if asleep || self.sleep_with_scroll(tab, cx, |app, tab| app.active() != Some(tab) && !app.visible_tabs().contains(&tab)) {
+            self.toast("Pinned tab put to sleep");
+        } else {
+            self.toast("Switched away; the pinned tab stays open");
+        }
     }
 
     /// The saved zoom for the tab's host (1.0 when none), applied on load.
@@ -1513,8 +1535,11 @@ impl RelayApp {
                     app.confirm_clear_history = true;
                 } else {
                     app.confirm_clear_history = false;
-                    match app.store.as_ref().map(|s| s.clear_history()) {
-                        Some(Ok(n)) => app.toast(format!("Cleared {n} history entries")),
+                    match app.store.as_ref().map(|s| s.clear_history().and_then(|n| s.clear_session().map(|_| n))) {
+                        Some(Ok(n)) => {
+                            app.saved_session.clear();
+                            app.toast(format!("Cleared {n} history entries and the saved session"))
+                        }
                         Some(Err(e)) => app.toast(format!("Clear history failed: {e}")),
                         None => app.toast("Profile store unavailable"),
                     }
@@ -1873,6 +1898,14 @@ fn blocklist() -> String {
     s
 }
 
+/// Whether a tab finished a page load the shell has not handled yet. A tab
+/// whose page never said `hello` (`load_seq == 0`: just created, or restored
+/// and woken but still on WebKit's blank document) has not loaded anything;
+/// running `after_load` then would restore scroll onto the blank page.
+fn page_loaded_since(recorded_seq: Option<u64>, load_seq: u64) -> bool {
+    load_seq > 0 && recorded_seq != Some(load_seq)
+}
+
 /// Browser-style zoom presets; `direction` 1 / -1 steps, 0 resets.
 const ZOOM_STEPS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
@@ -2007,6 +2040,14 @@ mod tests {
         let key = |v: &[SessionTab]| v.iter().map(|s| (s.url.clone(), s.pinned, s.active)).collect::<Vec<_>>();
         assert_eq!(key(&again), key(&snap));
         assert_eq!(fresh.lock().active(), active);
+    }
+
+    #[test]
+    fn only_a_real_page_load_counts_as_loaded() {
+        assert!(!page_loaded_since(None, 0), "created or restored-and-woken tab on the blank document");
+        assert!(page_loaded_since(None, 1), "first hello");
+        assert!(!page_loaded_since(Some(1), 1), "already handled");
+        assert!(page_loaded_since(Some(1), 2), "next navigation");
     }
 
     #[test]

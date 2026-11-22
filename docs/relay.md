@@ -119,13 +119,17 @@ tab stays open. Pins persist through the saved session.
 
 With `restore_session` on (the default; `relay config set restore_session off`),
 the shell saves the user's open `http(s)` tabs (order, title, pinned, active,
-and the scroll offset of sleeping tabs) to `Store::save_session` on ⌘Q and on
-the 30 s sleep tick when the set changed. Agent tabs are not saved. On launch,
+and the scroll offset of sleeping tabs) to `Store::save_session` when the app
+quits (any quit path, via GPUI's `on_app_quit`) and on the 30 s sleep tick
+when the set changed. Agent tabs are not saved. With it off nothing is
+written, and launch erases any session an earlier run saved. On launch,
 `restore_into` recreates the tabs and `Engine::restore_asleep` registers each
 one as already asleep (no `WKWebView`, no snapshot); only the previously
 active tab loads. The others load on first click through the normal wake path,
-which restores their scroll. `relay clear-data --history` or `--session`
-erases the saved session.
+which restores their scroll once the real page says `hello` (`load_seq > 0`;
+`page_loaded_since` keeps the restore off WebKit's initial blank document).
+`relay clear-data --history` or `--session`, and Settings → Clear history,
+erase the saved session.
 
 ## Palette smart input
 
