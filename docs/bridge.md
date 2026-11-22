@@ -70,6 +70,13 @@ DOM patches are scheduled with `setTimeout`, not `requestAnimationFrame`:
 WebKit suspends rAF in off-screen pages, which would stall background and
 agent tabs.
 
+Rust treats the patch as untrusted input. `DomStore::replace_all` and `patch`
+reject a message that repeats an id within one tree (or would close a cycle
+through the existing store) and leave the previous tree untouched.
+`interactive_ids`, `tree`, and the outline walk each node once with a step
+budget, so even a hand-corrupted store cannot hang the UI thread or recurse
+without bound.
+
 ## Chrome shims (`js/chrome-shims.js`)
 
 At install, `manifest::install_shims` copies the shim into the unpacked

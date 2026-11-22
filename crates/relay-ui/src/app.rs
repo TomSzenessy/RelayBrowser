@@ -289,6 +289,9 @@ pub struct RelayApp {
     mcp_socket: String,
     /// Last title pushed to the native window; avoids a call every frame.
     window_title: String,
+    /// One long-lived subscription: `subscribe()` per 16 ms tick allocated a
+    /// receiver and dropped it, which also made the pump look busy.
+    hub_events: tokio::sync::watch::Receiver<u64>,
     /// The session as last written, so the periodic save skips no-op writes.
     saved_session: Vec<SessionTab>,
     /// Tabs whose web view currently sends the compat (Safari) user agent.
@@ -299,6 +302,11 @@ pub struct RelayApp {
     strip: tabstrip::StripState,
     /// Which row the pointer is over, so its close button can appear.
     hovered_tab: Option<TabId>,
+    /// Focus the page once its native view is attached (a slept tab wakes on
+    /// the next frame; focusing before that is a silent no-op).
+    focus_pending: Option<TabId>,
+    /// The first real page gets focus once, after the CLI URL is attached.
+    focus_initial: bool,
     /// An installed web app window: one page, no browser chrome.
     app_mode: bool,
     /// Cached new-tab data (recent/frequent/apps/bookmarks), refreshed when
@@ -354,6 +362,7 @@ impl RelayApp {
             web.load_content_rules(&rules_json(store.as_ref()));
         }
         let focus = cx.focus_handle();
+        let hub_events = hub.subscribe();
         window.focus(&focus);
         let mut app = Self {
             hub,
@@ -389,12 +398,15 @@ impl RelayApp {
             placements: Rc::default(),
             snapshots: HashMap::new(),
             mcp_socket,
+            hub_events,
             window_title: String::new(),
             saved_session: vec![],
             session_enabled: false,
             compat_tabs: Default::default(),
             strip,
             hovered_tab: None,
+            focus_pending: None,
+            focus_initial: true,
             app_mode,
             app_name: app_name.clone(),
             start_page,
@@ -544,7 +556,7 @@ impl RelayApp {
                 }
             }
         }
-        let version = *self.hub.subscribe().borrow();
+        let version = *self.hub_events.borrow();
         if version != self.seen_version {
             self.seen_version = version;
             changed = true;
@@ -565,13 +577,21 @@ impl RelayApp {
             self.toast = None;
             changed = true;
         }
+        self.try_focus_pending();
+        if self.focus_initial {
+            if let Some(tab) = self.active() {
+                if self.web.borrow().focus_page(tab) {
+                    self.focus_initial = false;
+                }
+            }
+        }
         if changed {
             cx.notify();
         }
     }
 
     fn after_hub_change(&mut self) {
-        let hotkeys = self.hub.update(|h| h.take_hotkeys());
+        let hotkeys = self.hub.take_hotkeys();
         let mut loads = vec![];
         let mut ready = vec![];
         let mut visited = false;
@@ -688,6 +708,8 @@ impl RelayApp {
         match (new_tab, active) {
             (false, Some(tab)) => {
                 self.web.borrow_mut().apply(BrowserRequest::Navigate { tab, url });
+                self.focus_pending = Some(tab);
+                self.try_focus_pending();
             }
             _ => {
                 let tab = self.hub.update(|h| {
@@ -696,6 +718,8 @@ impl RelayApp {
                     id
                 });
                 self.web.borrow_mut().apply(BrowserRequest::Open { tab, url });
+                self.focus_pending = Some(tab);
+                self.try_focus_pending();
             }
         }
     }
@@ -704,9 +728,35 @@ impl RelayApp {
         if self.find.as_ref().is_some_and(|f| f.tab != tab) {
             self.find = None;
         }
+        // Hints belong to the tab they were drawn on; do not leave them armed
+        // for the next tab (Esc would then focus the old page).
+        if let Some(h) = self.hints.take() {
+            self.eval_op(h.tab, Op::HideHints);
+        }
         self.hub.update(|h| h.set_active(tab));
         self.web.borrow_mut().wake(tab);
-        self.web.borrow().focus_page(tab);
+        self.focus_pending = Some(tab);
+        self.try_focus_pending();
+    }
+
+    /// Focus the page only when the native view exists and no overlay owns
+    /// the keyboard. Called from the pump until it succeeds.
+    fn try_focus_pending(&mut self) {
+        let Some(tab) = self.focus_pending else { return };
+        if self.active() != Some(tab) || self.palette.is_some() || self.settings_open || self.hints.is_some() {
+            self.focus_pending = None;
+            return;
+        }
+        if self.web.borrow().focus_page(tab) {
+            self.focus_pending = None;
+        }
+    }
+
+    fn focus_active_page(&mut self) {
+        if let Some(tab) = self.active() {
+            self.focus_pending = Some(tab);
+            self.try_focus_pending();
+        }
     }
 
     fn close_active(&mut self, cx: &mut Context<Self>) {
@@ -1063,7 +1113,8 @@ impl RelayApp {
 
     fn close_find(&mut self) {
         if let Some(f) = self.find.take() {
-            self.web.borrow().focus_page(f.tab);
+            self.focus_pending = Some(f.tab);
+            self.try_focus_pending();
         }
     }
 
@@ -1143,9 +1194,7 @@ impl RelayApp {
 
     fn close_palette(&mut self) {
         self.palette = None;
-        if let Some(t) = self.active() {
-            self.web.borrow().focus_page(t);
-        }
+        self.focus_active_page();
     }
 
     fn toggle_settings(&mut self) {
@@ -1162,9 +1211,7 @@ impl RelayApp {
     fn close_settings(&mut self) {
         self.settings_open = false;
         self.confirm_clear_history = false;
-        if let Some(t) = self.active() {
-            self.web.borrow().focus_page(t);
-        }
+        self.focus_active_page();
     }
 
     fn run_item(&mut self, item: Item, cx: &mut Context<Self>) {
@@ -1475,7 +1522,7 @@ impl RelayApp {
             "escape" => self.close_palette(),
             "enter" => {
                 let item = p.chosen().cloned();
-                self.palette = None;
+                self.close_palette();
                 if let Some(item) = item {
                     self.run_item(item, cx);
                 }
@@ -2209,7 +2256,7 @@ impl RelayApp {
                     .when(on, |d| d.bg(t.active))
                     .hover(|s| s.bg(t.hover))
                     .on_click(cx.listener(move |app, _, _, cx| {
-                        app.palette = None;
+                        app.close_palette();
                         app.run_item(item_c.clone(), cx);
                         cx.notify();
                     }))

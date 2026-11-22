@@ -46,7 +46,14 @@ GPUI window. Every 16 ms `RelayApp::pump`:
    snapshot ready);
 3. re-renders on a hub tick, records history visits, finishes wake-up scroll
    restores, and starts link hints on an `f` hotkey;
-4. checks idle tabs for sleep every 30 s.
+4. focusses the active page once its native view is attached (and retries on
+   the next pump for a slept tab);
+5. checks idle tabs for sleep every 30 s.
+
+The pump keeps one `watch::Receiver` for its lifetime; it does not build a
+new subscription every 16 ms. `SharedHub::take_hotkeys` drains the page's
+hotkey queue without ticking the watch, so an idle window settles instead of
+waking itself every frame.
 
 Panes report their bounds from a `canvas` each frame, and `WebHost::layout`
 moves the native `WKWebView`s to match. Native views draw above GPUI, so web
