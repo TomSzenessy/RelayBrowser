@@ -253,19 +253,27 @@ fn encode_query(q: &str) -> String {
 /// characters appear in order. Rewards prefixes, word starts, and runs.
 pub fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
     let q: Vec<char> = query.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    fuzzy_score_chars(&q, candidate)
+}
+
+/// Allocation-free scorer. `q` is already lowercased and whitespace-free;
+/// the candidate is lowercased as it is iterated.
+pub fn fuzzy_score_chars(q: &[char], candidate: &str) -> Option<i32> {
     if q.is_empty() {
         return Some(0);
     }
-    let c: Vec<char> = candidate.to_lowercase().chars().collect();
     let mut score = 0;
     let mut qi = 0;
     let mut prev: Option<usize> = None;
-    for (i, ch) in c.iter().enumerate() {
-        if qi < q.len() && *ch == q[qi] {
+    let mut prev_char: Option<char> = None;
+    let mut len = 0usize;
+    for (i, ch) in candidate.chars().flat_map(char::to_lowercase).enumerate() {
+        len = i + 1;
+        if qi < q.len() && ch == q[qi] {
             score += 1;
             if i == 0 {
                 score += 8;
-            } else if !c[i - 1].is_alphanumeric() {
+            } else if prev_char.is_some_and(|p| !p.is_alphanumeric()) {
                 score += 5;
             }
             if prev == Some(i.wrapping_sub(1)) {
@@ -274,12 +282,12 @@ pub fn fuzzy_score(query: &str, candidate: &str) -> Option<i32> {
             prev = Some(i);
             qi += 1;
         }
+        prev_char = Some(ch);
     }
     if qi < q.len() {
         return None;
     }
-    // Prefer shorter candidates for equal matches.
-    Some(score * 10 - c.len().min(200) as i32 / 10)
+    Some(score * 10 - len.min(200) as i32 / 10)
 }
 
 /// The palette's candidate sources, filled by the shell.
@@ -302,19 +310,20 @@ pub struct Palette {
 impl Palette {
     pub fn refresh(&mut self, sources: &Sources, search_template: &str) {
         let q = self.query.trim();
+        let qchars: Vec<char> = q.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
         let mut scored: Vec<(i32, Item)> = vec![];
         for (id, title, url) in &sources.tabs {
-            if let Some(s) = best(q, title, url) {
+            if let Some(s) = best_chars(&qchars, title, url) {
                 scored.push((s + 300, Item::Tab { id: *id, title: title.clone(), url: url.clone() }));
             }
         }
         for (title, url) in &sources.bookmarks {
-            if let Some(s) = best(q, title, url) {
+            if let Some(s) = best_chars(&qchars, title, url) {
                 scored.push((s + 200, Item::Bookmark { title: title.clone(), url: url.clone() }));
             }
         }
         for (rank, (title, url)) in sources.history.iter().enumerate() {
-            if let Some(s) = best(q, title, url) {
+            if let Some(s) = best_chars(&qchars, title, url) {
                 // History arrives pre-ranked by frecency.
                 scored.push((s + 100 - rank as i32, Item::History { title: title.clone(), url: url.clone() }));
             }
@@ -323,7 +332,7 @@ impl Palette {
             if q.is_empty() {
                 continue;
             }
-            if let Some(s) = fuzzy_score(q, c.title()) {
+            if let Some(s) = fuzzy_score_chars(&qchars, c.title()) {
                 scored.push((s + 250, Item::Command(c)));
             }
         }
@@ -373,13 +382,19 @@ impl Palette {
     }
 }
 
-fn best(q: &str, title: &str, url: &str) -> Option<i32> {
+fn best_chars(q: &[char], title: &str, url: &str) -> Option<i32> {
     if q.is_empty() {
         return Some(0);
     }
-    let t = fuzzy_score(q, title);
-    let u = fuzzy_score(q, &short_url(url)).map(|s| s - 5);
+    let t = fuzzy_score_chars(q, title);
+    let u = fuzzy_score_chars(q, short_str(url)).map(|s| s - 5);
     t.max(u)
+}
+
+/// The scoring view of a URL (`host/path`), borrowed instead of allocated.
+fn short_str(url: &str) -> &str {
+    let s = url.split("://").nth(1).unwrap_or(url).trim_end_matches('/');
+    s.strip_prefix("www.").unwrap_or(s)
 }
 
 #[cfg(test)]
@@ -405,6 +420,18 @@ mod tests {
             resolve("rust & gpui", DEFAULT_SEARCH),
             Item::Search { query: "rust & gpui".into(), url: "https://duckduckgo.com/?q=rust+%26+gpui".into() }
         );
+    }
+
+    #[test]
+    fn allocation_free_scorer_matches_the_string_scorer() {
+        let cases = [
+            ("gh", "GitHub"), ("nt", "New Tab"), ("docs", "docs.rs/gpui"), ("rust", "Rust & GPUI"),
+            ("", "anything"), ("xyz", "GitHub"), ("é", "Éditeur"), ("rel", "Relay Browser"),
+        ];
+        for (q, c) in cases {
+            let chars: Vec<char> = q.to_lowercase().chars().filter(|ch| !ch.is_whitespace()).collect();
+            assert_eq!(fuzzy_score_chars(&chars, c), fuzzy_score(q, c), "{q:?} {c:?}");
+        }
     }
 
     #[test]
