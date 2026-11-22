@@ -114,6 +114,8 @@ pub struct RelayApp {
     placements: Rc<RefCell<Vec<(TabId, Bounds<Pixels>)>>>,
     snapshots: HashMap<TabId, Arc<Image>>,
     mcp_socket: String,
+    /// Last title pushed to the native window; avoids a call every frame.
+    window_title: String,
 }
 
 impl RelayApp {
@@ -158,6 +160,7 @@ impl RelayApp {
             placements: Rc::default(),
             snapshots: HashMap::new(),
             mcp_socket,
+            window_title: String::new(),
         };
         app.load_installed_extensions();
         app.start_pump(cx);
@@ -670,13 +673,15 @@ impl RelayApp {
         )
     }
 
-    fn render_pane(&self, tab: TabId) -> impl IntoElement {
+    fn render_pane(&self, tab: TabId, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let placements = self.placements.clone();
         let web = self.web.clone();
-        let (url, sleeping, has_dom, title) = {
+        let (url, sleeping, has_dom, title, load_error) = {
             let h = self.hub.lock();
-            h.tab(tab).map(|s| (s.url.clone(), s.sleeping, s.dom.root().is_some(), s.title.clone())).unwrap_or_default()
+            h.tab(tab)
+                .map(|s| (s.url.clone(), s.sleeping, s.dom.root().is_some(), s.title.clone(), s.load_error.clone()))
+                .unwrap_or_default()
         };
         let renders = web.borrow().renders_pages();
         let mut pane = div().relative().flex_1().h_full().bg(t.page).overflow_hidden();
@@ -695,6 +700,38 @@ impl RelayApp {
                     .child(div().text_size(px(15.)).text_color(t.text).child(SharedString::from(if title.is_empty() { palette::short_url(&url) } else { title })))
                     .child(div().text_size(px(12.)).child(SharedString::from(url)))
                     .child(div().text_size(px(12.)).child("WebKit renders this page on macOS. This build has no WebKit.")),
+            );
+        } else if let Some(error) = load_error.filter(|_| !has_dom && !sleeping) {
+            pane = pane.child(
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .p_8()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("This page did not load"))
+                    .child(div().max_w(px(520.)).text_size(px(12.)).text_color(t.muted).child(SharedString::from(error)))
+                    .child(
+                        div()
+                            .id("retry-page")
+                            .px_3()
+                            .py_1p5()
+                            .rounded(px(6.))
+                            .border_1()
+                            .border_color(t.border)
+                            .bg(t.surface)
+                            .text_size(px(13.))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.web.borrow_mut().apply(BrowserRequest::Reload(tab));
+                                app.toast("Retrying…");
+                                cx.notify();
+                            }))
+                            .child("Try again"),
+                    ),
             );
         } else if !has_dom && !sleeping {
             pane = pane.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(t.accent));
@@ -721,9 +758,9 @@ impl RelayApp {
             return div().flex_1().h_full().child(self.render_welcome(cx)).into_any_element();
         };
         let mut row = div().flex_1().h_full().flex();
-        row = row.child(self.render_pane(active));
+        row = row.child(self.render_pane(active, cx));
         if let Some(s) = self.split.filter(|s| *s != active && self.hub.lock().tab(*s).is_some()) {
-            row = row.child(div().w(px(1.)).h_full().bg(t.border)).child(self.render_pane(s));
+            row = row.child(div().w(px(1.)).h_full().bg(t.border)).child(self.render_pane(s, cx));
         }
         row.into_any_element()
     }
@@ -982,6 +1019,16 @@ impl RelayApp {
         )
     }
 
+    /// What the window title should say: the active page, or Relay itself.
+    fn document_title(&self) -> String {
+        let h = self.hub.lock();
+        match h.active().and_then(|a| h.tab(a)) {
+            Some(t) if !t.title.is_empty() => format!("{} — Relay", t.title),
+            Some(t) => format!("{} — Relay", palette::short_url(&t.url)),
+            None => "Relay".to_string(),
+        }
+    }
+
     fn render_status(&self) -> impl IntoElement {
         let t = self.theme;
         let (url, total, asleep, agents) = {
@@ -1021,6 +1068,11 @@ impl RelayApp {
 impl Render for RelayApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.theme = Theme::for_appearance(window.appearance());
+        let title = self.document_title();
+        if title != self.window_title {
+            self.window_title = title.clone();
+            window.set_window_title(&title);
+        }
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));

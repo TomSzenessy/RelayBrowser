@@ -179,6 +179,17 @@ mod mac {
 
         let info = op(&engine, &hub, tab, Op::PageInfo);
         assert_eq!(info["title"], "Relay smoke");
+
+        // A refused connection is surfaced as a readable load error (the shell
+        // hides WebKit's blank error page and shows Retry).
+        let dead = "http://127.0.0.1:1/";
+        let failed_tab = hub.update(|h| h.create_tab(dead, Owner::User));
+        engine.create(failed_tab, dead);
+        assert!(
+            until(|| hub.lock().tab(failed_tab).is_some_and(|t| t.load_error.is_some()), 15.0),
+            "a refused navigation did not set load_error"
+        );
+        println!("smoke: load error = {:?}", hub.lock().tab(failed_tab).unwrap().load_error);
         server.join().ok();
         println!("SMOKE OK: hello, DOM, console, fetch(500), click, and page info all verified in WKWebView");
         std::process::exit(0);

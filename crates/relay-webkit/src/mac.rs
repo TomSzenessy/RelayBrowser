@@ -13,9 +13,9 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURLRequest, NSURL};
 use objc2_web_kit::{
-    WKContentRuleList, WKContentRuleListStore, WKNavigationAction, WKScriptMessage, WKScriptMessageHandler, WKUIDelegate,
-    WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebExtensionController, WKWebView,
-    WKWebViewConfiguration, WKWindowFeatures,
+    WKContentRuleList, WKContentRuleListStore, WKNavigation, WKNavigationAction, WKNavigationDelegate, WKScriptMessage,
+    WKScriptMessageHandler, WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime,
+    WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::RefCell;
@@ -65,6 +65,18 @@ define_class!(
         }
     }
 
+    unsafe impl WKNavigationDelegate for BridgeHandler {
+        #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
+        fn did_fail_provisional(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
+            self.note_error(error);
+        }
+
+        #[unsafe(method(webView:didFailNavigation:withError:))]
+        fn did_fail(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
+            self.note_error(error);
+        }
+    }
+
     unsafe impl WKUIDelegate for BridgeHandler {
         #[unsafe(method_id(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
         fn create_web_view(
@@ -87,6 +99,18 @@ impl BridgeHandler {
     fn new(mtm: MainThreadMarker, ivars: HandlerIvars) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
+    }
+
+    /// A failed main-frame load: WebKit renders its own blank error page, so
+    /// the shell hides the view and shows a readable error with Retry.
+    fn note_error(&self, error: &NSError) {
+        let message = error.localizedDescription().to_string();
+        let tab = self.ivars().tab;
+        self.ivars().hub.update(|h| {
+            if let Some(t) = h.tab_mut(tab) {
+                t.load_error = Some(message);
+            }
+        });
     }
 }
 
@@ -172,6 +196,7 @@ impl Engine {
 
     /// Create the WKWebView for a tab and start loading `url`.
     pub fn create(&mut self, tab: TabId, url: &str) -> &Retained<WKWebView> {
+        self.clear_error(tab);
         let mtm = self.mtm;
         let handler = BridgeHandler::new(mtm, HandlerIvars { tab, hub: self.hub.clone(), events: self.events.clone() });
         let ucc = unsafe { WKUserContentController::new(mtm) };
@@ -203,6 +228,7 @@ impl Engine {
             view.setInspectable(true); // Develop menu / Web Inspector fallback
             view.setAllowsBackForwardNavigationGestures(true);
             view.setUIDelegate(Some(ProtocolObject::from_ref(&*handler)));
+            view.setNavigationDelegate(Some(ProtocolObject::from_ref(&*handler)));
         }
         load(&view, url);
         self.hub.update(|h| {
@@ -217,6 +243,7 @@ impl Engine {
 
     pub fn navigate(&self, tab: TabId, url: &str) {
         if let Some(t) = self.tabs.get(&tab) {
+            self.clear_error(tab);
             load(&t.view, url);
         }
     }
@@ -235,8 +262,17 @@ impl Engine {
 
     pub fn reload(&self, tab: TabId) {
         if let Some(t) = self.tabs.get(&tab) {
+            self.clear_error(tab);
             unsafe { t.view.reload() };
         }
+    }
+
+    fn clear_error(&self, tab: TabId) {
+        self.hub.update(|h| {
+            if let Some(t) = h.tab_mut(tab) {
+                t.load_error = None;
+            }
+        });
     }
 
     pub fn eval(&self, tab: TabId, script: &str) {
@@ -263,6 +299,14 @@ impl Engine {
                     t.view.setHidden(false);
                 }
                 None => t.view.setHidden(true),
+            }
+        }
+        // A failed page has no bridge and therefore no DOM: hide WebKit's
+        // blank error view so the shell's error card is visible.
+        for (id, t) in &self.tabs {
+            let failed = self.hub.lock().tab(*id).is_some_and(|s| s.load_error.is_some() && s.dom.is_empty());
+            if failed {
+                t.view.setHidden(true);
             }
         }
     }

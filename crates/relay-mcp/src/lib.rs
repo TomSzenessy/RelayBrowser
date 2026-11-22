@@ -339,6 +339,9 @@ impl RelayMcp {
             let tab = h.resolve(a.tab_id)?;
             let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
             if t.dom.is_empty() {
+                if let Some(e) = &t.load_error {
+                    return Ok(ok(format!("Tab {tab} failed to load: {e}\n{}", t.url)));
+                }
                 return Ok(ok(format!("Tab {tab} ({}) has no DOM yet (loading or asleep).", t.url)));
             }
             let body = t.dom.outline(a.root_id, a.max_depth.unwrap_or(40), a.interactive_only, a.max_lines.unwrap_or(400));

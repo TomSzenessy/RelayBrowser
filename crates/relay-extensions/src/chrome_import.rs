@@ -109,8 +109,15 @@ pub fn chrome_time_to_unix(t: i64) -> i64 {
 /// Read the most recent `limit` URLs from the `History` SQLite database.
 pub fn read_history(profile: &Path, limit: usize) -> Result<Vec<HistoryEntry>, Error> {
     let src = profile.join("History");
-    let tmp = std::env::temp_dir().join(format!("relay-chrome-history-{}.sqlite", std::process::id()));
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("relay-chrome-history-{}-{nonce}.sqlite", std::process::id()));
     std::fs::copy(&src, &tmp)?;
+    // The copy holds the user's browsing history: keep it private until removed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
     let result = (|| {
         let conn = rusqlite::Connection::open_with_flags(&tmp, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut stmt = conn.prepare(

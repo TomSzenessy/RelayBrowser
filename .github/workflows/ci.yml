@@ -43,6 +43,17 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+      - name: Install the pinned Rust toolchain
+        # The self-hosted runner is a general Linux box: Rust is not part of
+        # its image, so install it (idempotently) before any surface check.
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+            sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain 1.100.0
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" target add aarch64-apple-darwin || true
+
       - name: Decide tree-hash reuse
         id: reuse
         if: github.event_name == 'push'

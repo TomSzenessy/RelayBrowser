@@ -236,6 +236,8 @@ pub struct TabState {
     pub pinned: bool,
     pub playing_audio: bool,
     pub sleeping: bool,
+    /// Why the last navigation failed (WebKit's message), cleared on reload.
+    pub load_error: Option<String>,
     /// Hotkeys from the page, drained by the shell (`Hub::take_hotkeys`).
     pub hotkeys: Vec<String>,
 }
@@ -257,6 +259,7 @@ impl TabState {
             pinned: false,
             playing_audio: false,
             sleeping: false,
+            load_error: None,
             hotkeys: vec![],
         }
     }
@@ -269,6 +272,7 @@ impl TabState {
             owner: self.owner,
             sleeping: self.sleeping,
             waiting_for_human: self.challenge,
+            load_error: self.load_error.clone(),
             console_errors: self.console.iter().filter(|c| c.level == crate::protocol::ConsoleLevel::Error).count(),
             failed_requests: self.network.iter().filter(|n| n.failed()).count(),
         }
@@ -282,6 +286,7 @@ pub struct TabSummary {
     pub title: String,
     pub owner: Owner,
     pub sleeping: bool,
+    pub load_error: Option<String>,
     pub waiting_for_human: Option<Challenge>,
     pub console_errors: usize,
     pub failed_requests: usize,
@@ -394,6 +399,9 @@ impl SharedHub {
             {
                 let h = self.lock();
                 let t = h.tabs.get(&tab).ok_or(HubError::NoTab(tab))?;
+                if let Some(e) = &t.load_error {
+                    return Err(HubError::Browser(format!("page failed to load: {e}")));
+                }
                 if t.load_seq > after && t.dom.root().is_some() {
                     return Ok(());
                 }
@@ -504,6 +512,7 @@ impl Hub {
                 t.dom = DomStore::default();
                 t.challenge = None;
                 t.playing_audio = false;
+                t.load_error = None;
             }
             PageMessage::Page { url, title } => {
                 t.url = url;
@@ -639,6 +648,17 @@ mod tests {
         assert!(rx.try_recv().is_err());
         hub.ingest_json(a, r#"{"kind":"result","id":1,"ok":true,"value":"real"}"#).unwrap();
         assert_eq!(rx.try_recv().unwrap().value, "real");
+    }
+
+    #[tokio::test]
+    async fn failed_load_is_reported_instead_of_timing_out() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://offline.test/", Owner::User));
+        hub.update(|h| h.tab_mut(tab).unwrap().load_error = Some("The Internet connection appears to be offline.".into()));
+        let err = hub.wait_for_load(tab, 0, Duration::from_millis(50)).await.unwrap_err();
+        assert!(matches!(&err, HubError::Browser(m) if m.contains("offline")), "{err}");
+        hub.ingest_json(tab, r#"{"kind":"hello","url":"https://offline.test/","version":1}"#).unwrap();
+        assert!(hub.lock().tab(tab).unwrap().load_error.is_none(), "a successful load clears the error");
     }
 
     #[test]

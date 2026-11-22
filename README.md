@@ -27,9 +27,9 @@ Early development, built in the open. Honest evidence as of this commit:
 | Part | Evidence |
 |---|---|
 | Bridge (`js/bridge.js`) | Playwright WebKit tests: DOM snapshots/patches, fetch/XHR bodies, console, errors, click/type/highlight, hints, 2FA detection |
-| Shared state, MCP server, Chrome import, CRX, rules, sleep | `cargo test --workspace` (47 tests) |
+| Shared state, MCP server, Chrome import, CRX, rules, sleep | `cargo test --workspace` (49 tests) |
 | macOS `WKWebView` engine + bridge | GitHub `macos` job: builds, runs every test, and executes a real-WebKit smoke page |
-| GPUI window | Compiles and links on macOS in CI; a human still has to look at it |
+| GPUI window | Type-checks on Linux; the macOS job links it; a human still has to look at it |
 | `.app` bundle | Built, ad-hoc signed, and uploaded by the `macos` job |
 
 The GPUI window has not yet been visually reviewed on a Mac, and extensions need

@@ -32,7 +32,9 @@ impl Store {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        Self::init(Connection::open(path)?)
+        let store = Self::init(Connection::open(path)?)?;
+        harden(path);
+        Ok(store)
     }
 
     pub fn in_memory() -> Result<Self, Error> {
@@ -40,6 +42,7 @@ impl Store {
     }
 
     fn init(conn: Connection) -> Result<Self, Error> {
+        conn.busy_timeout(std::time::Duration::from_secs(3))?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -169,6 +172,22 @@ impl Store {
     }
 }
 
+/// History and bookmarks are private: only the user may read the profile,
+/// including SQLite's WAL sidecars.
+#[cfg(unix)]
+fn harden(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    for suffix in ["", "-wal", "-shm"] {
+        let p = std::path::PathBuf::from(format!("{}{suffix}", path.display()));
+        if p.exists() {
+            let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn harden(_path: &Path) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +227,16 @@ mod tests {
         drop(Store::open(&p).unwrap());
         Connection::open(&p).unwrap().execute("UPDATE meta SET value='99' WHERE key='schema'", []).unwrap();
         assert!(Store::open(&p).err().unwrap().to_string().contains("newer"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("profile.sqlite");
+        drop(Store::open(&p).unwrap());
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     #[test]

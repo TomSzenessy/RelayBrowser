@@ -74,6 +74,13 @@ the page, and their status line goes in the status bar.
   `get_network_requests`, `get_cookies`, and `close_tab`. `wait_for` polls the
   streamed DOM (no page round-trip), so an agent can wait for a result after a
   click without racing the page.
+- A failed main-frame load arrives as `TabState::load_error` from
+  `WKNavigationDelegate`; the shell hides WebKit's blank error page and shows a
+  readable message with Retry, and MCP calls report the reason instead of a
+  timeout (`wait_for_load` returns it immediately).
+- The profile (`profile.sqlite`, its WAL sidecars) is 0600 inside the 0700
+  `relay_home()` directory, and the temporary copy of Chrome's History is made
+  0600 and deleted after import.
 - The MCP socket is `relay_home()/mcp.sock`, mode 0600 inside a 0700 directory,
   so only the user's own processes connect.
 
