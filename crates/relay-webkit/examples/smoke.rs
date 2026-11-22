@@ -122,6 +122,7 @@ mod mac {
         // AppKit must be initialized before WebKit; no window is needed.
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
+        app.finishLaunching();
 
         let (url, server) = serve();
         let hub = SharedHub::new();

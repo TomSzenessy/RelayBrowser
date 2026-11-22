@@ -99,22 +99,25 @@ restores scroll once the bridge says `hello`.
 
 Five layers, cheapest first:
 
-1. **Portable tests** (`cargo test --workspace`, 50 tests) run anywhere:
+1. **Portable tests** (`cargo test --workspace`, 50 tests locally; Linux CI runs
+   the same suite without `relay-ui`, whose gpui link needs more disk than the
+   runner has) run anywhere:
    protocol, hub, MCP round-trip with a real client, Chrome import, CRX,
    content rules, sleep, palette, inspector, hints. The stdio transport itself
    is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which spawns the real
    `relay mcp` binary, connects it to a socket-backed hub, and performs the
    initialize / tools list / list_tabs handshake.
-2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui`; a
-   full link needs GPUI's system libraries (e.g. `libxkbcommon`). Its
-   macOS-only `web.rs` needs a macOS build.
+2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui` (CI
+   runs this); a full link needs GPUI's system libraries (e.g. `libxkbcommon`).
+   Its macOS-only `web.rs` needs a macOS build.
 3. **The Darwin type-check** is `bash scripts/mac-check.sh`: it installs the
    Apple standard library when rustup is available and type-checks
    `relay-webkit`, `relay-extensions`, `relay-mcp`, including the `smoke`
    example. It proves API use, not behaviour.
 4. **The macOS job** (`.github/workflows/macos.yml`) is the intended runtime
-   evidence: `cargo test --workspace`, the WebKit smoke page, the Playwright
-   bridge tests (macOS has a WebKit whose headless mode works), then the release
+   evidence: the full `cargo test --workspace` (including relay-ui and the
+   stdio proxy), the WebKit smoke page, the Playwright bridge tests (macOS has
+   a WebKit whose headless mode works), then the release
    build packaged by [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh).
    It is manual because this account's GitHub-hosted macOS requests stay
    queued; dispatch it on a Mac or with a macOS runner attached. It has not

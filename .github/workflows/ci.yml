@@ -54,6 +54,15 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/rustup" target add aarch64-apple-darwin || true
 
+      - name: Reclaim disk before the gate
+        # The runner hosts several projects on a small disk. Old target trees
+        # and Cargo downloads are reproducible; source and caches we need are
+        # untouched.
+        run: |
+          df -h
+          rm -rf "$GITHUB_WORKSPACE/target" "$HOME/.cargo/registry/cache" "$HOME/.cargo/git"
+          df -h
+
       - name: Decide tree-hash reuse
         id: reuse
         if: github.event_name == 'push'
