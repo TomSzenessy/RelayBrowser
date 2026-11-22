@@ -113,7 +113,8 @@ Five layers, cheapest first:
    `relay-webkit`, `relay-extensions`, `relay-mcp`, including the `smoke`
    example. It proves API use, not behaviour.
 4. **The macOS job** (`.github/workflows/macos.yml`) is the intended runtime
-   evidence: `cargo test --workspace`, the WebKit smoke page, then the release
+   evidence: `cargo test --workspace`, the WebKit smoke page, the Playwright
+   bridge tests (macOS has a WebKit whose headless mode works), then the release
    build packaged by [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh).
    It is manual because this account's GitHub-hosted macOS requests stay
    queued; dispatch it on a Mac or with a macOS runner attached. It has not
@@ -131,6 +132,9 @@ Five layers, cheapest first:
 - Minimum macOS: 13.3 (`WKWebView.isInspectable`). Extensions need 15.4
   (`WKWebExtension`); on older systems Relay runs without them.
 
+- Dev-profile dependencies build at `opt-level = 0` because the two-core CI
+  runner spent most of its budget compiling them at 1; release builds keep
+  `opt-level = 3`, `lto = "thin"`, and `strip = true`.
 - `cargo test --workspace` runs everywhere. On Linux,
   `bash scripts/mac-check.sh` (or its `cargo check --workspace --exclude
   relay-ui --target aarch64-apple-darwin` body) type-checks the macOS code in

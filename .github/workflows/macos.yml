@@ -50,6 +50,13 @@ jobs:
       - name: Smoke-test the engine in a real WKWebView
         run: cargo run --locked -p relay-webkit --example smoke
 
+      - name: Bridge tests in Playwright's WebKit
+        run: |
+          cd js
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install webkit
+          npm test
+
       - name: Build and package Relay.app
         run: |
           cargo build --release --locked -p relay-ui

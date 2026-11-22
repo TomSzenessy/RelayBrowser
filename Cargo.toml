@@ -38,7 +38,10 @@ opt-level = 3
 debug = 0
 
 [profile.dev.package."*"]
-opt-level = 1
+# Dependencies compile at 0: debug builds are for tests and contributors, and
+# opt-level 1 roughly doubles cold CI time on the two-core runner. Release
+# builds are what users run.
+opt-level = 0
 
 [patch.crates-io]
 # See third_party/README.md.
