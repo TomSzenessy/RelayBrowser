@@ -5,6 +5,7 @@
 
 use crate::inspector::{self, Panel, Tree};
 use crate::palette::{self, Command, Item, Palette, Sources};
+use crate::startpage::{Section, StartItem, StartPage};
 use crate::tabstrip;
 use crate::theme::Theme;
 use crate::web::{EditAction, WebEvent, WebHost};
@@ -300,6 +301,9 @@ pub struct RelayApp {
     hovered_tab: Option<TabId>,
     /// An installed web app window: one page, no browser chrome.
     app_mode: bool,
+    /// Cached new-tab data (recent/frequent/apps/bookmarks), refreshed when
+    /// a visit, bookmark, or installed app changes.
+    start_page: StartPage,
     /// The installed app's display name, for its menu and title.
     app_name: Option<String>,
     /// Second click on "Remove This Site's App" within the toast window
@@ -339,6 +343,13 @@ impl RelayApp {
             store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).as_deref(),
             store.as_ref().and_then(|s| s.setting("tabs_folded").ok().flatten()).as_deref(),
         );
+        let start_page = match &store {
+            Some(store) => {
+                let sections = store.setting("start_sections").ok().flatten();
+                StartPage::build(store, sections.as_deref()).unwrap_or_default()
+            }
+            None => StartPage::default(),
+        };
         if blocking {
             web.load_content_rules(&rules_json(store.as_ref()));
         }
@@ -386,6 +397,7 @@ impl RelayApp {
             hovered_tab: None,
             app_mode,
             app_name: app_name.clone(),
+            start_page,
             pending_remove_app: None,
         };
         if app_mode {
@@ -556,6 +568,7 @@ impl RelayApp {
         let hotkeys = self.hub.update(|h| h.take_hotkeys());
         let mut loads = vec![];
         let mut ready = vec![];
+        let mut visited = false;
         {
             let h = self.hub.lock();
             for t in h.tabs() {
@@ -569,6 +582,7 @@ impl RelayApp {
                 if t.load_seq > 0 && rec != Some(&(t.load_seq, t.title.clone())) {
                     if let (Some(store), Owner::User) = (&self.store, t.owner) {
                         let _ = store.record_visit(&t.url, &t.title, now_unix());
+                        visited = true;
                     }
                     self.recorded.insert(t.id, (t.load_seq, t.title.clone()));
                 }
@@ -588,6 +602,20 @@ impl RelayApp {
                 self.start_hints();
             }
         }
+        if visited {
+            self.refresh_start_page();
+        }
+    }
+
+    /// Rebuild the new-tab cache after a profile change. Cheap: a few
+    /// indexed SQLite reads, only on a visit/bookmark/app change.
+    fn refresh_start_page(&mut self) {
+        let Some(store) = &self.store else {
+            self.start_page = StartPage::default();
+            return;
+        };
+        let sections = store.setting("start_sections").ok().flatten();
+        self.start_page = StartPage::build(store, sections.as_deref()).unwrap_or_default();
     }
 
     fn sleep_idle_tabs(&mut self, cx: &mut Context<Self>) {
@@ -928,6 +956,7 @@ impl RelayApp {
                         eprintln!("relay: installed the app but could not record it: {e}");
                     }
                 }
+                self.refresh_start_page();
                 self.toast(format!("Installed “{}” in ~/Applications", app.name));
             }
             Err(e) => self.toast(format!("Could not install the app: {e}")),
@@ -966,6 +995,7 @@ impl RelayApp {
                 if let Some(store) = &self.store {
                     let _ = store.remove_web_app(&record.start_url);
                 }
+                self.refresh_start_page();
                 self.toast(format!("Removed “{}”", record.name));
             }
             Err(e) => self.toast(format!("Could not remove the app: {e}")),
@@ -1255,6 +1285,7 @@ impl RelayApp {
             Some(Ok(false)) => "Bookmark removed".to_string(),
             Some(Err(e)) => format!("Could not update bookmarks: {e}"),
         };
+        self.refresh_start_page();
         self.toast(msg);
     }
 
@@ -1784,7 +1815,7 @@ impl RelayApp {
     fn render_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let Some(active) = self.active() else {
-            return div().flex_1().h_full().child(self.render_welcome(cx)).into_any_element();
+            return self.render_start_page(cx);
         };
         let mut row = div().flex_1().h_full().flex();
         row = row.child(self.render_pane(active, cx));
@@ -1792,6 +1823,123 @@ impl RelayApp {
             row = row.child(div().w(px(1.)).h_full().bg(t.border)).child(self.render_pane(s, cx));
         }
         row.into_any_element()
+    }
+
+    /// The new-tab page: a quiet start field and the sections of `startpage`.
+    /// A brand-new profile falls back to the welcome card inside the page.
+    fn render_start_page(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let title = self.app_name.clone().unwrap_or_else(|| "Relay".to_string());
+        let mut page = div()
+            .flex_1()
+            .h_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt(px(72.))
+            .px_6()
+            .bg(t.page)
+            .overflow_hidden()
+            .child(div().text_size(px(28.)).text_color(t.text).child(SharedString::from(title)))
+            .child(self.start_search(cx));
+        if self.start_page.is_empty() {
+            page = page.child(self.render_welcome(cx));
+        } else {
+            page = page.child(self.start_grid(cx));
+        }
+        page.into_any_element()
+    }
+
+    fn start_search(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        div()
+            .id("start-search")
+            .w(px(560.))
+            .h(px(44.))
+            .mt_5()
+            .px_4()
+            .flex()
+            .items_center()
+            .justify_between()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(t.border)
+            .bg(t.surface)
+            .text_size(px(14.))
+            .text_color(t.muted)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.open_palette(None, false);
+                cx.notify();
+            }))
+            .child("Search or enter an address")
+            .child(div().text_size(px(11.)).child("⌘K"))
+            .into_any_element()
+    }
+
+    fn start_grid(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let mut left = div().flex().flex_col().gap_6().flex_1();
+        let mut right = div().flex().flex_col().gap_6().flex_1();
+        for (i, (section, items)) in self.start_page.sections.iter().enumerate() {
+            let card = self.start_section(*section, items, cx);
+            if i % 2 == 0 {
+                left = left.child(card);
+            } else {
+                right = right.child(card);
+            }
+        }
+        div().flex().gap_6().mt_8().w(px(720.)).max_h(px(560.)).child(left).child(right).into_any_element()
+    }
+
+    fn start_section(&self, section: Section, items: &[StartItem], cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().px_2().text_size(px(11.)).text_color(t.muted).child(section.title().to_uppercase()));
+        if items.is_empty() {
+            col = col.child(div().px_2().py_1().text_size(px(12.)).text_color(t.muted).child("Nothing yet"));
+        }
+        for (i, item) in items.iter().enumerate() {
+            let url = item.url.clone();
+            col = col.child(
+                div()
+                    .id(SharedString::from(format!("start-{}-{i}", section.as_str())))
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .px_2()
+                    .py_1p5()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.open_url(url.clone(), false);
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(t.text)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(item.title.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(t.muted)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(item.note.clone())),
+                    ),
+            );
+        }
+        col.into_any_element()
     }
 
     fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1814,28 +1962,27 @@ impl RelayApp {
                 }))
                 .child(label)
         };
-        div().size_full().flex().items_center().justify_center().child(
-            div()
-                .w(px(460.))
-                .flex()
-                .flex_col()
-                .gap_4()
-                .p_6()
-                .rounded(px(10.))
-                .bg(t.surface)
-                .border_1()
-                .border_color(t.border)
-                .child(div().text_size(px(22.)).text_color(t.text).child("Relay"))
-                .child(div().text_size(px(13.)).text_color(t.muted).child("Press ⌘K to open a URL, search, or run any command."))
-                .child(div().flex().gap_2().child(button("import", "Import from Chrome", Command::ImportChrome, cx)).child(button("mcp", "Copy MCP setup", Command::CopyMcpSetup, cx)))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(t.muted)
-                        .font_family("Menlo")
-                        .child(SharedString::from(format!("Agents: {}\nSocket: {}", mcp_setup_command(), self.mcp_socket))),
-                ),
-        )
+        div()
+            .w(px(560.))
+            .mt_8()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_6()
+            .rounded(px(10.))
+            .bg(t.surface)
+            .border_1()
+            .border_color(t.border)
+            .child(div().text_size(px(15.)).text_color(t.text).child("A browser that agents can read"))
+            .child(div().text_size(px(13.)).text_color(t.muted).child("Import your Chrome bookmarks and history, or connect Claude Code, Codex, OpenCode, or Zed to the live page."))
+            .child(div().flex().gap_2().child(button("import", "Import from Chrome", Command::ImportChrome, cx)).child(button("mcp", "Copy MCP setup", Command::CopyMcpSetup, cx)))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(t.muted)
+                    .font_family("Menlo")
+                    .child(SharedString::from(format!("Agents: {}\nSocket: {}", mcp_setup_command(), self.mcp_socket))),
+            )
     }
 
     fn render_inspector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2197,6 +2344,7 @@ impl RelayApp {
                     match app.store.as_ref().map(|s| s.clear_history().and_then(|n| s.clear_session().map(|_| n))) {
                         Some(Ok(n)) => {
                             app.saved_session.clear();
+                            app.refresh_start_page();
                             app.toast(format!("Cleared {n} history entries and the saved session"))
                         }
                         Some(Err(e)) => app.toast(format!("Clear history failed: {e}")),

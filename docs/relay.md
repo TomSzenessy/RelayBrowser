@@ -15,7 +15,7 @@ frontends read it: the native Inspector and the local MCP server.
 | `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy; `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback | policy portable, engine macOS |
 | `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
 | `relay-mcp` | `RelayMcp` (rmcp 3.x tool router), user-only Unix socket server, `relay mcp` stdio proxy | portable (Unix) |
-| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (native menu bar, tab strip with close buttons/agent group/fold/move, panes and split, ⌘K palette, ⌘, Settings overlay, Inspector with console/network filters, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping, web app install/remove). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `tabstrip.rs`: placement/fold logic. `webapp.rs`: manifest validation and `.app` bundle writer. `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md) with WCAG AA contrast tests. `main.rs`: the CLI (`mcp`, `--app`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
+| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (native menu bar, tab strip with close buttons/agent group/fold/move, panes and split, ⌘K palette, ⌘, Settings overlay, Inspector with console/network filters, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping, web app install/remove). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `tabstrip.rs`: placement/fold logic. `startpage.rs`: new-tab sections and rows. `webapp.rs`: manifest validation and `.app` bundle writer. `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md) with WCAG AA contrast tests. `main.rs`: the CLI (`mcp`, `--app`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
 
 ## Data flow
 
@@ -81,6 +81,21 @@ renders a `×` (visible on the active row and while the pointer is over it); a
 middle click closes too. Closing a pinned row sleeps it, and closing the last
 row of an `--app` window quits that window. The old fixed 220 pt sidebar is
 gone: the same renderer draws vertical rows or a horizontal row of pills.
+
+## New-tab page
+
+With no active tab, `render_start_page` paints the new-tab page: the app name,
+one quiet search field that opens the ⌘K palette, and up to four sections from
+`startpage.rs` — **Recent** (pure `last_visit` order, 8 pages), **Frequent**
+(most-visited, with recent pages removed so the two lists do not repeat),
+**Apps** (installed web apps from the `web_apps` table), and **Bookmarks**
+(with their folder as the note). Section order and visibility come from the
+`start_sections` setting (`recent,frequent,apps,bookmarks`; `none` hides all);
+unknown names are ignored and an empty value falls back to the default order.
+The data is cached in `RelayApp::start_page` and rebuilt only after a visit,
+bookmark change, install/remove, or history clear, never every frame.
+A brand-new profile with no rows shows the welcome card (Import from Chrome,
+MCP setup) inside the page.
 
 ## Installed web apps
 

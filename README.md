@@ -68,6 +68,10 @@ menu bar, so those shortcuts keep working while the page — not Relay — has
 keyboard focus, and `Edit` (`⌘X`/`⌘C`/`⌘V`/`⌘A`) reaches the page's own editing
 commands.
 
+With no tab open, the new-tab page shows Recent, Frequent, installed Apps, and
+Bookmarks; `start_sections` sets their order, and `none` hides them. `⌘K` on
+that page opens the same palette as everywhere else.
+
 ### Install a site as an app
 
 Open a site that publishes a web app manifest and choose **Install This Site as

@@ -173,6 +173,35 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The latest pages, for the new-tab "Recent" section. This is a pure
+    /// recency order, unlike the palette's frecency ranking.
+    pub fn recent_sites(&self, limit: usize) -> Result<Vec<Visit>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT url, title, visit_count, last_visit FROM history
+             ORDER BY last_visit DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |r| {
+            Ok(Visit { url: r.get(0)?, title: r.get(1)?, visit_count: r.get(2)?, last_visit: r.get(3)? })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The most-visited pages, for the new-tab "Frequent" section. Ties go
+    /// to the more recent page so a fresh favourite appears promptly.
+    pub fn frequent_sites(&self, limit: usize) -> Result<Vec<Visit>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT url, title, visit_count, last_visit FROM history
+             WHERE visit_count > 0
+             ORDER BY visit_count DESC, last_visit DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |r| {
+            Ok(Visit { url: r.get(0)?, title: r.get(1)?, visit_count: r.get(2)?, last_visit: r.get(3)? })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn add_bookmark(&self, b: &Bookmark) -> Result<bool, Error> {
         let n = self.conn.execute(
             "INSERT OR IGNORE INTO bookmarks(url, title, folder) VALUES(?1, ?2, ?3)",
@@ -534,6 +563,26 @@ mod tests {
         // Future timestamps (clock skew, imported data) must not invert ranking.
         s.record_visit("https://docs.rs/serde", "serde", now + 10_000_000).unwrap();
         assert_eq!(s.search_history("docs", 10).unwrap()[0].url, "https://docs.rs/gpui");
+    }
+
+    #[test]
+    fn frequent_sites_rank_by_visits_then_recency() {
+        let s = Store::in_memory().unwrap();
+        let now = 1_800_000_000;
+        for _ in 0..3 {
+            s.record_visit("https://often.test/", "Often", now).unwrap();
+        }
+        for _ in 0..2 {
+            s.record_visit("https://newer.test/", "Newer", now + 10).unwrap();
+        }
+        s.record_visit("https://once.test/", "Once", now).unwrap();
+        let f = s.frequent_sites(10).unwrap();
+        assert_eq!(f.iter().map(|v| v.url.as_str()).collect::<Vec<_>>(), vec!["https://often.test/", "https://newer.test/", "https://once.test/"]);
+        assert_eq!(f[0].visit_count, 3);
+        assert_eq!(s.frequent_sites(2).unwrap().len(), 2);
+        let recent = s.recent_sites(2).unwrap();
+        assert_eq!(recent.iter().map(|v| v.url.as_str()).collect::<Vec<_>>(), vec!["https://newer.test/", "https://often.test/"]);
+        assert_eq!(recent[0].visit_count, 2);
     }
 
     #[test]

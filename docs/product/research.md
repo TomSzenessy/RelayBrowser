@@ -71,7 +71,7 @@ honest gap list; each `no` is a candidate for the next slices, not a promise.
 |---|---|---|---|
 | Tabs: side/top, fold, close, pin | yes | yes (`↔`/`⌘S`/`×`/pin) | visual review on a Mac |
 | Split / find / ad block | yes | yes | — |
-| New tab: home grid, recents, apps | home bookmark grid | welcome card only | **new tab page** |
+| New tab: home grid, recents, apps | home bookmark grid | start page with recent/frequent/apps/bookmarks | shortcut/sidebar slices |
 | Custom hotkeys | full Settings › Shortcuts | fixed key map + native menu | **shortcut editor** |
 | Collapsible side column | yes, drag resize | tab strip only; Inspector pane | **agent/inspector sidebar** |
 | History / bookmarks / downloads panels | three panels | palette + bookmark toggle | panels |
