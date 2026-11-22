@@ -108,6 +108,16 @@ browser-style presets (50%–300%) and store the result in the host's
 `Engine::set_zoom` (`pageZoom`), so a site keeps its zoom across tabs and
 relaunches.
 
+## Cookie banners
+
+With blocking on, the compiled rule list also includes
+`content_rules::CMP_FILTERS`: `css-display-none` rules for the outer
+containers of common consent platforms (OneTrust, Cookiebot, Usercentrics,
+TrustArc, iubenda, Complianz, Osano, CookieYes, Klaro), by vendor-specific id
+or class. Hiding a banner gives no consent. Platforms whose modal locks page
+scrolling (Sourcepoint, Didomi popups, Quantcast) are left out, because a
+hidden modal would leave the page unscrollable.
+
 ## Pinned tabs
 
 `Hub::set_pinned` keeps pinned tabs as a block at the top of the order. The

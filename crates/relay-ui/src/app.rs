@@ -1904,6 +1904,7 @@ fn now_unix() -> i64 {
 /// Built-in list plus the user's `relay_home()/filters.txt` (EasyList syntax).
 fn blocklist() -> String {
     let mut s = relay_webkit::content_rules::BUILTIN_FILTERS.to_string();
+    s.push_str(relay_webkit::content_rules::CMP_FILTERS);
     if let Ok(extra) = std::fs::read_to_string(relay_bridge::paths::relay_home().join("filters.txt")) {
         s.push('\n');
         s.push_str(&extra);

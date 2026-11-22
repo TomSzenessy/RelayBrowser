@@ -47,6 +47,25 @@ pub const BUILTIN_FILTERS: &str = "\
 ##.adsbygoogle
 ";
 
+/// Conservative cookie-consent (CMP) banner hiding: only the outer containers
+/// of widely deployed consent platforms, by their vendor-specific ids and
+/// classes, so no site content shares the selector. Hiding a banner gives no
+/// consent; compliant CMPs then keep their non-essential cookies off. Modal
+/// CMPs that lock page scrolling while open (Sourcepoint, Didomi popups,
+/// Quantcast) are left out: hiding them would leave the page unscrollable.
+/// Applied with the built-in blocklist (off when blocking is off).
+pub const CMP_FILTERS: &str = "\
+###onetrust-consent-sdk
+###CybotCookiebotDialog
+###usercentrics-root
+###truste-consent-track
+###iubenda-cs-banner
+###cmplz-cookiebanner-container
+##.osano-cm-window
+##.cky-consent-container
+##.klaro
+";
+
 pub fn compile(filters: &str) -> Compiled {
     let mut out = Compiled::default();
     let mut exceptions = vec![];
@@ -238,6 +257,13 @@ mod tests {
 
     #[test]
     fn builtin_list_compiles_fully() {
+        let cmp = compile(CMP_FILTERS);
+        assert_eq!(cmp.skipped, 0);
+        assert_eq!(cmp.rules.len(), 9);
+        assert!(cmp.rules.iter().all(|r| r["action"]["type"] == "css-display-none" && r["trigger"]["url-filter"] == ".*"));
+        let selectors: Vec<&str> = cmp.rules.iter().map(|r| r["action"]["selector"].as_str().unwrap()).collect();
+        assert!(selectors.contains(&"#onetrust-consent-sdk") && selectors.contains(&"#CybotCookiebotDialog"), "{selectors:?}");
+        assert!(selectors.iter().all(|s| s.starts_with('#') || s.starts_with('.')), "{selectors:?}");
         let c = compile(BUILTIN_FILTERS);
         assert_eq!(c.skipped, 0);
         assert!(c.rules.len() >= 15);
