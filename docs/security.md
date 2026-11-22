@@ -136,9 +136,11 @@ known slow German legal site with a documented manual-review exception; a 403,
   MCP instructions tell agents so, subframe messages are dropped, and replies
   resolve only for their own tab. Agents may open only `http(s)`/`about:blank`,
   and close only their own tabs.
-- **Extensions:** `relay install-extension` prints the compatibility report
-  and grants the extension's requested permissions and host patterns. Chrome
-  import never installs extensions on its own. Residual: CRX3 signatures are
+- **Extensions:** `relay install-extension` prints the requested API
+  permissions, optional permissions, and host match patterns from the manifest,
+  then states plainly that installing grants every requested permission and
+  host pattern; there is no per-permission withholding yet. Chrome import never
+  installs extensions on its own. Residual: CRX3 signatures are
   not verified. Integrity rests on HTTPS to Google plus the header's `crx_id`
   matching the requested id; packages without an id are refused.
 - **Passwords:** `relay import-passwords` writes Keychain internet passwords

@@ -156,6 +156,14 @@ fn copy_private(src: &Path, dst: &Path) -> Result<(), Error> {
     result
 }
 
+/// Numeric version key: digits split on `.`/`_`; non-numeric parts sort as 0.
+fn version_key(name: &str) -> Vec<u64> {
+    name.split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
 fn is_extension_id(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| (b'a'..=b'p').contains(&b))
 }
@@ -174,12 +182,19 @@ pub fn read_extensions(profile: &Path) -> Result<Vec<InstalledExtension>, Error>
         if !is_extension_id(&id) {
             continue;
         }
-        // Highest version directory wins.
+        // Highest version directory wins, ordered numerically (1.10 > 1.9),
+        // and one unreadable manifest does not discard the whole import.
         let mut versions: Vec<_> = std::fs::read_dir(entry.path())?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.join("manifest.json").is_file()).collect();
-        versions.sort();
-        let Some(vdir) = versions.pop() else { continue };
-        let m = crate::manifest::Manifest::read(&vdir)?;
-        out.push(InstalledExtension { id, name: m.display_name(&vdir), version: m.version.clone() });
+        versions.sort_by_key(|p| version_key(&p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()));
+        let mut chosen = None;
+        for vdir in versions.iter().rev() {
+            if let Ok(m) = crate::manifest::Manifest::read(vdir) {
+                chosen = Some((vdir, m));
+                break;
+            }
+        }
+        let Some((vdir, m)) = chosen else { continue };
+        out.push(InstalledExtension { id, name: m.display_name(vdir), version: m.version.clone() });
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(out)
@@ -266,11 +281,15 @@ mod tests {
         )
         .unwrap();
         let ext = p.join("Extensions/cjpalhdlnbpafiamejdnhcphjbkeiagm");
-        for v in ["1.0.0_0", "1.2.0_0"] {
+        for v in ["1.9.0_0", "1.10.0_0"] {
             std::fs::create_dir_all(ext.join(v).join("_locales/en")).unwrap();
-            std::fs::write(ext.join(v).join("manifest.json"), format!(r#"{{"manifest_version":3,"name":"__MSG_extName__","version":"{}","default_locale":"en"}}"#, &v[..5])).unwrap();
+            std::fs::write(ext.join(v).join("manifest.json"), format!(r#"{{"manifest_version":3,"name":"__MSG_extName__","version":"{}","default_locale":"en"}}"#, &v[..v.find('_').unwrap()])).unwrap();
             std::fs::write(ext.join(v).join("_locales/en/messages.json"), r#"{"extName":{"message":"uBlock Origin"}}"#).unwrap();
         }
+        // A broken highest version must be skipped, not fail the import.
+        let broken = p.join("Extensions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/2.0_0");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join("manifest.json"), "{not json").unwrap();
         std::fs::create_dir_all(p.join("Extensions/Temp")).unwrap();
         dir
     }
@@ -298,7 +317,7 @@ mod tests {
     fn extensions_resolve_localized_name_and_latest_version() {
         let d = fake_profile();
         let x = read_extensions(d.path()).unwrap();
-        assert_eq!(x, vec![InstalledExtension { id: "cjpalhdlnbpafiamejdnhcphjbkeiagm".into(), name: "uBlock Origin".into(), version: "1.2.0".into() }]);
+        assert_eq!(x, vec![InstalledExtension { id: "cjpalhdlnbpafiamejdnhcphjbkeiagm".into(), name: "uBlock Origin".into(), version: "1.10.0".into() }]);
     }
 
     #[test]

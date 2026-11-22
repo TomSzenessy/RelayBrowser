@@ -52,6 +52,25 @@ pub enum Support {
     Missing,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionReport {
+    pub requested: Vec<String>,
+    pub optional: Vec<String>,
+    pub hosts: Vec<String>,
+}
+
+impl PermissionReport {
+    pub fn lines(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        out.push(if self.requested.is_empty() { "requested permissions: none".to_string() } else { format!("requested permissions: {}", self.requested.join(", ")) });
+        if !self.optional.is_empty() {
+            out.push(format!("optional permissions: {}", self.optional.join(", ")));
+        }
+        out.push(if self.hosts.is_empty() { "host access: none".to_string() } else { format!("host access: {}", self.hosts.join(", ")) });
+        out
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Compatibility {
     pub shimmed: Vec<String>,
@@ -75,6 +94,22 @@ impl Manifest {
     /// Resolve `__MSG_key__` names via `_locales/<default>/messages.json`.
     pub fn display_name(&self, dir: &Path) -> String {
         localize(&self.name, dir, self.default_locale.as_deref()).unwrap_or_else(|| self.name.clone())
+    }
+
+    /// What `relay install-extension` must show before granting anything:
+    /// requested APIs, optional APIs, and host match patterns, deduplicated
+    /// in manifest order. The same struct feeds the printed report and the
+    /// docs' statement that installing is blanket consent.
+    pub fn permission_report(&self) -> PermissionReport {
+        fn dedup(values: impl IntoIterator<Item = String>) -> Vec<String> {
+            let mut seen = std::collections::HashSet::new();
+            values.into_iter().filter(|v| seen.insert(v.clone())).collect()
+        }
+        PermissionReport {
+            requested: dedup(self.permissions.iter().filter_map(|p| p.as_str().map(str::to_string))),
+            optional: dedup(self.optional_permissions.iter().filter_map(|p| p.as_str().map(str::to_string))),
+            hosts: dedup(self.host_permissions.iter().cloned()),
+        }
     }
 
     pub fn permission_names(&self) -> Vec<String> {
@@ -125,6 +160,21 @@ fn localize(name: &str, dir: &Path, locale: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_report_lists_requested_optional_and_hosts_once() {
+        let m: Manifest = serde_json::from_str(r#"{"manifest_version":3,"name":"X","version":"1.0","permissions":["storage","tabs","storage"],"optional_permissions":["downloads"],"host_permissions":["https://*.example.com/*","https://*.example.com/*"]}"#).unwrap();
+        let r = m.permission_report();
+        assert_eq!(r.requested, vec!["storage", "tabs"]);
+        assert_eq!(r.optional, vec!["downloads"]);
+        assert_eq!(r.hosts, vec!["https://*.example.com/*"]);
+        let lines = r.lines();
+        assert!(lines.iter().any(|l| l.contains("storage, tabs")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("optional permissions: downloads")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("host access: https://*.example.com/*")), "{lines:?}");
+        let empty: Manifest = serde_json::from_str(r#"{"manifest_version":3,"name":"E","version":"1"}"#).unwrap();
+        assert!(empty.permission_report().lines().iter().any(|l| l == "requested permissions: none"));
+    }
 
     #[test]
     fn compatibility_report() {
