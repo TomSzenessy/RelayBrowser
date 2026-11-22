@@ -132,7 +132,10 @@
     dirty.add(el);
     if (!scheduled) {
       scheduled = true;
-      (window.requestAnimationFrame || setTimeout)(flush, 16);
+      // setTimeout, not requestAnimationFrame: WebKit suspends rAF in pages
+      // that are not on screen (background and agent tabs), which would stall
+      // every patch. Timers are only throttled there.
+      setTimeout(flush, 16);
     }
   }
   function collectRemoved(node) {

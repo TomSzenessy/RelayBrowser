@@ -125,10 +125,12 @@ fn proto_field(buf: &[u8], want: u64) -> Option<&[u8]> {
 /// escape the directory are rejected.
 pub fn unpack(bytes: &[u8], expected_id: &str, dest: &Path) -> Result<PathBuf, Error> {
     let crx = parse(bytes)?;
-    if let Some(id) = &crx.crx_id {
-        if id != expected_id {
-            return Err(Error::Invalid(format!("package declares id {id}, expected {expected_id}")));
-        }
+    // The Web Store serves CRX3, which always declares its id; anything else
+    // (CRX2, a bare zip, a header without an id) cannot be tied to the request.
+    match &crx.crx_id {
+        Some(id) if id == expected_id => {}
+        Some(id) => return Err(Error::Invalid(format!("package declares id {id}, expected {expected_id}"))),
+        None => return Err(Error::Invalid(format!("package for {expected_id} is not a CRX3 with an id; refusing to install"))),
     }
     let out = dest.join(expected_id);
     let staging = dest.join(format!(".{expected_id}.partial"));
@@ -223,6 +225,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let good = crx3(id_bytes(), &zip_with(&[("manifest.json", "{}")]));
         assert!(unpack(&good, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", d.path()).unwrap_err().to_string().contains("declares id"));
+        let bare = zip_with(&[("manifest.json", "{}")]);
+        assert!(unpack(&bare, ID, d.path()).unwrap_err().to_string().contains("not a CRX3"));
         let evil = crx3(id_bytes(), &zip_with(&[("manifest.json", "{}"), ("../../escape.txt", "x")]));
         assert!(unpack(&evil, ID, d.path()).unwrap_err().to_string().contains("unsafe path"));
         assert!(!d.path().parent().unwrap().join("escape.txt").exists());

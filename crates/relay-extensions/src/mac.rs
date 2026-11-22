@@ -9,7 +9,10 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
 use objc2_foundation::{NSDate, NSDictionary, NSError, NSString, NSURL};
-use objc2_web_kit::{WKWebExtension, WKWebExtensionContext, WKWebExtensionController, WKWebExtensionPermission};
+use objc2_web_kit::{
+    WKWebExtension, WKWebExtensionContext, WKWebExtensionContextPermissionStatus, WKWebExtensionController,
+    WKWebExtensionPermission,
+};
 use std::path::Path;
 
 /// Load an unpacked extension directory into `controller`. Every tab whose
@@ -39,8 +42,12 @@ pub fn load_extension(
         unsafe {
             let ctx = WKWebExtensionContext::contextForExtension(&ext);
             ctx.setUniqueIdentifier(&uid);
-            // The install sheet already showed the requested permissions.
+            // `relay install-extension` printed the requested permissions; installing is the consent.
             ctx.setGrantedPermissions(&grant_requested(&ext));
+            // Host access too, or content scripts never run on any page.
+            for pattern in ext.allRequestedMatchPatterns().iter() {
+                ctx.setPermissionStatus_forMatchPattern(WKWebExtensionContextPermissionStatus::GrantedExplicitly, &pattern);
+            }
             match controller.loadExtensionContext_error(&ctx) {
                 Ok(()) => done(Ok(ext.displayName().map(|n| n.to_string()).unwrap_or_else(|| uid.to_string()))),
                 Err(e) => done(Err(e.localizedDescription().to_string())),

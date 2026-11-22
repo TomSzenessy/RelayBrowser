@@ -49,16 +49,23 @@ GPUI window. Every 16 ms `RelayApp::pump`:
 4. checks idle tabs for sleep every 30 s.
 
 Panes report their bounds from a `canvas` each frame, and `WebHost::layout`
-moves the native `WKWebView`s to match. Web views are hidden while the
-palette or hints overlay is open, because native views draw above GPUI.
+moves the native `WKWebView`s to match. Native views draw above GPUI, so web
+views are hidden while the palette is open. Link-hint labels are drawn inside
+the page, and their status line goes in the status bar.
 
 ## Agent safety (attached mode)
 
 - Agent tabs (`Owner::Agent`) share the user's cookie store and live in a
   tinted group in the tab bar.
-- When the bridge reports a CAPTCHA or 2FA prompt (`challenge`), mutating ops
-  (click, type, edit_style) fail in agent tabs with "waiting for a human";
-  reads keep working.
+- When the bridge reports a CAPTCHA or 2FA prompt (`challenge`) on any tab,
+  agent mutations there (click, type, edit_style) fail with "waiting for a
+  human"; reads keep working, and the user can still click through
+  (`Actor::Agent` vs `Actor::User` in `SharedHub::begin`).
+- Agent commands count as activity, so tabs an agent is using do not sleep.
+  If a tab is already asleep, the next MCP call wakes it and waits for the
+  reload.
+- Agent tabs are kept out of the user's history.
+- Pages can only open `http(s)` URLs in new tabs.
 - Agents may open only `http(s)`/`about:blank` URLs and may close only their own
   tabs.
 - The MCP socket is `relay_home()/mcp.sock`, mode 0600 inside a 0700 directory,
@@ -84,6 +91,9 @@ Xorg-dummy, llvmpipe presents black frames even for `vkcube`. So visual
 review happens on a Mac.
 
 ## Build notes
+
+- Minimum macOS: 13.3 (`WKWebView.isInspectable`). Extensions need 15.4
+  (`WKWebExtension`); on older systems Relay runs without them.
 
 - `cargo test --workspace` runs everywhere. On Linux,
   `cargo check --workspace --exclude relay-ui --target aarch64-apple-darwin`

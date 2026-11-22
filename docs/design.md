@@ -72,7 +72,10 @@ When a page has focus, WebKit receives the keystrokes. ⌘ shortcuts still
 reach GPUI first, as key equivalents. The palette and link hints move focus
 to the shell while they are open (`Engine::focus_shell`) and hand it back to
 the page when they close. The bridge forwards `f` as a `hotkey` message, so
-hints start without leaving the page.
+hints start without leaving the page. As in Vimium, a bare `f` outside text
+fields is taken by Relay on every site, so site shortcuts bound to `f` (such
+as YouTube full screen) need ⌘J for hints instead. A per-site opt-out is not
+built yet.
 
 ## States
 

@@ -158,7 +158,23 @@ impl RelayMcp {
     }
 
     async fn op(&self, tab: TabId, op: Op) -> Result<serde_json::Value, HubError> {
+        self.ensure_awake(tab).await?;
         run_op(&self.hub, self.browser.as_ref(), tab, op, OP_TIMEOUT).await
+    }
+
+    /// Agents have no "activate" tool, so a slept tab wakes on first use
+    /// (without becoming the user's active tab) and waits for its reload.
+    async fn ensure_awake(&self, tab: TabId) -> Result<(), HubError> {
+        let (sleeping, seq) = {
+            let h = self.hub.lock();
+            let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
+            (t.sleeping, t.load_seq)
+        };
+        if sleeping {
+            self.browser.activate(tab);
+            self.hub.wait_for_load(tab, seq, LOAD_TIMEOUT).await?;
+        }
+        Ok(())
     }
 
     fn load_seq(&self, tab: TabId) -> Result<u64, HubError> {
@@ -229,6 +245,11 @@ impl RelayMcp {
 
     #[tool(description = "Read the page structure as an outline. Each line is `[id] tag \"label\"`; pass the id to click_element/type_text.")]
     async fn read_dom(&self, Parameters(a): Parameters<ReadDomArgs>) -> Result<CallToolResult, ErrorData> {
+        if let Ok(tab) = self.tab(a.tab_id) {
+            if let Err(e) = self.ensure_awake(tab).await {
+                return reply(Err(e));
+            }
+        }
         reply((|| {
             let h = self.hub.lock();
             let tab = h.resolve(a.tab_id)?;
@@ -402,6 +423,10 @@ pub async fn serve_socket(path: &Path, hub: SharedHub, browser: Arc<dyn Browser>
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    // A live socket means another Relay is running: never steal it.
+    if tokio::net::UnixStream::connect(path).await.is_ok() {
+        anyhow::bail!("another Relay instance is serving MCP at {}", path.display());
     }
     let _ = std::fs::remove_file(path);
     let listener = tokio::net::UnixListener::bind(path)?;

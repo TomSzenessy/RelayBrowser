@@ -19,6 +19,7 @@ USAGE:
   relay mcp                         stdio MCP server for agents (connects to the running browser)
   relay import-chrome [--dry-run] [--profile DIR]
                                     import Chrome bookmarks + history into Relay's profile
+  relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
   relay install-extension ID        fetch a Chrome Web Store extension (loaded on next launch)
   relay compile-rules FILE          compile EasyList filters to WebKit content-blocker JSON
   relay --version | --help
@@ -39,6 +40,7 @@ fn main() -> anyhow::Result<()> {
         }
         Some("mcp") => run_mcp_proxy(),
         Some("import-chrome") => import_chrome(&args[1..]),
+        Some("import-passwords") => import_passwords(args.get(1).map(String::as_str)),
         Some("install-extension") => install_extension(args.get(1).map(String::as_str)),
         Some("compile-rules") => compile_rules(args.get(1).map(String::as_str)),
         Some(other) if other.starts_with('-') => bail!("unknown option {other}\n\n{HELP}"),
@@ -91,8 +93,32 @@ fn import_chrome(args: &[String]) -> anyhow::Result<()> {
     if !p.extensions.is_empty() {
         println!("Install extensions with: relay install-extension <id>");
     }
-    println!("Passwords: export them from chrome://password-manager/settings (Export passwords), then use Import in Relay's palette.");
+    println!("Passwords: export them from chrome://password-manager/settings (Export passwords), then run: relay import-passwords <file.csv>");
     Ok(())
+}
+
+fn import_passwords(file: Option<&str>) -> anyhow::Result<()> {
+    let file = std::path::Path::new(file.context("usage: relay import-passwords <Chrome Passwords.csv>")?);
+    let creds = chrome_import::read_password_csv(file)?;
+    #[cfg(target_os = "macos")]
+    {
+        let r = relay_extensions::mac::import_passwords(&creds);
+        println!("Saved {} of {} logins to the login Keychain.", r.saved, creds.len());
+        for f in &r.failed {
+            println!("  ! {f}");
+        }
+        if r.failed.is_empty() {
+            std::fs::remove_file(file)?;
+            println!("Deleted {} (it held plaintext passwords).", file.display());
+        } else {
+            println!("Kept {} because some logins failed; delete it yourself when done.", file.display());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        bail!("{} logins parsed, but the Keychain exists only on macOS; nothing was stored", creds.len())
+    }
 }
 
 fn install_extension(id: Option<&str>) -> anyhow::Result<()> {

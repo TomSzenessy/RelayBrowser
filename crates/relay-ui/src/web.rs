@@ -44,7 +44,10 @@ mod imp {
                     EngineEvent::Slept(t) => WebEvent::Slept(t),
                 })
             });
-            engine.set_extension_controller(unsafe { objc2_web_kit::WKWebExtensionController::new(mtm) });
+            // WKWebExtension needs macOS 15.4+; older systems browse without extensions.
+            if objc2::available!(macos = 15.4) {
+                engine.set_extension_controller(unsafe { objc2_web_kit::WKWebExtensionController::new(mtm) });
+            }
             let shell = window.window_handle().ok().and_then(|h| match h.as_raw() {
                 // SAFETY: AppKit handles carry a valid NSView for the window's lifetime.
                 RawWindowHandle::AppKit(a) => unsafe { Retained::retain(a.ns_view.as_ptr().cast::<NSView>()) },

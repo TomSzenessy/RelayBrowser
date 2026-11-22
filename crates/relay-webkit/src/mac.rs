@@ -101,6 +101,9 @@ pub struct Engine {
     hub: SharedHub,
     events: Rc<dyn Fn(EngineEvent)>,
     rules: Rc<RefCell<Option<Retained<WKContentRuleList>>>>,
+    /// Every live tab's controller, shared with the async rule compile so
+    /// tabs opened before compilation finishes still get blocking.
+    uccs: Rc<RefCell<Vec<Retained<WKUserContentController>>>>,
     extensions: Option<Retained<WKWebExtensionController>>,
     tabs: HashMap<TabId, WebTab>,
     slept: Rc<RefCell<HashMap<TabId, SleptTab>>>,
@@ -114,6 +117,7 @@ impl Engine {
             hub,
             events: Rc::new(events),
             rules: Rc::new(RefCell::new(None)),
+            uccs: Rc::default(),
             extensions: None,
             tabs: HashMap::new(),
             slept: Rc::new(RefCell::new(HashMap::new())),
@@ -135,10 +139,10 @@ impl Engine {
     pub fn load_content_rules(&self, json: &str) {
         let Some(store) = (unsafe { WKContentRuleListStore::defaultStore(self.mtm) }) else { return };
         let slot = self.rules.clone();
-        let uccs: Vec<Retained<WKUserContentController>> = self.tabs.values().map(|t| t.ucc.clone()).collect();
+        let uccs = self.uccs.clone();
         let done = RcBlock::new(move |list: *mut WKContentRuleList, err: *mut NSError| {
             if let Some(list) = unsafe { Retained::retain(list) } {
-                for ucc in &uccs {
+                for ucc in uccs.borrow().iter() {
                     unsafe {
                         ucc.removeAllContentRuleLists();
                         ucc.addContentRuleList(&list);
@@ -206,6 +210,7 @@ impl Engine {
                 t.sleeping = false;
             }
         });
+        self.uccs.borrow_mut().push(ucc.clone());
         self.tabs.insert(tab, WebTab { view, handler, ucc });
         &self.tabs[&tab].view
     }
@@ -281,6 +286,7 @@ impl Engine {
 
     pub fn close(&mut self, tab: TabId) {
         if let Some(t) = self.tabs.remove(&tab) {
+            self.uccs.borrow_mut().retain(|u| !std::ptr::eq::<WKUserContentController>(&**u, &*t.ucc));
             teardown(&t);
         }
         self.slept.borrow_mut().remove(&tab);
@@ -289,6 +295,7 @@ impl Engine {
     /// Snapshot, remember URL + scroll, then destroy the WKWebView (0 MB).
     pub fn sleep(&mut self, tab: TabId, scroll: (f64, f64)) {
         let Some(t) = self.tabs.remove(&tab) else { return };
+        self.uccs.borrow_mut().retain(|u| !std::ptr::eq::<WKUserContentController>(&**u, &*t.ucc));
         let url = unsafe { t.view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
         let slept = self.slept.clone();
         let events = self.events.clone();
@@ -298,10 +305,15 @@ impl Engine {
                 s.dom = Default::default();
             }
         });
+        // Record the tab now so a wake before the snapshot lands still works;
+        // the callback only attaches the image (if the tab is still asleep).
+        slept.borrow_mut().insert(tab, SleptTab { url: url.clone(), scroll_x: scroll.0, scroll_y: scroll.1, snapshot_jpeg: None });
         let keep = RcBlock::new(move |img: *mut NSImage, _err: *mut NSError| {
             let jpeg = unsafe { img.as_ref() }.and_then(jpeg_from_image);
-            slept.borrow_mut().insert(tab, SleptTab { url: url.clone(), scroll_x: scroll.0, scroll_y: scroll.1, snapshot_jpeg: jpeg });
-            events(EngineEvent::Slept(tab));
+            if let Some(entry) = slept.borrow_mut().get_mut(&tab) {
+                entry.snapshot_jpeg = jpeg;
+                events(EngineEvent::Slept(tab));
+            }
         });
         unsafe { t.view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
         // WebKit retains the view for the in-flight snapshot, so detaching now

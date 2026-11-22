@@ -46,6 +46,16 @@ tells agents this). Subframe messages are dropped. A `result` resolves only
 the command sent to that tab. `window.__relay` is non-writable, so pages
 cannot replace it.
 
+Known limits (the page is untrusted): a page can send `challenge: null` to
+lift an agent pause it raised itself, and command ids are sequential. A
+hostile page gains nothing it could not already do to its own content, and
+the agent should still treat its output as untrusted. Pending replies are
+dropped once their waiter times out.
+
+DOM patches are scheduled with `setTimeout`, not `requestAnimationFrame`:
+WebKit suspends rAF in off-screen pages, which would stall background and
+agent tabs.
+
 ## Chrome shims (`js/chrome-shims.js`)
 
 At install, `manifest::install_shims` copies the shim into the unpacked
@@ -54,7 +64,10 @@ extension and runs it before the background code: a wrapper service worker
 script. WebKit provides `browser.*`; the shim adds:
 `chrome` aliases `browser`, plus `chrome.sidePanel` (forwarded as native
 messages `relay.sidePanel.*` to a GPUI pane), `chrome.offscreen` (a hidden
-iframe, or a native hidden view), and `runtime.getPlatformInfo`.
+iframe, or a native hidden view), and `runtime.getPlatformInfo`. **Not built
+yet:** nothing on the native side receives the `relay.sidePanel.*` /
+`relay.offscreen.*` messages (it needs a `WKWebExtensionControllerDelegate`),
+so `sidePanel.open` currently rejects.
 
 ## Tests
 

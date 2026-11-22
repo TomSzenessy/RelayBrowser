@@ -126,6 +126,25 @@ well. The link job accepts only successful response classes and excludes the
 known slow German legal site with a documented manual-review exception; a 403,
 429, or 404 is not silently treated as a passing link.
 
+## Relay-specific boundaries
+
+- **MCP socket:** `relay_home()/mcp.sock`, mode 0600 inside a 0700 directory.
+  Any process running as the user can drive the browser, including the user's
+  logged-in sessions; this is the intended trust level for local coding
+  agents. A second instance refuses to take over a live socket.
+- **Pages are untrusted:** bridge output is data written by the website. The
+  MCP instructions tell agents so, subframe messages are dropped, and replies
+  resolve only for their own tab. Agents may open only `http(s)`/`about:blank`,
+  and close only their own tabs.
+- **Extensions:** `relay install-extension` prints the compatibility report
+  and grants the extension's requested permissions and host patterns. Chrome
+  import never installs extensions on its own. Residual: CRX3 signatures are
+  not verified. Integrity rests on HTTPS to Google plus the header's `crx_id`
+  matching the requested id; packages without an id are refused.
+- **Passwords:** `relay import-passwords` writes Keychain internet passwords
+  and deletes the plaintext CSV once every login is saved. `Credential`'s
+  `Debug` output redacts the password.
+
 ## Supply chain and CI
 
 - Pin dependencies and action revisions; generate lockfiles; review licenses and

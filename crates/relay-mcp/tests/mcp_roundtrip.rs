@@ -139,3 +139,66 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     assert_eq!(*page.log.lock().unwrap(), vec!["type", "click", "click", "read_text"]);
     client.cancel().await.unwrap();
 }
+
+/// A tab put to sleep by the shell wakes when an agent uses it.
+#[tokio::test]
+async fn agents_wake_sleeping_tabs() {
+    let hub = SharedHub::new();
+    let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    struct Waker(Arc<SimPage>);
+    impl Browser for Waker {
+        fn open(&self, t: TabId, u: &str) { self.0.open(t, u) }
+        fn navigate(&self, t: TabId, u: &str) { self.0.navigate(t, u) }
+        fn go_back(&self, _: TabId) {}
+        fn go_forward(&self, _: TabId) {}
+        fn reload(&self, _: TabId) {}
+        fn close(&self, _: TabId) {}
+        fn refresh_cookies(&self, _: TabId) {}
+        fn open_web_inspector(&self, _: TabId) {}
+        fn eval(&self, t: TabId, s: String) { self.0.eval(t, s) }
+        // Like Engine::wake: recreate the view and reload the page.
+        fn activate(&self, t: TabId) {
+            self.0.hub.update(|h| h.tab_mut(t).unwrap().sleeping = false);
+            self.0.load(t, "https://shop.test/cart");
+        }
+    }
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub.clone(), Arc::new(Waker(page.clone())));
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+    let (err, _) = call(&client, "open_tab", json!({"url": "https://shop.test/cart"})).await;
+    assert!(!err);
+    let tab = hub.lock().tabs().next().unwrap().id;
+    hub.update(|h| {
+        let t = h.tab_mut(tab).unwrap();
+        t.sleeping = true;
+        t.dom = Default::default();
+    });
+    let (err, msg) = call(&client, "click_element", json!({"tab_id": tab, "element_id": 4})).await;
+    assert!(!err, "{msg}");
+    let (err, dom) = call(&client, "read_dom", json!({"tab_id": tab})).await;
+    assert!(!err && dom.contains("Pay now"), "{dom}");
+    client.cancel().await.unwrap();
+}
+
+/// The socket is user-only, and a second instance must not take it over.
+#[cfg(unix)]
+#[tokio::test]
+async fn socket_is_private_and_not_stolen() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("relay").join("mcp.sock");
+    let hub = SharedHub::new();
+    let page: Arc<dyn Browser> = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let p = path.clone();
+    let (h2, b2) = (hub.clone(), page.clone());
+    tokio::spawn(async move { relay_mcp::serve_socket(&p, h2, b2).await });
+    for _ in 0..100 {
+        if path.exists() { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    let err = relay_mcp::serve_socket(&path, hub, page).await.unwrap_err();
+    assert!(err.to_string().contains("another Relay instance"), "{err}");
+}

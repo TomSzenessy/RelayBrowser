@@ -159,8 +159,20 @@ impl RelayApp {
             snapshots: HashMap::new(),
             mcp_socket,
         };
+        app.load_installed_extensions();
         app.start_pump(cx);
         app
+    }
+
+    fn load_installed_extensions(&self) {
+        let Some(store) = &self.store else { return };
+        for (id, name, path) in store.enabled_extensions().unwrap_or_default() {
+            self.web.borrow().load_extension(std::path::Path::new(&path), &id, move |r| {
+                if let Err(e) = r {
+                    eprintln!("relay: extension {name} failed to load: {e}");
+                }
+            });
+        }
     }
 
     // ----------------------------------------------------------- pump
@@ -194,6 +206,9 @@ impl RelayApp {
             changed = true;
             match e {
                 WebEvent::OpenInNewTab { opener, url } => {
+                    if !is_web_url(&url) {
+                        continue; // window.open("file:///…") and friends stay closed
+                    }
                     let owner = self.hub.lock().tab(opener).map(|t| t.owner).unwrap_or(Owner::User);
                     let tab = self.hub.update(|h| {
                         let id = h.create_tab(&url, owner);
@@ -244,7 +259,7 @@ impl RelayApp {
                     loads.push(t.id);
                 }
                 if t.load_seq > 0 && rec != Some(&(t.load_seq, t.title.clone())) {
-                    if let Some(store) = &self.store {
+                    if let (Some(store), Owner::User) = (&self.store, t.owner) {
                         let _ = store.record_visit(&t.url, &t.title, now_unix());
                     }
                     self.recorded.insert(t.id, (t.load_seq, t.title.clone()));
@@ -278,8 +293,15 @@ impl RelayApp {
                     .map(|v| (v["scroll_x"].as_f64().unwrap_or(0.0), v["scroll_y"].as_f64().unwrap_or(0.0)))
                     .unwrap_or((0.0, 0.0));
                 let _ = this.update(cx, |app, cx| {
-                    app.web.borrow_mut().sleep(tab, scroll);
-                    cx.notify();
+                    // The user (or an agent) may have used the tab meanwhile.
+                    let still_due = {
+                        let h = app.hub.lock();
+                        app.sleep_policy.due(&h, &app.visible_tabs(), Instant::now()).contains(&tab)
+                    };
+                    if still_due {
+                        app.web.borrow_mut().sleep(tab, scroll);
+                        cx.notify();
+                    }
                 });
             })
             .detach();
@@ -493,52 +515,14 @@ impl RelayApp {
             Ok(c) => {
                 let mut msg = format!("Imported {} bookmarks, {} history entries", c.bookmarks, c.history);
                 if !preview.extensions.is_empty() {
-                    msg.push_str(&format!("; installing {} extensions…", preview.extensions.len()));
+                    // Installing grants permissions, so it stays an explicit step.
+                    msg.push_str(&format!("; {} Chrome extensions found: run `relay import-chrome --dry-run` to list them", preview.extensions.len()));
                 }
                 self.toast(msg);
-                self.install_extensions(preview.extensions.into_iter().map(|e| e.id).collect(), cx);
+                let _ = cx;
             }
             Err(e) => self.toast(format!("Import failed: {e}")),
         }
-    }
-
-    fn install_extensions(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
-        if ids.is_empty() {
-            return;
-        }
-        let dest = relay_bridge::paths::relay_home().join("extensions");
-        let task = cx.background_executor().spawn(async move {
-            ids.into_iter()
-                .map(|id| {
-                    let r = relay_extensions::crx::download(&id)
-                        .and_then(|bytes| relay_extensions::crx::unpack(&bytes, &id, &dest))
-                        .and_then(|dir| relay_extensions::manifest::install_shims(&dir).map(|_| dir));
-                    (id, r.map_err(|e| e.to_string()))
-                })
-                .collect::<Vec<_>>()
-        });
-        cx.spawn(async move |this, cx| {
-            let results = task.await;
-            let _ = this.update(cx, |app, cx| {
-                let mut ok = 0;
-                for (id, r) in results {
-                    if let Ok(dir) = r {
-                        ok += 1;
-                        if let (Some(store), Ok(m)) = (&app.store, relay_extensions::manifest::Manifest::read(&dir)) {
-                            let _ = store.record_extension(&id, &m.display_name(&dir), &m.version, &dir);
-                        }
-                        app.web.borrow().load_extension(&dir, &id, |r| {
-                            if let Err(e) = r {
-                                eprintln!("relay: extension failed to load: {e}");
-                            }
-                        });
-                    }
-                }
-                app.toast(format!("Installed {ok} extensions"));
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     // ------------------------------------------------------ key input
@@ -1012,7 +996,7 @@ impl RelayApp {
         if agents > 0 {
             right.push_str(&format!(" · {agents} agent"));
         }
-        right.push_str(" · MCP ready");
+        right.push_str(" · agents: relay mcp");
         div()
             .h(px(24.))
             .flex()
@@ -1024,9 +1008,11 @@ impl RelayApp {
             .bg(t.surface)
             .border_t_1()
             .border_color(t.border)
-            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(match &self.toast {
-                Some((m, _)) => m.clone(),
-                None => url,
+            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(match (&self.hints, &self.toast) {
+                // Native web views cover GPUI overlays, so hint status lives here.
+                (Some(h), _) => format!("Link hints: type a label{} · Esc cancels", if h.typed.is_empty() { String::new() } else { format!(" ({})", h.typed.to_uppercase()) }),
+                (None, Some((m, _))) => m.clone(),
+                (None, None) => url,
             })))
             .child(SharedString::from(right))
     }
@@ -1038,7 +1024,7 @@ impl Render for RelayApp {
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
-        if self.palette.is_some() || self.hints.is_some() {
+        if self.palette.is_some() {
             // Keep native views from covering the palette overlay.
             self.web.borrow().layout(&[]);
             self.placements.borrow_mut().clear();
@@ -1112,22 +1098,6 @@ impl Render for RelayApp {
         if let Some(p) = &self.palette {
             root = root.child(self.render_palette(p, cx));
         }
-        if let Some(h) = &self.hints {
-            root = root.child(
-                div()
-                    .absolute()
-                    .bottom(px(32.))
-                    .left(px(240.))
-                    .px_3()
-                    .py_1()
-                    .rounded(px(6.))
-                    .bg(t.surface)
-                    .border_1()
-                    .border_color(t.border)
-                    .text_size(px(12.))
-                    .child(SharedString::from(format!("Hints: type a label{}  ·  Esc to cancel", if h.typed.is_empty() { String::new() } else { format!(" ({})", h.typed.to_uppercase()) }))),
-            );
-        }
         root
     }
 }
@@ -1148,6 +1118,11 @@ fn blocklist() -> String {
         s.push_str(&extra);
     }
     s
+}
+
+fn is_web_url(url: &str) -> bool {
+    let l = url.to_ascii_lowercase();
+    l.starts_with("https://") || l.starts_with("http://") || l == "about:blank"
 }
 
 pub fn mcp_setup_command() -> String {

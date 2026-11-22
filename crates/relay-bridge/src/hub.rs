@@ -16,6 +16,13 @@ pub type TabId = u64;
 pub const MAX_CONSOLE: usize = 1000;
 pub const MAX_NETWORK: usize = 500;
 
+/// Who issues a command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Actor {
+    User,
+    Agent,
+}
+
 /// Who opened a tab. Agent tabs live in the tinted Agent Tab Group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -352,13 +359,25 @@ impl SharedHub {
 
     /// Register a command and return the script to evaluate plus the reply.
     pub fn begin_command(&self, tab: TabId, op: Op) -> Result<(String, oneshot::Receiver<CommandResult>), HubError> {
+        self.begin(tab, op, Actor::User)
+    }
+
+    /// Register a command and return the script to evaluate plus the reply.
+    /// Agent commands pause on any tab showing a CAPTCHA/2FA prompt (agents
+    /// act on the user's tabs too) and count as activity for tab sleeping.
+    pub fn begin(&self, tab: TabId, op: Op, actor: Actor) -> Result<(String, oneshot::Receiver<CommandResult>), HubError> {
         let mut h = self.lock();
-        let t = h.tabs.get(&tab).ok_or(HubError::NoTab(tab))?;
+        // Drop replies nobody waits for any more (timed-out commands).
+        h.pending.retain(|_, (_, tx)| !tx.is_closed());
+        let t = h.tabs.get_mut(&tab).ok_or(HubError::NoTab(tab))?;
         if t.sleeping {
             return Err(HubError::Sleeping(tab));
         }
-        if let (Some(c), true, Owner::Agent) = (t.challenge, op.mutates(), t.owner) {
-            return Err(HubError::WaitingForHuman(tab, c));
+        if actor == Actor::Agent {
+            if let (Some(c), true) = (t.challenge, op.mutates()) {
+                return Err(HubError::WaitingForHuman(tab, c));
+            }
+            t.last_active_at = Instant::now();
         }
         let id = h.next_cmd;
         h.next_cmd += 1;
@@ -532,7 +551,7 @@ pub trait Browser: Send + Sync + 'static {
     fn open_web_inspector(&self, tab: TabId);
 }
 
-/// Run one bridge op end to end: register, evaluate, await the reply.
+/// Run one agent op end to end: register, evaluate, await the reply.
 pub async fn run_op(
     hub: &SharedHub,
     browser: &dyn Browser,
@@ -540,7 +559,7 @@ pub async fn run_op(
     op: Op,
     timeout: Duration,
 ) -> Result<serde_json::Value, HubError> {
-    let (script, rx) = hub.begin_command(tab, op)?;
+    let (script, rx) = hub.begin(tab, op, Actor::Agent)?;
     browser.eval(tab, script);
     match tokio::time::timeout(timeout, rx).await {
         Ok(Ok(r)) if r.ok => Ok(r.value),
@@ -598,10 +617,17 @@ mod tests {
     #[test]
     fn agent_tabs_pause_on_challenge_but_reads_continue() {
         let hub = SharedHub::new();
-        let tab = hub.update(|h| h.create_tab("https://bank.test", Owner::Agent));
+        // The user's own tab: agents act there too, so the pause must hold.
+        let tab = hub.update(|h| h.create_tab("https://bank.test", Owner::User));
         hub.ingest_json(tab, r#"{"kind":"challenge","challenge":"two_factor"}"#).unwrap();
-        assert_eq!(hub.begin_command(tab, Op::Click { target: 1 }).unwrap_err(), HubError::WaitingForHuman(tab, Challenge::TwoFactor));
-        assert!(hub.begin_command(tab, Op::ReadText { target: None }).is_ok());
+        assert_eq!(hub.begin(tab, Op::Click { target: 1 }, Actor::Agent).unwrap_err(), HubError::WaitingForHuman(tab, Challenge::TwoFactor));
+        assert!(hub.begin(tab, Op::ReadText { target: None }, Actor::Agent).is_ok());
+        assert!(hub.begin_command(tab, Op::Click { target: 1 }).is_ok(), "the human may click through");
+        // Agent activity keeps a tab awake.
+        let before = hub.lock().tab(tab).unwrap().last_active_at;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        hub.begin(tab, Op::PageInfo, Actor::Agent).unwrap();
+        assert!(hub.lock().tab(tab).unwrap().last_active_at > before);
     }
 
     #[test]
