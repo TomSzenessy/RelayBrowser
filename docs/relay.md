@@ -149,6 +149,6 @@ Five layers, cheapest first:
   cross-compilation is needed.
 - Linux builds of the `relay` binary need GPUI's system libraries (xkbcommon,
   wayland, xcb, fontconfig, freetype, vulkan headers). CI installs the subset
-  it needs on ubuntu-latest.
+  it needs on ubuntu-24.04 (Playwright 1.56 does not support 26.04).
 - `third_party/xattr` is a patched copy of xattr 0.2.3 that fixes a Linux build
   break in gpui's dependency tree ([`../third_party/README.md`](../third_party/README.md)).
