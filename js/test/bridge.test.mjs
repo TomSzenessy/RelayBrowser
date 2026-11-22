@@ -130,6 +130,71 @@ test("mutations arrive as subtree patches", async () => {
   assert.ok(p2.removed.length >= 1);
 });
 
+test("body attribute changes arrive as dom_attrs, not a full snapshot", async () => {
+  const bodyId = Number(await page.getAttribute("body", "data-relay-id"));
+  assert.ok(bodyId > 0, "the snapshot gave body an id");
+  await drain();
+  const before = all.filter(m => m.kind === "dom_snapshot").length;
+  await page.evaluate(() => document.body.classList.add("relay-attr-test"));
+  const { hit } = await until(m => m.kind === "dom_attrs" && m.nodes.some(n => n.id === bodyId));
+  assert.equal(hit.nodes.find(n => n.id === bodyId).attrs.class, "relay-attr-test");
+  await page.waitForTimeout(80);
+  await drain();
+  assert.equal(all.filter(m => m.kind === "dom_snapshot").length, before, "no full DOM resend for one class");
+  assert.ok(!all.some(m => m.kind === "dom_patch" && m.nodes.some(n => n.id === bodyId)),
+    "body is not re-sent as a patch subtree either");
+});
+
+test("html and head attribute changes also use dom_attrs", async () => {
+  const htmlId = Number(await page.getAttribute("html", "data-relay-id"));
+  const headId = Number(await page.getAttribute("head", "data-relay-id"));
+  assert.ok(htmlId > 0 && headId > 0, "the snapshot includes html and head");
+  await drain();
+  const before = all.filter(m => m.kind === "dom_snapshot").length;
+  await page.evaluate(() => {
+    document.documentElement.classList.add("relay-html-attr");
+    document.head.classList.add("relay-head-attr");
+  });
+  const { hit } = await until(m => m.kind === "dom_attrs" && m.nodes.some(n => n.id === htmlId) && m.nodes.some(n => n.id === headId));
+  assert.equal(hit.nodes.find(n => n.id === htmlId).attrs.class, "relay-html-attr");
+  assert.equal(hit.nodes.find(n => n.id === headId).attrs.class, "relay-head-attr");
+  await page.waitForTimeout(80);
+  await drain();
+  assert.equal(all.filter(m => m.kind === "dom_snapshot").length, before, "no full resend for html/head attributes");
+});
+
+test("a DOM patch past the node budget falls back to one coherent snapshot", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html",
+    body: "<html><body><div id='a'></div><div id='b'></div></body></html>" }));
+  await p.goto(`${ORIGIN}/budget`);
+  await p.evaluate(() => window.__relay.drain());
+  await p.evaluate(() => {
+    for (const id of ["a", "b"]) {
+      const d = document.getElementById(id);
+      for (let i = 0; i < 2500; i++) {
+        const e = document.createElement("button");
+        e.textContent = id + i;
+        d.appendChild(e);
+      }
+    }
+  });
+  let sawSnapshot = false, patchNodes = 0;
+  for (let i = 0; i < 200 && !sawSnapshot; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    all.push(...msgs);
+    for (const m of msgs) {
+      if (m.kind === "dom_snapshot") sawSnapshot = true;
+      if (m.kind === "dom_patch") patchNodes = Math.max(patchNodes, m.nodes.length);
+    }
+    if (!sawSnapshot) await p.waitForTimeout(25);
+  }
+  assert.ok(sawSnapshot, "a partial patch was not posted; a snapshot replaced it");
+  assert.ok(patchNodes <= 2, "only whole dirty roots are patched, never a truncated one");
+  await p.close();
+});
+
 test("commands click, type, query, and report errors", async () => {
   const id = Number(await page.getAttribute("#pay", "data-relay-id"));
   const email = Number(await page.getAttribute("#email", "data-relay-id"));

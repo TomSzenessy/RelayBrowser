@@ -16,7 +16,8 @@ with the Rust parser.
 | `hello` | script start (each load) | `url`, `version` |
 | `page` | DOMContentLoaded, title change, pushState/replaceState/popstate/hashchange | `url`, `title` |
 | `dom_snapshot` | load, or when the body is replaced | `root`: `{id, tag, attrs, text, interactive, children}` |
-| `dom_patch` | MutationObserver, coalesced per frame | `nodes` (re-serialized subtrees by id), `removed` ids |
+| `dom_patch` | MutationObserver, coalesced per timer tick | `nodes` (re-serialized subtrees by id), `removed` ids |
+| `dom_attrs` | attribute mutation on a node the store already knows | `nodes`: `{id, attrs}`; replaces that node's attribute map only |
 | `console` | `console.*`, `error`, `unhandledrejection` | `level`, `args` (strings, ≤2 KB each), `source` |
 | `network` | fetch/XHR completion; PerformanceObserver resources | method, url, status, duration, bodies ≤4 KB (text/JSON only) |
 | `challenge` | a CAPTCHA iframe or one-time-code input appears or disappears | `challenge`: `captcha`, `two_factor`, or `null` |
@@ -69,6 +70,12 @@ dropped once their waiter times out.
 DOM patches are scheduled with `setTimeout`, not `requestAnimationFrame`:
 WebKit suspends rAF in off-screen pages, which would stall background and
 agent tabs.
+
+The snapshot root is `document.documentElement`, so `html`, `head`, and `body`
+have ids and their attribute changes can use `dom_attrs`; `head`'s
+title/meta/link children are skipped. Attribute-only changes never resend a
+subtree. A patch whose serialization would exceed the 4,000-node budget falls
+back to one full snapshot instead of posting a partial patch.
 
 Rust treats the patch as untrusted input. `DomStore::replace_all` and `patch`
 reject a message that repeats an id within one tree (or would close a cycle

@@ -200,6 +200,18 @@ impl DomStore {
         self.nodes.contains_key(&id)
     }
 
+    /// Replace one node's attributes without touching its subtree. Returns
+    /// false for an unknown id (the page may have raced a snapshot).
+    pub fn set_attrs(&mut self, id: NodeId, attrs: BTreeMap<String, String>) -> bool {
+        match self.nodes.get_mut(&id) {
+            Some(n) => {
+                n.attrs = attrs;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Rebuild a tree (for the Inspector), bounded by depth. A node already
     /// seen in this walk is emitted without children, so a malformed store
     /// cannot recurse forever.
@@ -646,6 +658,11 @@ impl Hub {
             PageMessage::DomPatch { nodes, removed } => {
                 let _ = t.dom.patch(nodes, &removed);
             }
+            PageMessage::DomAttrs { nodes } => {
+                for update in nodes {
+                    let _ = t.dom.set_attrs(update.id, update.attrs);
+                }
+            }
             PageMessage::Console(c) => {
                 if t.console.len() == MAX_CONSOLE {
                     t.console.pop_front();
@@ -775,6 +792,19 @@ mod tests {
         d.replace_all(Some(child));
         let out = d.outline(None, 5, true, 10);
         assert!(out.lines().count() <= 11, "{out}");
+    }
+
+    #[test]
+    fn attribute_updates_replace_only_the_map() {
+        let mut d = DomStore::default();
+        d.replace_all(Some(node(1, "body", "", vec![node(2, "div", "kept", vec![])])));
+        let mut attrs = BTreeMap::new();
+        attrs.insert("class".to_string(), "dark".to_string());
+        assert!(d.set_attrs(2, attrs));
+        let stored = d.nodes.get(&2).unwrap();
+        assert_eq!(stored.attrs.get("class").map(String::as_str), Some("dark"));
+        assert_eq!(stored.text, "kept");
+        assert!(!d.set_attrs(99, BTreeMap::new()));
     }
 
     #[test]

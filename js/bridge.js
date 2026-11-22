@@ -14,7 +14,7 @@
   var MAX_TEXT = 160;
   var MAX_BODY = 4096;
   var MAX_ARG = 2000;
-  var SKIP = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, META: 1, LINK: 1, HEAD: 1 };
+  var SKIP = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, META: 1, LINK: 1, TITLE: 1 };
   var KEEP_ATTRS = ["id", "class", "name", "type", "href", "src", "role", "aria-label",
     "placeholder", "title", "alt", "value", "for", "action", "method", "autocomplete"];
   var INTERACTIVE = { A: 1, BUTTON: 1, INPUT: 1, SELECT: 1, TEXTAREA: 1, SUMMARY: 1, LABEL: 1, OPTION: 1 };
@@ -40,9 +40,11 @@
     if (!id) {
       id = nextId++;
       idOf.set(el, id);
-      byId.set(id, el);
       try { el.setAttribute("data-relay-id", String(id)); } catch (e) { /* svg quirks */ }
     }
+    // A node can be detached and reattached; its id survives, and the byId
+    // map must point at it again for click/type/scroll commands.
+    if (byId.get(id) !== el) byId.set(id, el);
     return id;
   }
 
@@ -64,9 +66,7 @@
     return s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) + "…" : s;
   }
 
-  function serialize(el, budget) {
-    if (budget.n <= 0 || SKIP[el.tagName]) return null;
-    budget.n--;
+  function attrsOf(el) {
     var attrs = {};
     for (var i = 0; i < KEEP_ATTRS.length; i++) {
       var a = KEEP_ATTRS[i];
@@ -74,6 +74,17 @@
       if (a === "value" && el.type === "password") v = null;
       if (v !== null && v !== undefined && v !== "") attrs[a] = String(v).slice(0, MAX_TEXT);
     }
+    return attrs;
+  }
+
+  function serialize(el, budget) {
+    if (SKIP[el.tagName]) return null;
+    if (budget.n <= 0) {
+      budget.dropped = true;
+      return null;
+    }
+    budget.n--;
+    var attrs = attrsOf(el);
     var node = {
       id: relayId(el),
       tag: el.tagName.toLowerCase(),
@@ -90,20 +101,46 @@
   }
 
   function snapshot() {
+    // The document element is the root so html/head attribute changes can be
+    // patched by id instead of forcing a snapshot; HEAD is a node with attrs
+    // but its title/meta/link children are skipped.
     var root = document.documentElement;
     if (!root) return;
-    var body = document.body || root;
-    post({ kind: "dom_snapshot", root: serialize(body, { n: MAX_NODES }) });
+    post({ kind: "dom_snapshot", root: serialize(root, { n: MAX_NODES }) });
   }
 
-  // Mutation diffs: re-serialize the nearest known ancestor of each change,
-  // coalesced per animation frame. Rust replaces those subtrees by id.
+  // Mutation diffs: re-serialize the nearest known ancestor of each changed
+  // subtree, coalesced per timer tick. Attribute-only changes travel as a
+  // tiny `dom_attrs` message, so toggling a body class does not resend the
+  // whole document. Rust replaces subtrees by id and attrs by id.
   var dirty = new Set();
+  var attrDirty = new Set();
   var removed = [];
   var scheduled = false;
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
+    // setTimeout, not requestAnimationFrame: WebKit suspends rAF in pages
+    // that are not on screen (background and agent tabs), which would stall
+    // every patch. Timers are only throttled there.
+    setTimeout(flush, 16);
+  }
   function flush() {
     scheduled = false;
     if (!document.body) return;
+    var attrs = [];
+    attrDirty.forEach(function (el) {
+      if (!el.isConnected) return;
+      var id = idOf.get(el);
+      if (!id) {
+        // Never serialized: its parent needs a subtree patch to introduce it.
+        dirty.add(el.parentElement || el);
+        return;
+      }
+      attrs.push({ id: id, attrs: attrsOf(el) });
+    });
+    attrDirty.clear();
+
     var roots = [];
     dirty.forEach(function (el) {
       if (!el.isConnected) return;
@@ -113,30 +150,35 @@
       roots.push(el);
     });
     dirty.clear();
+
     var nodes = [];
     var budget = { n: MAX_NODES };
+    var dropped = false;
     roots.forEach(function (el) {
-      var n = el === document.body || !idOf.get(el) ? null : serialize(el, budget);
+      if (!idOf.get(el)) {
+        // A newly inserted root with no id cannot be attached to a parent by
+        // id alone; a coherent snapshot is the only safe answer.
+        dropped = true;
+        return;
+      }
+      var n = serialize(el, budget);
       if (n) nodes.push(n);
+      else dropped = true;
+      if (budget.dropped) dropped = true;
     });
     var gone = removed;
     removed = [];
-    if (roots.some(function (el) { return el === document.body || !idOf.get(el); })) {
+    if (dropped) {
       snapshot();
-    } else if (nodes.length || gone.length) {
-      post({ kind: "dom_patch", nodes: nodes, removed: gone });
+      return;
     }
+    if (attrs.length) post({ kind: "dom_attrs", nodes: attrs });
+    if (nodes.length || gone.length) post({ kind: "dom_patch", nodes: nodes, removed: gone });
   }
   function markDirty(el) {
     if (!el || el.nodeType !== 1) return;
     dirty.add(el);
-    if (!scheduled) {
-      scheduled = true;
-      // setTimeout, not requestAnimationFrame: WebKit suspends rAF in pages
-      // that are not on screen (background and agent tabs), which would stall
-      // every patch. Timers are only throttled there.
-      setTimeout(flush, 16);
-    }
+    schedule();
   }
   function collectRemoved(node) {
     if (node.nodeType !== 1) return;
@@ -148,7 +190,14 @@
   var observer = new MutationObserver(function (records) {
     for (var i = 0; i < records.length; i++) {
       var r = records[i];
-      if (r.type === "attributes" && r.attributeName === "data-relay-id") continue;
+      if (r.type === "attributes") {
+        if (r.attributeName === "data-relay-id") continue;
+        if (r.target && r.target.nodeType === 1) {
+          attrDirty.add(r.target);
+          schedule();
+        }
+        continue;
+      }
       if (r.type === "childList") r.removedNodes.forEach(collectRemoved);
       markDirty(r.type === "characterData" ? r.target.parentElement : r.target);
     }
