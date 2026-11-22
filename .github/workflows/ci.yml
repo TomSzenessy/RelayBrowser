@@ -71,6 +71,14 @@ jobs:
       - name: Reuse a verified tree
         if: steps.reuse.outputs.reuse == 'true'
         run: echo "Tree already verified by a successful ci run; heavy verification skipped."
+
+      - name: Reclaim build space
+        if: always()
+        # The self-hosted runner has a small disk; a debug workspace plus the
+        # registry cache is several GB per matrix job.
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/target"
+          rm -rf "$HOME/.cargo/registry/cache" "$HOME/.cargo/git"
   test-future:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: tests 800 days ahead (no calendar rot)

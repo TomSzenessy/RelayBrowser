@@ -125,7 +125,7 @@ make = "3.81"
 group = "verify"
 workflow = ".github/workflows/ci.yml"
 job = "verify"
-digest = "sha256:5eefbe707d14582d1b6778fc745283c01b5ac6d4d7f383a2b495f4a26c45851d"
+digest = "sha256:3044db0c3ceb770907c4519c87ccd741965ac7f61cbefa7aa1b88be8a5db8469"
 tools = ["python3", "make"]
 commands = [["make", "verify"]]
 

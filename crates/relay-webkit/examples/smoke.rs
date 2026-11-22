@@ -190,6 +190,23 @@ mod mac {
             "a refused navigation did not set load_error"
         );
         println!("smoke: load error = {:?}", hub.lock().tab(failed_tab).unwrap().load_error);
+
+        // Sleep destroys the WebView after capturing a snapshot; wake recreates
+        // it and the bridge delivers a fresh DOM. This is the RAM-killer path.
+        engine.sleep(tab, (0.0, 0.0));
+        assert!(hub.lock().tab(tab).unwrap().sleeping, "sleep did not mark the tab");
+        assert!(
+            until(|| engine.slept(tab).and_then(|s| s.snapshot_jpeg).is_some(), 10.0),
+            "sleep did not capture a JPEG snapshot"
+        );
+        engine.wake(tab);
+        assert!(!hub.lock().tab(tab).unwrap().sleeping, "wake left the tab asleep");
+        assert!(
+            until(|| hub.lock().tab(tab).is_some_and(|t| t.dom.root().is_some()), 20.0),
+            "the woken tab did not reload through the bridge"
+        );
+        engine.after_load(tab);
+        println!("smoke: sleep/wake returned a live DOM");
         server.join().ok();
         println!("SMOKE OK: hello, DOM, console, fetch(500), click, and page info all verified in WKWebView");
         std::process::exit(0);

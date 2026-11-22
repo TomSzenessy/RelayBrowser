@@ -19,7 +19,7 @@ use objc2_web_kit::{
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
 use std::rc::Rc;
 
@@ -131,6 +131,10 @@ pub struct Engine {
     extensions: Option<Retained<WKWebExtensionController>>,
     tabs: HashMap<TabId, WebTab>,
     slept: Rc<RefCell<HashMap<TabId, SleptTab>>>,
+    /// Tabs woken from sleep: keep the native view hidden until the bridge
+    /// delivers a DOM, so the snapshot the shell shows is not covered by a
+    /// white WKWebView.
+    warming: RefCell<HashSet<TabId>>,
     pending_restore: HashMap<TabId, String>,
 }
 
@@ -145,6 +149,7 @@ impl Engine {
             extensions: None,
             tabs: HashMap::new(),
             slept: Rc::new(RefCell::new(HashMap::new())),
+            warming: RefCell::new(HashSet::new()),
             pending_restore: HashMap::new(),
         }
     }
@@ -289,6 +294,14 @@ impl Engine {
         for (id, t) in &self.tabs {
             match tabs.iter().find(|(tid, _)| tid == id) {
                 Some((_, r)) => {
+                    if self.warming.borrow().contains(id) {
+                        if self.hub.lock().tab(*id).is_some_and(|t| !t.dom.is_empty()) {
+                            self.warming.borrow_mut().remove(id);
+                        } else {
+                            t.view.setHidden(true);
+                            continue;
+                        }
+                    }
                     let y = if flipped { r.origin.y } else { height - r.origin.y - r.size.height };
                     let frame = NSRect::new(NSPoint::new(r.origin.x, y), r.size);
                     let attached = unsafe { t.view.superview() }.is_some_and(|s| &*s == parent);
@@ -334,6 +347,7 @@ impl Engine {
             teardown(&t);
         }
         self.slept.borrow_mut().remove(&tab);
+        self.warming.borrow_mut().remove(&tab);
     }
 
     /// Snapshot, remember URL + scroll, then destroy the WKWebView (0 MB).
@@ -374,6 +388,7 @@ impl Engine {
     pub fn wake(&mut self, tab: TabId) -> Option<&Retained<WKWebView>> {
         let s = self.slept.borrow_mut().remove(&tab)?;
         self.pending_restore.insert(tab, restore_scroll_script(&s));
+        self.warming.borrow_mut().insert(tab);
         Some(self.create(tab, &s.url))
     }
 

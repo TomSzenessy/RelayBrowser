@@ -90,7 +90,10 @@ the page, and their status line goes in the status bar.
 active, visible in a split, pinned, or playing audio (from the bridge's `media`
 message). It always keeps at least one tab awake. `Engine::sleep` snapshots the
 viewport to JPEG, records URL and scroll, then destroys the view. `Engine::wake`
-recreates it, and `after_load` restores scroll once the bridge says `hello`.
+recreates it and marks it *warming*: the native view stays hidden until the
+bridge delivers a DOM, while the shell paints the JPEG the tab slept on. So the
+snapshot is what you see during the reload, not a white WKWebView. `after_load`
+restores scroll once the bridge says `hello`.
 
 ## Checking Relay off-Mac
 

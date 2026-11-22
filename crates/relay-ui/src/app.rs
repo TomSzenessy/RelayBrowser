@@ -254,12 +254,16 @@ impl RelayApp {
     fn after_hub_change(&mut self) {
         let hotkeys = self.hub.update(|h| h.take_hotkeys());
         let mut loads = vec![];
+        let mut ready = vec![];
         {
             let h = self.hub.lock();
             for t in h.tabs() {
                 let rec = self.recorded.get(&t.id);
                 if rec.map(|r| r.0) != Some(t.load_seq) {
                     loads.push(t.id);
+                }
+                if t.dom.root().is_some() {
+                    ready.push(t.id);
                 }
                 if t.load_seq > 0 && rec != Some(&(t.load_seq, t.title.clone())) {
                     if let (Some(store), Owner::User) = (&self.store, t.owner) {
@@ -271,6 +275,10 @@ impl RelayApp {
         }
         for tab in loads {
             self.web.borrow_mut().after_load(tab);
+        }
+        // Keep the sleep snapshot until the reloaded page has a DOM; it is
+        // what covers the white WebKit view while the tab warms up.
+        for tab in ready {
             self.snapshots.remove(&tab);
         }
         for (tab, key) in hotkeys {
@@ -685,7 +693,7 @@ impl RelayApp {
         };
         let renders = web.borrow().renders_pages();
         let mut pane = div().relative().flex_1().h_full().bg(t.page).overflow_hidden();
-        if let Some(snap) = self.snapshots.get(&tab).filter(|_| sleeping) {
+        if let Some(snap) = self.snapshots.get(&tab).filter(|_| !has_dom && load_error.is_none()) {
             pane = pane.child(img(snap.clone()).size_full().opacity(0.6));
         } else if !renders {
             pane = pane.child(
