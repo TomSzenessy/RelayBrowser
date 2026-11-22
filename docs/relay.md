@@ -370,6 +370,15 @@ Six layers, cheapest first:
    Xorg-dummy, llvmpipe presents black frames even for `vkcube`. Visual review
    therefore happens on a Mac.
 
+## CLI safety
+
+`relay import-chrome` parses `--dry-run`, `--profile DIR`, and `--help`
+strictly: unknown flags, a missing value, and a flag where a directory belongs
+are usage errors, and `--help` returns before the profile is opened. `relay
+doctor` connects to `mcp.sock` before calling it live, names a leftover file
+as stale, and prints the protocol version from
+`relay_bridge::PROTOCOL_VERSION`, the same constant the page `hello` carries.
+
 ## Build notes
 
 - Minimum macOS: 13.3 (`WKWebView.isInspectable`). Extensions need 15.4

@@ -253,3 +253,34 @@ fn start_sections_validates_and_round_trips() {
     assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "start_sections"]).stdout).trim(), "none");
     assert!(!relay(dir.path(), &["config", "set", "start_sections", ""]).status.success(), "empty is not a section list");
 }
+
+#[test]
+fn import_chrome_flags_are_strict_and_help_does_not_write() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        &["import-chrome", "--dryrun"][..],
+        &["import-chrome", "--profile", "--dry-run"][..],
+        &["import-chrome", "--profile"][..],
+        &["import-chrome", "--bogus"][..],
+    ] {
+        let out = relay(dir.path(), args);
+        assert!(!out.status.success(), "{args:?} must be rejected");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("usage: relay import-chrome"), "missing usage for {args:?}:\n{stderr}");
+    }
+    let help = relay(dir.path(), &["import-chrome", "--help"]);
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("usage: relay import-chrome"));
+    assert!(!dir.path().join("profile.sqlite").exists(), "--help must not open the profile");
+}
+
+#[test]
+fn doctor_distinguishes_a_stale_socket_from_a_listening_one() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("mcp.sock"), b"stale").unwrap();
+    let out = relay(dir.path(), &["doctor"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("stale file"), "stale socket must not be called serving:\n{text}");
+    assert!(text.contains("protocol v1"), "protocol version comes from the shared constant:\n{text}");
+}

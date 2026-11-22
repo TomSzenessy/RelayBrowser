@@ -63,8 +63,8 @@ impl Theme {
             hover: rgba(0x0000000d).into(),
             agent: rgb(0x7a3cff).into(),
             agent_bg: rgba(0x7a3cff1f).into(),
-            error: rgb(0xd93636).into(),
-            warn: rgb(0xb26b00).into(),
+            error: rgb(0xc92f2f).into(),
+            warn: rgb(0x8a5300).into(),
             scrim: rgba(0x00000026).into(),
         }
     }
@@ -103,8 +103,11 @@ mod tests {
             ("muted/surface", t.muted, t.surface, 4.5),
             ("code/surface", t.code, t.surface, 4.5),
             ("accent/surface", t.accent, t.surface, 3.0),
-            ("error/surface", t.error, t.surface, 3.0),
-            ("warn/surface", t.warn, t.surface, 3.0),
+            ("error/surface", t.error, t.surface, 4.5),
+            ("error/background", t.error, t.background, 4.5),
+            ("warn/surface", t.warn, t.surface, 4.5),
+            ("warn/background", t.warn, t.background, 4.5),
+            ("agent/surface", t.agent, t.surface, 4.5),
         ] {
             let ratio = contrast_ratio(fg, bg);
             assert!(

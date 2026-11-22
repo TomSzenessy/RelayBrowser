@@ -14,7 +14,7 @@ mod webapp;
 
 use anyhow::{bail, Context as _};
 use gpui::{px, size, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
-use relay_bridge::{paths, ChannelBrowser, Owner, SharedHub};
+use relay_bridge::{paths, ChannelBrowser, Owner, SharedHub, PROTOCOL_VERSION};
 use relay_extensions::{chrome_import, crx, manifest, store::Store};
 use std::sync::Arc;
 
@@ -126,7 +126,21 @@ fn doctor() -> anyhow::Result<()> {
     let home = paths::relay_home();
     println!("home: {}", home.display());
     let socket = paths::mcp_socket();
-    let socket_state = if socket.exists() { "present (a Relay instance is serving)" } else { "absent (start Relay, then connect)" };
+    let socket_state = if socket.exists() {
+        #[cfg(unix)]
+        {
+            match std::os::unix::net::UnixStream::connect(&socket) {
+                Ok(_) => "present (a Relay instance is serving)",
+                Err(_) => "stale file (no listener; remove it or start Relay)",
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            "present"
+        }
+    } else {
+        "absent (start Relay, then connect)"
+    };
     println!("mcp socket: {} — {socket_state}", socket.display());
 
     let db = home.join("profile.sqlite");
@@ -146,7 +160,7 @@ fn doctor() -> anyhow::Result<()> {
     }
 
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "relay".into());
-    println!("bridge: {} bytes, protocol v1", relay_bridge::BRIDGE_JS.len());
+    println!("bridge: {} bytes, protocol v{PROTOCOL_VERSION}", relay_bridge::BRIDGE_JS.len());
     println!("agents: claude mcp add relay -- {exe} mcp");
     Ok(())
 }
@@ -377,9 +391,31 @@ fn clear_data(args: &[String]) -> anyhow::Result<()> {
 }
 
 fn import_chrome(args: &[String]) -> anyhow::Result<()> {
-    let dry = args.iter().any(|a| a == "--dry-run");
-    let profile = match args.iter().position(|a| a == "--profile") {
-        Some(i) => args.get(i + 1).map(std::path::PathBuf::from).context("--profile needs a directory")?,
+    const USAGE: &str = "usage: relay import-chrome [--dry-run] [--profile DIR]";
+    let mut dry = false;
+    let mut profile = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                return Ok(());
+            }
+            "--dry-run" => dry = true,
+            "--profile" => {
+                i += 1;
+                let value = args.get(i).with_context(|| format!("--profile needs a directory\n{USAGE}"))?;
+                if value.starts_with("--") {
+                    bail!("--profile needs a directory, got {value:?}\n{USAGE}");
+                }
+                profile = Some(std::path::PathBuf::from(value));
+            }
+            other => bail!("unknown option {other}\n{USAGE}"),
+        }
+        i += 1;
+    }
+    let profile = match profile {
+        Some(p) => p,
         None => chrome_import::default_profile().context("no Chrome profile found; pass --profile DIR")?,
     };
     let p = chrome_import::preview(&profile, 20_000);
