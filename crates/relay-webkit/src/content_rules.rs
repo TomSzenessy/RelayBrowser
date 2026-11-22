@@ -24,6 +24,21 @@ impl Compiled {
     pub fn to_json(&self) -> String {
         serde_json::to_string(&self.rules).expect("rules serialize")
     }
+
+    /// Turn blocking off on these sites (and their subdomains): one final
+    /// `ignore-previous-rules` rule keyed on the page's domain, so requests
+    /// and element hiding on those pages are left alone. Must run last.
+    pub fn allow_sites<S: AsRef<str>>(&mut self, hosts: &[S]) {
+        let domains: Vec<String> = hosts
+            .iter()
+            .map(|h| h.as_ref().trim().trim_start_matches("www.").to_ascii_lowercase())
+            .filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+            .map(|h| format!("*{h}"))
+            .collect();
+        if !domains.is_empty() {
+            self.rules.push(json!({ "trigger": { "url-filter": ".*", "if-domain": domains }, "action": { "type": "ignore-previous-rules" } }));
+        }
+    }
 }
 
 /// A tiny built-in list so blocking works before any list is downloaded.
@@ -257,6 +272,18 @@ mod tests {
 
     #[test]
     fn builtin_list_compiles_fully() {
+        let mut allowed = compile(BUILTIN_FILTERS);
+        let before = allowed.rules.len();
+        allowed.allow_sites(&["www.News.example", "bad host", "", "shop.test"]);
+        assert_eq!(allowed.rules.len(), before + 1);
+        assert_eq!(
+            allowed.rules.last().unwrap(),
+            &json!({"trigger":{"url-filter":".*","if-domain":["*news.example","*shop.test"]},"action":{"type":"ignore-previous-rules"}})
+        );
+        let mut none = compile(BUILTIN_FILTERS);
+        none.allow_sites::<&str>(&[]);
+        assert_eq!(none.rules.len(), before, "no sites, no extra rule");
+
         let cmp = compile(CMP_FILTERS);
         assert_eq!(cmp.skipped, 0);
         assert_eq!(cmp.rules.len(), 9);

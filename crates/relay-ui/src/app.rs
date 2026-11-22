@@ -181,8 +181,7 @@ impl RelayApp {
         let sleep_minutes = store.as_ref().and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok()).unwrap_or(15);
         let mcp_enabled = setting_enabled(store.as_ref().and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
         if blocking {
-            let rules = relay_webkit::content_rules::compile(&blocklist());
-            web.load_content_rules(&rules.to_json());
+            web.load_content_rules(&rules_json(store.as_ref()));
         }
         let focus = cx.focus_handle();
         window.focus(&focus);
@@ -550,6 +549,36 @@ impl RelayApp {
         self.toast(format!("Zoom {}% on {host}", (zoom * 100.0).round()));
     }
 
+    /// Palette: turn ad/tracker blocking off (or back on) for the active
+    /// page's site, recompile the rule list, and reload the page.
+    fn toggle_site_blocking(&mut self) {
+        let Some(tab) = self.active() else { return };
+        let Some(host) = self.hub.lock().tab(tab).filter(|t| is_http_url(&t.url)).map(|t| crate::clean_url::host_of(&t.url)) else {
+            self.toast("Blocking applies to web pages only");
+            return;
+        };
+        let Some(store) = &self.store else {
+            self.toast("Site settings are unavailable: the profile could not be opened");
+            return;
+        };
+        let mut prefs = store.site_pref(&host).unwrap_or_default();
+        prefs.blocking_off = !prefs.blocking_off;
+        let off = prefs.blocking_off;
+        if let Err(e) = store.set_site_pref(&host, prefs) {
+            self.toast(format!("Could not save the site setting: {e}"));
+            return;
+        }
+        if self.blocking {
+            self.web.borrow().load_content_rules(&rules_json(self.store.as_ref()));
+            self.web.borrow_mut().apply(BrowserRequest::Reload(tab));
+        }
+        self.toast(match (off, self.blocking) {
+            (true, _) => format!("Blocking off on {host}"),
+            (false, true) => format!("Blocking on for {host}"),
+            (false, false) => format!("{host} will be blocked once blocking is turned on in Settings"),
+        });
+    }
+
     fn open_find(&mut self) {
         let Some(tab) = self.active() else { return };
         self.palette = None;
@@ -727,6 +756,7 @@ impl RelayApp {
             Command::ZoomIn => self.zoom(1),
             Command::ZoomOut => self.zoom(-1),
             Command::ZoomReset => self.zoom(0),
+            Command::ToggleSiteBlocking => self.toggle_site_blocking(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
         }
     }
@@ -1027,6 +1057,9 @@ impl RelayApp {
             }
             if tab.challenge.is_some() {
                 r = r.child(div().text_color(t.warn).child("⚠"));
+            }
+            if tab.playing_audio {
+                r = r.child(div().text_color(t.muted).text_size(px(11.)).child("♪"));
             }
             if tab.pinned {
                 r = r.child(div().text_color(t.muted).text_size(px(11.)).child("pin"));
@@ -1513,8 +1546,7 @@ impl RelayApp {
                     let _ = store.set_setting("blocking", if app.blocking { "on" } else { "off" });
                 }
                 if app.blocking {
-                    let rules = relay_webkit::content_rules::compile(&blocklist());
-                    app.web.borrow().load_content_rules(&rules.to_json());
+                    app.web.borrow().load_content_rules(&rules_json(app.store.as_ref()));
                 } else {
                     app.web.borrow().clear_content_rules();
                 }
@@ -1902,6 +1934,21 @@ fn now_unix() -> i64 {
 }
 
 /// Built-in list plus the user's `relay_home()/filters.txt` (EasyList syntax).
+/// The content-blocker JSON: built-in + cookie-banner + `filters.txt` rules,
+/// then an exception for every site the user turned blocking off on.
+fn rules_json(store: Option<&Store>) -> String {
+    let mut rules = relay_webkit::content_rules::compile(&blocklist());
+    let off: Vec<String> = store
+        .and_then(|s| s.all_site_prefs().ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, p)| p.blocking_off)
+        .map(|(host, _)| host)
+        .collect();
+    rules.allow_sites(&off);
+    rules.to_json()
+}
+
 fn blocklist() -> String {
     let mut s = relay_webkit::content_rules::BUILTIN_FILTERS.to_string();
     s.push_str(relay_webkit::content_rules::CMP_FILTERS);

@@ -43,10 +43,11 @@ pub enum Command {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ToggleSiteBlocking,
 }
 
 impl Command {
-    pub const ALL: [Command; 22] = [
+    pub const ALL: [Command; 23] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -69,6 +70,7 @@ impl Command {
         Command::ZoomIn,
         Command::ZoomOut,
         Command::ZoomReset,
+        Command::ToggleSiteBlocking,
     ];
 
     pub fn title(self) -> &'static str {
@@ -95,6 +97,7 @@ impl Command {
             Command::ZoomIn => "Zoom In",
             Command::ZoomOut => "Zoom Out",
             Command::ZoomReset => "Actual Size",
+            Command::ToggleSiteBlocking => "Toggle Blocking on This Site",
         }
     }
 
@@ -119,7 +122,7 @@ impl Command {
             Command::ZoomIn => "⌘=",
             Command::ZoomOut => "⌘-",
             Command::ZoomReset => "⌘0",
-            Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs => "",
+            Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs | Command::ToggleSiteBlocking => "",
         }
     }
 }
@@ -461,7 +464,7 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 22);
+        assert_eq!(Command::ALL.len(), 23);
         for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());

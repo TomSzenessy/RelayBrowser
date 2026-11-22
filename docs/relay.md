@@ -108,6 +108,15 @@ browser-style presets (50%–300%) and store the result in the host's
 `Engine::set_zoom` (`pageZoom`), so a site keeps its zoom across tabs and
 relaunches.
 
+## Per-site blocking
+
+The palette command "Toggle Blocking on This Site" flips the host's
+`SitePrefs.blocking_off`, recompiles the rule list, and reloads the page.
+`rules_json` appends one final `ignore-previous-rules` rule whose
+`if-domain` lists every such host (`Compiled::allow_sites`, subdomains
+included), so requests and element hiding on those pages are left alone.
+Compat mode (Safari user agent per site) is not wired yet.
+
 ## Cookie banners
 
 With blocking on, the compiled rule list also includes
