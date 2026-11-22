@@ -19,7 +19,7 @@ github = "TomSzenessy/RelayBrowser"
 infrastructure_paths = ["scripts"]
 # Single source for the README description block and the GitHub repository
 # metadata (`make sync` renders the README; `make github-sync` applies GitHub).
-description = "A 120fps, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents."
+description = "A fast, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents."
 topics = ["browser", "rust", "gpui", "webkit", "macos", "mcp", "devtools", "ai-agents"]
 is_template = false
 
