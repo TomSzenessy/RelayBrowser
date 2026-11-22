@@ -113,7 +113,9 @@ relaunches.
 The palette command "Toggle Blocking on This Site" flips the host's
 `SitePrefs.blocking_off`, recompiles the rule list, and reloads the page once
 WebKit has applied it (`Engine::load_content_rules_then` →
-`WebEvent::RulesApplied`), never before. IP-literal hosts are refused.
+`WebEvent::RulesApplied`), never before. IPv6-literal hosts are refused (WebKit
+`if-domain` cannot express them); if the recompile fails, nothing reloads and
+the error is only logged.
 `rules_json` appends one final `ignore-previous-rules` rule whose
 `if-domain` lists every such host (`Compiled::allow_sites`, subdomains
 included), so requests and element hiding on those pages are left alone.

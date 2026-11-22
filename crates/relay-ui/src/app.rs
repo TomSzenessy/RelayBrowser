@@ -610,7 +610,7 @@ impl RelayApp {
             return;
         };
         if !relay_webkit::content_rules::is_site_host(&host) {
-            self.toast("Per-site blocking needs a domain name, not an IP literal");
+            self.toast("Per-site blocking needs a domain name or IPv4 address, not an IPv6 literal");
             return;
         }
         let Some(store) = &self.store else {
