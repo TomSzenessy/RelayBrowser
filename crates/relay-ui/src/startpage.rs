@@ -111,14 +111,23 @@ pub struct StartItem {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StartPage {
     pub sections: Vec<(Section, Vec<StartItem>)>,
+    /// True when the profile has no history, bookmarks, or installed apps at
+    /// all. Only then is the welcome card more useful than "Nothing yet".
+    pub profile_empty: bool,
 }
 
 impl StartPage {
-    /// True only when sections exist but every one is empty, i.e. a fresh
-    /// profile that should see the welcome card. `start_sections=none`
-    /// deliberately has no sections and is not "empty".
+    /// True only for a genuinely fresh profile with configured-but-empty
+    /// sections. `start_sections=none` is a deliberate quiet page, and a
+    /// profile with data in an unconfigured section must not show the
+    /// first-run card just because the shown sections are empty.
     pub fn is_empty(&self) -> bool {
-        !self.sections.is_empty() && self.sections.iter().all(|(_, items)| items.is_empty())
+        self.profile_empty && !self.sections.is_empty() && self.sections.iter().all(|(_, items)| items.is_empty())
+    }
+
+    /// A first-run page with the default section shape and no rows.
+    pub fn welcome() -> Self {
+        Self { sections: Section::ALL.into_iter().map(|s| (s, vec![])).collect(), profile_empty: true }
     }
 
     pub fn build(store: &Store, raw_sections: Option<&str>) -> relay_extensions::Result<Self> {
@@ -133,6 +142,7 @@ impl StartPage {
             .collect();
         let apps = store.web_apps()?.into_iter().take(MAX_ROWS).collect::<Vec<_>>();
         let bookmarks = store.bookmarks()?.into_iter().take(MAX_ROWS).collect::<Vec<_>>();
+        let profile_empty = recent_visits.is_empty() && frequent.is_empty() && apps.is_empty() && bookmarks.is_empty();
 
         let sections = wanted
             .into_iter()
@@ -146,7 +156,7 @@ impl StartPage {
                 (section, items)
             })
             .collect();
-        Ok(Self { sections })
+        Ok(Self { sections, profile_empty })
     }
 }
 
@@ -213,6 +223,7 @@ mod tests {
         let none = StartPage::build(&Store::in_memory().unwrap(), Some("none")).unwrap();
         assert!(none.sections.is_empty());
         assert!(!none.is_empty(), "an explicit none is a deliberate blank page, not the welcome state");
+        assert!(StartPage::welcome().is_empty());
         assert_eq!(parse_sections(Some("RECENT")), vec![Section::Recent]);
     }
 
@@ -251,6 +262,15 @@ mod tests {
         assert!(page.is_empty());
         assert_eq!(page.sections.len(), 2);
         assert!(page.sections.iter().all(|(_, items)| items.is_empty()));
+
+        // History exists but the configured Apps section is empty: show the
+        // grid (with "Nothing yet"), not the first-run card.
+        s.record_visit("https://seen.test/", "Seen", 1).unwrap();
+        let apps_only = StartPage::build(&s, Some("apps")).unwrap();
+        assert!(!apps_only.profile_empty);
+        assert!(!apps_only.is_empty());
+        assert_eq!(apps_only.sections.len(), 1);
+        assert!(apps_only.sections[0].1.is_empty());
     }
 
     #[test]

@@ -348,7 +348,7 @@ impl RelayApp {
                 let sections = store.setting("start_sections").ok().flatten();
                 StartPage::build(store, sections.as_deref()).unwrap_or_default()
             }
-            None => StartPage::default(),
+            None => StartPage::welcome(),
         };
         if blocking {
             web.load_content_rules(&rules_json(store.as_ref()));
@@ -554,6 +554,8 @@ impl RelayApp {
             self.last_sleep_check = Instant::now();
             self.sleep_idle_tabs(cx);
             self.save_session();
+            // Pick up a start_sections change made from the CLI while open.
+            self.refresh_start_page();
         }
         if self.toast.as_ref().is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(3)) {
             self.toast = None;
@@ -1839,18 +1841,14 @@ impl RelayApp {
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(72.))
+            .pt(px(56.))
             .px_6()
             .bg(t.page)
             .overflow_hidden()
             .child(div().text_size(px(28.)).text_color(t.text).child(SharedString::from(title)))
             .child(self.start_search(cx));
-        if self.start_page.is_empty() {
-            page = page.child(self.render_welcome(cx));
-        } else {
-            page = page.child(self.start_grid(cx));
-        }
-        page.into_any_element()
+        let body = if self.start_page.is_empty() { self.render_welcome(cx).into_any_element() } else { self.start_grid(cx) };
+        page.child(div().id("start-body").flex_1().w_full().flex().justify_center().overflow_y_scroll().child(body)).into_any_element()
     }
 
     fn start_search(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -1892,7 +1890,7 @@ impl RelayApp {
                 right = right.child(card);
             }
         }
-        div().flex().gap_6().mt_8().w(px(720.)).max_h(px(560.)).child(left).child(right).into_any_element()
+        div().flex().gap_6().mt_8().w(px(680.)).child(left).child(right).into_any_element()
     }
 
     fn start_section(&self, section: Section, items: &[StartItem], cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -1911,10 +1909,10 @@ impl RelayApp {
                 div()
                     .id(SharedString::from(format!("start-{}-{i}", section.as_str())))
                     .flex()
-                    .flex_col()
-                    .gap_0p5()
+                    .items_center()
+                    .gap_2()
+                    .h(px(26.))
                     .px_2()
-                    .py_1p5()
                     .rounded(px(6.))
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
@@ -1924,6 +1922,7 @@ impl RelayApp {
                     }))
                     .child(
                         div()
+                            .flex_1()
                             .text_size(px(13.))
                             .text_color(t.text)
                             .overflow_hidden()
@@ -1933,6 +1932,7 @@ impl RelayApp {
                     )
                     .child(
                         div()
+                            .max_w(px(150.))
                             .text_size(px(11.))
                             .text_color(t.muted)
                             .overflow_hidden()

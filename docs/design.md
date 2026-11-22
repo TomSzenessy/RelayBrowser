@@ -35,8 +35,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   Elements row highlights the node in the page.
 - **New tab:** with no active tab, a quiet page with the app name, one search
   field (opens ⌘K), and two columns of Recent / Frequent / Apps / Bookmarks
-  rows. Empty sections say "Nothing yet"; a brand-new profile shows the welcome
-  card. `start_sections` owns the order and `none` hides the page's sections.
+  rows. Rows are one line with a muted note; empty sections say "Nothing yet";
+  only a genuinely fresh profile shows the welcome card. `start_sections` owns the order and `none` hides the page's sections.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
   Bookmarks, Tab, Window, Help) carry every shortcut. AppKit checks menu key
   equivalents before the first responder, so they work while WKWebView has
