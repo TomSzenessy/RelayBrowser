@@ -94,6 +94,7 @@ fn config_list_get_set_and_rejects_unknown_key() {
         &["config", "get", "bogus"][..],
         &["config", "set", "blocking", "maybe"][..],
         &["config", "set", "sleep_minutes", "-1"][..],
+        &["config", "set", "sleep_minutes", "99999"][..],
         &["config", "set", "search", "not-a-url"][..],
     ] {
         let out = relay(dir.path(), bad);

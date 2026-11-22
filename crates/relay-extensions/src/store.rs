@@ -164,11 +164,19 @@ impl Store {
     }
 
     pub fn clear_history(&self) -> Result<usize, Error> {
-        Ok(self.conn.execute("DELETE FROM history", [])?)
+        let n = self.conn.execute("DELETE FROM history", [])?;
+        self.reclaim_deleted();
+        Ok(n)
     }
 
     pub fn clear_bookmarks(&self) -> Result<usize, Error> {
-        Ok(self.conn.execute("DELETE FROM bookmarks", [])?)
+        let n = self.conn.execute("DELETE FROM bookmarks", [])?;
+        self.reclaim_deleted();
+        Ok(n)
+    }
+
+    fn reclaim_deleted(&self) {
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
     }
 
     /// Pretty-printed JSON backup of bookmarks, history, settings, and

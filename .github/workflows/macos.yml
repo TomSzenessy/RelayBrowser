@@ -4,7 +4,8 @@ name: macos
 # its tests against the system WebKit; the WebKit smoke example loads a page
 # through the actual engine and bridge; the release binary is packaged as
 # Relay.app + Relay-macOS.dmg, verified with `relay doctor`, uploaded as a
-# workflow artifact, and published to GitHub Releases on main pushes and v* tags.
+# workflow artifact, and published to GitHub Releases on main pushes and
+# published releases.
 # GitHub-hosted macOS runners are free for public repositories.
 
 on:

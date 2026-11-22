@@ -128,6 +128,7 @@ pub struct Engine {
     hub: SharedHub,
     events: Rc<dyn Fn(EngineEvent)>,
     rules: Rc<RefCell<Option<Retained<WKContentRuleList>>>>,
+    blocking_enabled: Rc<std::cell::Cell<bool>>,
     /// Every live tab's controller, shared with the async rule compile so
     /// tabs opened before compilation finishes still get blocking.
     uccs: Rc<RefCell<Vec<Retained<WKUserContentController>>>>,
@@ -148,6 +149,7 @@ impl Engine {
             hub,
             events: Rc::new(events),
             rules: Rc::new(RefCell::new(None)),
+            blocking_enabled: Rc::new(std::cell::Cell::new(false)),
             uccs: Rc::default(),
             extensions: None,
             tabs: HashMap::new(),
@@ -169,10 +171,15 @@ impl Engine {
     /// Compile WebKit content-blocker JSON once (cached by WebKit across launches)
     /// and apply it to every tab.
     pub fn load_content_rules(&self, json: &str) {
+        self.blocking_enabled.set(true);
         let Some(store) = (unsafe { WKContentRuleListStore::defaultStore(self.mtm) }) else { return };
         let slot = self.rules.clone();
+        let enabled = self.blocking_enabled.clone();
         let uccs = self.uccs.clone();
         let done = RcBlock::new(move |list: *mut WKContentRuleList, err: *mut NSError| {
+            if !enabled.get() {
+                return;
+            }
             if let Some(list) = unsafe { Retained::retain(list) } {
                 for ucc in uccs.borrow().iter() {
                     unsafe {
@@ -197,6 +204,7 @@ impl Engine {
     /// Remove any active content rule lists from every live tab and stop
     /// applying them to future tabs.
     pub fn clear_content_rules(&self) {
+        self.blocking_enabled.set(false);
         *self.rules.borrow_mut() = None;
         for ucc in self.uccs.borrow().iter() {
             unsafe { ucc.removeAllContentRuleLists() };

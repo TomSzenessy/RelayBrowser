@@ -177,7 +177,10 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
         "sleep_minutes" => {
             let mins: u64 = trimmed
                 .parse()
-                .with_context(|| format!("invalid sleep_minutes {value:?}: expected a non-negative integer (0 disables sleeping)"))?;
+                .with_context(|| format!("invalid sleep_minutes {value:?}: expected an integer 0..=1440 (0 disables sleeping)"))?;
+            if mins > 1440 {
+                bail!("invalid sleep_minutes {value:?}: maximum is 1440 (24 hours; 0 disables sleeping)");
+            }
             Ok(mins.to_string())
         }
         _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp)"),

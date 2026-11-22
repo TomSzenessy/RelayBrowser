@@ -173,7 +173,7 @@ impl RelayApp {
             search,
             seen_version: 0,
             recorded: HashMap::new(),
-            sleep_policy: SleepPolicy { idle_after: Duration::from_secs(sleep_minutes * 60), keep_awake_min: 1 },
+            sleep_policy: SleepPolicy { idle_after: Duration::from_secs(sleep_minutes.saturating_mul(60)), keep_awake_min: 1 },
             last_sleep_check: Instant::now(),
             placements: Rc::default(),
             snapshots: HashMap::new(),
@@ -1303,7 +1303,11 @@ impl RelayApp {
         if agents > 0 {
             right.push_str(&format!(" · {agents} agent"));
         }
-        right.push_str(" · agents: relay mcp");
+        if self.mcp_enabled {
+            right.push_str(" · agents: relay mcp");
+        } else {
+            right.push_str(" · mcp: off");
+        }
         div()
             .h(px(24.))
             .flex()
