@@ -1,127 +1,113 @@
-# Handoff — truthful verification for Relay
+# Handoff — Relay after its first green CI
 
 <!-- index: operate | Handover record scaffold (local HANDOVER.md or committed handoff) | A fresh actor needs a focused continuation record. -->
 
-- **Created (UTC):** `2026-11-22T14:20:00Z`
-- **Next actor/session focus:** get the Linux CI gate green end to end, then obtain the first macOS runtime evidence.
+- **Created (UTC):** `2026-11-22T14:42:00Z`
+- **Next actor/session focus:** run the manual `macos` workflow on a real Mac runner and judge the GPUI window.
 - **Sharing boundary:** public repository (`github.com/TomSzenessy/RelayBrowser`).
 
 ## Objective
 
 Relay is a macOS browser: a GPUI shell over native `WKWebView`, one injected
 bridge feeding both a native Inspector and a local MCP server for coding
-agents. This session's objective was to make every claim about it reproducible
-and to fix the product defects that verification exposed — not to add breadth.
+agents. This session made its claims reproducible, fixed the defects
+verification exposed, and got Linux CI green.
 
 ## Current state
 
-- **Committed baseline:** `main` at `4e43123` (pushed; the repository is public).
+- **Committed baseline:** `main` @ `9249634` plus this handover commit (pushed).
 - **Working tree:** clean.
-- **Done (verified):**
-  - 50 Rust tests pass locally (`cargo test --workspace --locked`): bridge
-    protocol/hub, MCP round-trip with a real MCP client, real `relay mcp`
-    stdio-proxy handshake, Chrome import, CRX3, content rules, sleep policy,
-    palette, inspector, hints, extensions store.
-  - `cargo check -p relay-ui` passes on Linux (the GPUI shell, palette,
-    inspector and macOS-only `web.rs` module are type-checked as far as the
-    host allows).
+- **Done (measured):**
+  - Linux CI is green on `ubuntu-24.04` (run `45033566781`): both matrix
+    interpreters and the 800-day test pass.
+  - 50 Rust tests, including relay-ui's unit tests and the real `relay mcp`
+    stdio proxy, pass in CI and locally.
+  - 8 Playwright WebKit 26.0 bridge tests pass in CI: DOM snapshots/patches,
+    fetch/XHR status and bodies, console and uncaught errors,
+    click/type/highlight, hints, 2FA detection.
   - `bash scripts/mac-check.sh` type-checks `relay-webkit`,
-    `relay-extensions`, `relay-mcp` and the real-WebKit `smoke` example for
+    `relay-extensions`, `relay-mcp` and the `smoke` example for
     `aarch64-apple-darwin`.
-  - Product fixes: page load failures carry WebKit's reason with an in-pane
-    Retry; the native window title follows the active page; the profile DB and
-    its WAL sidecars are 0600 (history is private); a woken tab keeps its sleep
-    JPEG visible until the bridge delivers a DOM; MCP gained `wait_for` and
-    `get_page_info`; `click_element`/`type_text` report the element acted on.
-  - `macos` workflow (manual) builds/tests the workspace, runs the WebKit
-    smoke example, runs the Playwright bridge suite, and packages an
-    ad-hoc-signed `Relay.app`; `scripts/bundle-macos.sh` is checked in.
-  - README, `docs/relay.md`, `docs/security.md` and the feature matrix now
-    state exactly which layer produced which evidence.
-- **Remaining (smallest next slice):**
-  1. CI run `45032282701` (Node 22 added) must be observed to completion; fix
-     the next bridge-js failure (likely Playwright WebKit host libraries/EGL).
-  2. Run the manual `macos` workflow on a real Mac runner; fix compile/run
-     failures there; attach `Relay.app` and smoke output as evidence.
-  3. Only then judge the GPUI window visually and complete the `shell`,
-     `inspector`, `states`, `accessibility`, `identity` rows in
-     `docs/product/features.csv`.
+  - Product fixes: load failures with WebKit's reason and Retry; live window
+    title; 0600 profile and WAL sidecars; sleep JPEG visible through a wake
+    until the new DOM; MCP `wait_for`/`get_page_info`; clearer click/type
+    results; truthful docs and matrix.
+  - CI infrastructure: hosted Ubuntu 24.04 (free for this public repo),
+    Node 22, Rust 1.100, GPUI Linux build libraries, Playwright WebKit with
+    system deps, pinned workflow digests, cleanup steps.
+- **Remaining (smallest next slice):** run `gh workflow run macos.yml` on a Mac
+  (or attach a macOS self-hosted runner), fix the first real-WKWebView/compile
+  failure, and attach the smoke output plus `Relay.app` as evidence.
 
 ## Evidence already collected
 
 | Check / artifact | Result | Date/command | Evidence type |
 |---|---|---|---|
-| `cargo test --workspace --locked` (local) | **measured**: 50 passed, 0 failed | 2026-11-22, local `1.100.0` | `test` |
-| `cargo check -p relay-ui` (local) | **measured**: finished, no errors | 2026-11-22 | `test/type-check` |
-| `bash scripts/mac-check.sh` | **measured**: Darwin type-check finished | 2026-11-22 | `test/type-check` |
-| `cargo test -p relay-ui --test mcp_proxy` | **measured**: real binary initialize/tools/list_tabs passes | 2026-11-22 | `test` |
-| Linux CI `cargo test --workspace --exclude relay-ui` | **measured**: portable suites pass; overall run red | run `45025716241`, `45027927713`, `450302...` | `test` |
-| macOS workflow | **hypothesis**: never ran; macOS hosted requests stay queued | runs `45021376984`, `45019294867` cancelled after 25–45 min queued | `none` |
-| WebKit smoke example | **hypothesis**: compiles; behaviour unobserved | `cargo check --example smoke --target aarch64-apple-darwin` | `type-check only` |
-| Playwright bridge suite | **hypothesis**: WebKit tests exist but could not launch on this Linux host (missing GTK/WPE EGL/Xvfb data) | local attempt 2026-11-22 | `none` |
+| Linux CI | **measured**: success, both Python matrices | run `45033566781`, 2026-11-22 | `test` |
+| `cargo test --workspace --locked` | **measured**: 50 passed | CI + local `1.100.0` | `test` |
+| Playwright WebKit 26.0 bridge suite | **measured**: 8 pass, 0 fail | CI run `45033566781` | `test` |
+| `bash scripts/mac-check.sh` | **measured**: Darwin type-check passed | CI + local | `test/type-check` |
+| `cargo test -p relay-ui --test mcp_proxy` | **measured**: real binary handshake passed | local and CI | `test` |
+| `cargo check -p relay-ui` | **measured**: passed (Linux) | local | `type-check` |
+| macOS workflow | **hypothesis**: never ran; hosted macOS requests stay queued | runs `45021376984`, `45019294867` cancelled queued | `none` |
+| WebKit smoke example | **hypothesis**: compiles; runtime unobserved | `cargo check --example smoke --target aarch64-apple-darwin` | `type-check only` |
+| GPUI window pixels | **hypothesis**: never observed | none | `none` |
 
 ## Rejected — do not retry
 
 | Tried | Result | Commit / record |
 |---|---|---|
-| GitHub-hosted `macos-14` runner | rejected before steps: configuration unsupported | run `45018506075` |
-| GitHub-hosted `macos-13` runner | stays queued indefinitely for this account | runs `45021376984`, `45021565724` |
-| Full `cargo test --workspace` on the two-core self-hosted Linux runner | fills the disk (`No space left on device` in `ash`/`x11rb`) | runs `45025716241`, `45027927713` |
-| `cargo check -p relay-ui` in Linux CI | same disk limit after portable tests | run `45027927713` |
-| Zig as cross C compiler for `relay-ui` Darwin check | `gpui_media` build script runs bindgen with `xcrun`/Apple SDK on macOS only; no SDK here | local attempt 2026-11-22 |
-| Playwright WebKit on this Linux host | WPE needs EGL; GTK needs Xvfb + `/usr/bin/xkbcomp` (no root); Chromium fallback was not attempted | local attempt 2026-11-22 |
+| Hosted `macos-14` runner | rejected before steps: configuration unsupported | run `45018506075` |
+| Hosted `macos-13` runner | stays queued indefinitely for this account | runs `45021376984`, `45021565724` |
+| `runs-on: ubuntu-latest` for CI | Ubuntu 26.04; Playwright 1.56 refuses WebKit | run `45033036639` |
+| Self-hosted Linux runners for the Rust gate | disk full (`ash`, `chrono`, `x11rb` ENOSPC) | runs `45025716241`, `45032282701` |
+| Zig as cross C compiler for relay-ui Darwin | `gpui_media` bindgen needs Apple SDK via `xcrun` | local attempt |
+| Playwright WebKit on this Linux dev host | WPE EGL / GTK Xvfb unavailable without root | local attempt |
 
 ## Budget and how to re-evaluate
 
-- **Scarce budget used / left:** one session; self-hosted runner disk and
-  macOS-runner availability are the real constraints.
-- **Re-evaluate the current state with:**
-  `cargo test --workspace --locked`, then
-  `cargo check -p relay-ui`, then `bash scripts/mac-check.sh`, then
-  `gh run list --limit 3` and `gh run watch <id> --exit-status`.
+- **Scarce budget used / left:** macOS runner availability is the only costly
+  gate left; Linux CI is free and green.
+- **Re-evaluate with:** `gh run list --limit 3`; `cargo test --workspace
+  --locked`; `bash scripts/mac-check.sh`; `gh workflow run macos.yml`.
 
 ## Decisions and constraints
 
-- Public repository was an explicit owner decision (session reply, 2026-11-22);
-  it was made only after a secret scan of the working tree and full git history.
-- Linux CI is deliberately a subset: portable tests, a `cargo clean`, and the
-  Darwin type-check. `relay-ui` linking and its tests live on a Mac/developer
-  machine because the self-hosted runner's disk cannot hold gpui's tree.
-- The macOS workflow is `workflow_dispatch` on purpose; its triggers were
-  removed after repeated queue-only runs. Re-add a push trigger only after a
-  macOS runner is attached.
-- The owner changed the public description from "120fps" to "fast"; the
-  manifest now matches so `make sync` cannot revert it.
+- Public repository was the owner's explicit decision; a full-history secret
+  scan preceded it.
+- CI runs on GitHub-hosted `ubuntu-24.04`, pinned because Playwright 1.56 does
+  not support 26.04. The macOS job stays manual until a Mac runner exists.
+- `opt-level = 0` for dev dependencies keeps cold CI builds short; release is
+  unchanged.
+- The owner's public description says "fast", not "120fps"; the manifest and
+  README match so `make sync` cannot revert it.
 
 ## Blockers and open questions
 
 - **Blocker (owner/infrastructure):** no working macOS runner for this
-  account. Hosted arm64 is rejected; Intel stays queued. The engine, `.app`
-  bundle and GPUI window therefore have no runtime evidence.
-- **Open:** Linux CI's bridge-js surface needs Node (added in `4e43123`) and a
-  working Playwright engine. If WebKit cannot launch there, decide between a
-  documented Chromium cross-engine run on Linux plus WebKit on macOS, or
-  declaring the surface not-local on Linux with the reason.
-- **Open:** the self-hosted runner's disk is small; `target/` and the Rust/
-  Node toolchains compete with the repository. Cleanup steps exist but cannot
-  fix a host that is already full.
+  account. Hosted arm64 is rejected; Intel queues indefinitely. The engine,
+  `.app` bundle and GPUI window therefore have no runtime evidence.
+- **Open:** whether the WebKit smoke example's offscreen `WKWebView` and
+  `takeSnapshot` behave on a real Mac; that is the first thing the macOS job
+  will answer.
+- **Open:** extensions require macOS 15.4; the owner's Mac version is unknown.
 
 ## Exact next action
 
-1. `gh run watch 45032282701 --exit-status`; read the first failing step with
-   `gh api --allow-escape-sequences repos/TomSzenessy/RelayBrowser/actions/jobs/<id>/logs`.
-2. Fix that one failure, commit, push, and observe the next checkpoint. Do not
-   add features while the default branch is red.
+1. `gh workflow run macos.yml && gh run watch <id> --exit-status`.
+2. On failure, fix the first compile/runtime error, push, and rerun; on
+   success, download `Relay-macOS.zip`, launch the app, and run
+   `crates/relay-ui/review/keyboard_e2e.sh` plus a visual review.
 
 ## Relevant paths and issues
 
 - [`VISION.md`](../../VISION.md) — owner brief and success evidence.
-- [`docs/relay.md`](../../docs/relay.md) — architecture and the verification ladder.
-- [`docs/product/features.csv`](../../docs/product/features.csv) — the live matrix.
-- [`scripts/mac-check.sh`](../../scripts/mac-check.sh) — Darwin type-check.
+- [`docs/relay.md`](../../docs/relay.md) — architecture and six verification layers.
+- [`docs/product/features.csv`](../../docs/product/features.csv) — live matrix.
 - [`crates/relay-webkit/examples/smoke.rs`](../../crates/relay-webkit/examples/smoke.rs) — real-WebKit smoke.
 - [`crates/relay-ui/tests/mcp_proxy.rs`](../../crates/relay-ui/tests/mcp_proxy.rs) — stdio proxy test.
 - [`.github/workflows/macos.yml`](../../.github/workflows/macos.yml) — manual macOS job.
+- [`scripts/mac-check.sh`](../../scripts/mac-check.sh) — Darwin type-check.
 - Local-WAL-001 (`.agent/wal/Local-WAL-001.md`, ignored) — original build record.
 
 ## Verified skill suggestions
@@ -131,5 +117,5 @@ and to fix the product defects that verification exposed — not to add breadth.
 ## Redaction and retention check
 
 No secrets, credentials, tokens, raw personal data or full exports are present.
-The record is safe for the public repository. Delete or supersede it once the
-macOS job and green Linux CI make it stale.
+Safe for the public repository. Supersede once the macOS job has run and the
+GPUI window has been reviewed.

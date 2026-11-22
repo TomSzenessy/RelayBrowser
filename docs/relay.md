@@ -97,7 +97,7 @@ restores scroll once the bridge says `hello`.
 
 ## Checking Relay off-Mac
 
-Five layers, cheapest first:
+Six layers, cheapest first:
 
 1. **Portable tests** (`cargo test --workspace`, 50 tests) run anywhere:
    protocol, hub, MCP round-trip with a real client, Chrome import, CRX,
@@ -105,23 +105,26 @@ Five layers, cheapest first:
    is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which spawns the real
    `relay mcp` binary, connects it to a socket-backed hub, and performs the
    initialize / tools list / list_tabs handshake.
-2. **The GPUI shell builds on Linux** with GPUI's system libraries
+2. **The injected bridge runs in Playwright's WebKit 26.0** in Linux CI
+   (`js/`, 8 tests): DOM snapshots and patches, fetch/XHR status and bodies,
+   console and uncaught errors, click/type/highlight, hints, and 2FA detection.
+   CI installs WebKit and its host libraries on ubuntu-24.04.
+3. **The GPUI shell builds on Linux** with GPUI's system libraries
    (`libxkbcommon`, wayland, xcb, fontconfig, freetype); CI installs them and
    runs `cargo check -p relay-ui` through the full suite. Its macOS-only
    `web.rs` needs a macOS build.
-3. **The Darwin type-check** is `bash scripts/mac-check.sh`: it installs the
+4. **The Darwin type-check** is `bash scripts/mac-check.sh`: it installs the
    Apple standard library when rustup is available and type-checks
    `relay-webkit`, `relay-extensions`, `relay-mcp`, including the `smoke`
    example. It proves API use, not behaviour.
-4. **The macOS job** (`.github/workflows/macos.yml`) is the intended runtime
-   evidence: the full `cargo test --workspace` (including relay-ui and the
-   stdio proxy), the WebKit smoke page, the Playwright bridge tests (macOS has
-   a WebKit whose headless mode works), then the release
-   build packaged by [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh).
+5. **The macOS job** (`.github/workflows/macos.yml`) is the intended runtime
+   evidence: the full `cargo test --workspace`, the WebKit smoke page, the same
+   bridge suite on Apple's WebKit, then the release build packaged by
+   [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh).
    It is manual because this account's GitHub-hosted macOS requests stay
    queued; dispatch it on a Mac or with a macOS runner attached. It has not
    produced evidence yet.
-5. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
+6. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
    the binary under Xvfb and drives it with `xdotool`, reading state back over
    MCP (`list_tabs`); it covers ⌘K/⌘T palette navigation, URL-vs-search, ⌘W,
    ⌘⇧T, and Esc. It needs `Xvfb`, `xdotool` and `python3`. Screenshots are not
@@ -148,7 +151,7 @@ Five layers, cheapest first:
   `ureq` uses native TLS (Security.framework on macOS), so no C
   cross-compilation is needed.
 - Linux builds of the `relay` binary need GPUI's system libraries (xkbcommon,
-  wayland, xcb, fontconfig, freetype, vulkan headers). CI installs the subset
-  it needs on ubuntu-24.04 (Playwright 1.56 does not support 26.04).
+  wayland, xcb, fontconfig, freetype, vulkan headers). Linux CI installs the
+  subset it needs on ubuntu-24.04 (Playwright 1.56 does not support 26.04).
 - `third_party/xattr` is a patched copy of xattr 0.2.3 that fixes a Linux build
   break in gpui's dependency tree ([`../third_party/README.md`](../third_party/README.md)).
