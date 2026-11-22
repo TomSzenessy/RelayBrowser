@@ -153,3 +153,38 @@ fn clear_data_requires_yes_confirmation() {
     assert!(ok_bm.status.success(), "{}", String::from_utf8_lossy(&ok_bm.stderr));
     assert!(String::from_utf8_lossy(&ok_bm.stdout).contains("Cleared 0 bookmarks"));
 }
+
+#[test]
+fn clear_data_removes_the_saved_session() {
+    use relay_extensions::store::{SessionTab, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let seed = |n: usize| {
+        let store = Store::open(&dir.path().join("profile.sqlite")).unwrap();
+        let tabs: Vec<SessionTab> = (0..n)
+            .map(|i| SessionTab {
+                url: format!("https://example.com/{i}"),
+                title: "T".into(),
+                pinned: false,
+                scroll_y: 0.0,
+                active: i == 0,
+                position: i as i64,
+            })
+            .collect();
+        store.save_session(&tabs).unwrap();
+    };
+    let saved = || Store::open(&dir.path().join("profile.sqlite")).unwrap().load_session().unwrap().len();
+
+    seed(2);
+    let only = relay(dir.path(), &["clear-data", "--session", "--yes"]);
+    assert!(only.status.success(), "{}", String::from_utf8_lossy(&only.stderr));
+    let text = String::from_utf8_lossy(&only.stdout);
+    assert!(text.contains("Cleared 2 saved session tabs"), "{text}");
+    assert!(!text.contains("history entries"), "--session alone must not clear history:\n{text}");
+    assert_eq!(saved(), 0);
+
+    seed(3);
+    let hist = relay(dir.path(), &["clear-data", "--history", "--yes"]);
+    assert!(hist.status.success(), "{}", String::from_utf8_lossy(&hist.stderr));
+    assert!(String::from_utf8_lossy(&hist.stdout).contains("Cleared 3 saved session tabs"));
+    assert_eq!(saved(), 0, "clearing history must also clear the saved session");
+}

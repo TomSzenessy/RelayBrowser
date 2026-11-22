@@ -88,8 +88,8 @@ telemetry pipeline, crash-upload endpoint, or analytics SDK.
   and close their own tabs—they cannot close user tabs. Any data an external
   MCP client forwards to a model provider is governed by that client's policy.
 - **User export and erasure:** Users can export local profile data with
-  `relay export`, clear browsing history with
-  `relay clear-data --history --yes`, or erase all Relay-managed local state
+  `relay export`, clear browsing history and the saved session with
+  `relay clear-data --history --yes` (`--session` clears only the saved tabs), or erase all Relay-managed local state
   (profile, unpacked extensions, and socket state) by removing `$RELAY_HOME`.
   Passwords imported into the macOS Keychain are managed and deleted through
   macOS Keychain Access or the Passwords app.

@@ -23,8 +23,8 @@ USAGE:
   relay config [list | get KEY | set KEY VALUE]
                                     inspect or update profile settings
   relay export [FILE]               export bookmarks, history, settings, and extensions as JSON
-  relay clear-data [--history] [--bookmarks] --yes
-                                    delete stored browsing history and/or bookmarks
+  relay clear-data [--history] [--session] [--bookmarks] --yes
+                                    delete stored history (incl. the saved session), the saved session, and/or bookmarks
   relay import-chrome [--dry-run] [--profile DIR]
                                     import Chrome bookmarks + history into Relay's profile
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
@@ -266,20 +266,25 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()
 }
 
 fn clear_data(args: &[String]) -> anyhow::Result<()> {
+    const USAGE: &str = "usage: relay clear-data [--history] [--session] [--bookmarks] --yes";
     let mut history = false;
+    let mut session = false;
     let mut bookmarks = false;
     let mut yes = false;
     for arg in args {
         match arg.as_str() {
             "--history" => history = true,
+            "--session" => session = true,
             "--bookmarks" => bookmarks = true,
             "--yes" => yes = true,
-            other => bail!("unknown flag {other}\nusage: relay clear-data [--history] [--bookmarks] --yes"),
+            other => bail!("unknown flag {other}\n{USAGE}"),
         }
     }
-    if !history && !bookmarks {
+    if !history && !session && !bookmarks {
         history = true;
     }
+    // Saved session tabs are URLs the user visited: clearing history clears them too.
+    session |= history;
     if !yes {
         bail!("refusing to clear data without --yes (pass --yes to confirm)");
     }
@@ -287,6 +292,10 @@ fn clear_data(args: &[String]) -> anyhow::Result<()> {
     if history {
         let n = store.clear_history()?;
         println!("Cleared {n} history entries.");
+    }
+    if session {
+        let n = store.clear_session()?;
+        println!("Cleared {n} saved session tabs.");
     }
     if bookmarks {
         let n = store.clear_bookmarks()?;
