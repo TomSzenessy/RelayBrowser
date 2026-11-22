@@ -74,6 +74,29 @@ pub fn parse_sections(raw: Option<&str>) -> Vec<Section> {
     if sections.is_empty() { Section::ALL.to_vec() } else { sections }
 }
 
+/// Strict form for `relay config set start_sections`: every token must be a
+/// known name, `none` is allowed, and an empty value is an error (use `none`
+/// deliberately). `parse_sections` stays lenient for hand-edited profiles.
+pub fn validate_sections(raw: &str) -> Result<Vec<Section>, String> {
+    let raw = raw.trim();
+    if raw.eq_ignore_ascii_case("none") {
+        return Ok(vec![]);
+    }
+    let mut seen = HashSet::new();
+    let mut sections = Vec::new();
+    for token in raw.split([',', ' ']).filter(|t| !t.is_empty()) {
+        let section = Section::parse(token)
+            .ok_or_else(|| format!("unknown start section {token:?}: use recent, frequent, apps, bookmarks, or none"))?;
+        if seen.insert(section) {
+            sections.push(section);
+        }
+    }
+    if sections.is_empty() {
+        return Err("start_sections cannot be empty: use `none` to hide every section".to_string());
+    }
+    Ok(sections)
+}
+
 /// One row on the new-tab page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartItem {
@@ -204,6 +227,15 @@ mod tests {
         assert_eq!(by(Section::Apps)[0].note, "App");
         assert_eq!(by(Section::Bookmarks)[0].title, "Book");
         assert_eq!(by(Section::Bookmarks)[0].note, "Bookmark");
+    }
+
+    #[test]
+    fn strict_validation_rejects_unknown_and_empty_values() {
+        assert_eq!(validate_sections("apps,recent apps"), Ok(vec![Section::Apps, Section::Recent]));
+        assert!(validate_sections("none").unwrap().is_empty());
+        assert!(validate_sections("").is_err());
+        assert!(validate_sections("recent,nope").is_err());
+        assert!(validate_sections(" ").is_err());
     }
 
     #[test]
