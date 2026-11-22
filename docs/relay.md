@@ -99,18 +99,16 @@ restores scroll once the bridge says `hello`.
 
 Five layers, cheapest first:
 
-1. **Portable tests** (`cargo test --workspace`, 50 tests locally; Linux CI runs
-   the same suite without `relay-ui`, whose gpui link needs more disk than the
-   runner has) run anywhere:
+1. **Portable tests** (`cargo test --workspace`, 50 tests) run anywhere:
    protocol, hub, MCP round-trip with a real client, Chrome import, CRX,
    content rules, sleep, palette, inspector, hints. The stdio transport itself
    is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which spawns the real
    `relay mcp` binary, connects it to a socket-backed hub, and performs the
    initialize / tools list / list_tabs handshake.
-2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui`; a
-   full link needs GPUI's system libraries (e.g. `libxkbcommon`). CI leaves
-   this to a developer or the macOS job because the runner's disk cannot hold
-   the shell's tree. Its macOS-only `web.rs` needs a macOS build.
+2. **The GPUI shell builds on Linux** with GPUI's system libraries
+   (`libxkbcommon`, wayland, xcb, fontconfig, freetype); CI installs them and
+   runs `cargo check -p relay-ui` through the full suite. Its macOS-only
+   `web.rs` needs a macOS build.
 3. **The Darwin type-check** is `bash scripts/mac-check.sh`: it installs the
    Apple standard library when rustup is available and type-checks
    `relay-webkit`, `relay-extensions`, `relay-mcp`, including the `smoke`
@@ -136,9 +134,8 @@ Five layers, cheapest first:
 - Minimum macOS: 13.3 (`WKWebView.isInspectable`). Extensions need 15.4
   (`WKWebExtension`); on older systems Relay runs without them.
 
-- Dev-profile dependencies build at `opt-level = 0` because the two-core CI
-  runner spent most of its budget compiling them at 1; release builds keep
-  `opt-level = 3`, `lto = "thin"`, and `strip = true`.
+- Dev-profile dependencies build at `opt-level = 0` to keep CI cold builds
+  short; release builds keep `opt-level = 3`, `lto = "thin"`, and `strip = true`.
 - `cargo test --workspace` runs everywhere. On Linux,
   `bash scripts/mac-check.sh` (or its `cargo check --workspace --exclude
   relay-ui --target aarch64-apple-darwin` body) type-checks the macOS code in
@@ -151,7 +148,7 @@ Five layers, cheapest first:
   `ureq` uses native TLS (Security.framework on macOS), so no C
   cross-compilation is needed.
 - Linux builds of the `relay` binary need GPUI's system libraries (xkbcommon,
-  wayland, xcb, fontconfig, freetype, vulkan headers). CI on the self-hosted
-  runner assumes they are installed.
+  wayland, xcb, fontconfig, freetype, vulkan headers). CI installs the subset
+  it needs on ubuntu-latest.
 - `third_party/xattr` is a patched copy of xattr 0.2.3 that fixes a Linux build
   break in gpui's dependency tree ([`../third_party/README.md`](../third_party/README.md)).

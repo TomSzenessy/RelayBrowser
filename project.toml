@@ -125,7 +125,7 @@ make = "3.81"
 group = "verify"
 workflow = ".github/workflows/ci.yml"
 job = "verify"
-digest = "sha256:3c8efb791fc78a397bf6002dcfbd33fb818dfba6595678dcdf3bc8d313ebab04"
+digest = "sha256:4d0b739868d7a6ca135a33db213a078d8f9a7c81417e82c645c44cd6f26b8f03"
 tools = ["python3", "make"]
 commands = [["make", "verify"]]
 
@@ -133,7 +133,7 @@ commands = [["make", "verify"]]
 group = "verify"
 workflow = ".github/workflows/ci.yml"
 job = "test-future"
-digest = "sha256:4aa24c0d5b91b75b5f324850af9445da270881e69d30a0fe335c3286d2dda91f"
+digest = "sha256:75b9738d34987de1c73d09f14a86468f7fca510036eb8c217be0010cb1a5f041"
 tools = ["python3", "make"]
 commands = [["make", "test-future"]]
 
@@ -141,7 +141,7 @@ commands = [["make", "test-future"]]
 group = "garden"
 workflow = ".github/workflows/garden.yml"
 job = "garden"
-digest = "sha256:ab61b486ca1af17e9621f653d92d60e104509c96b6e5e795d551f0af96d33e0a"
+digest = "sha256:5f764cfee000316efa36d3529539984c55c2f8a1b3342e2750a2697305e9dd96"
 tools = ["python3", "make"]
 commands = [["make", "garden"]]
 
@@ -224,12 +224,10 @@ status = "active"
 owner = "TomSzenessy"
 quality_oracle = "cargo tests (bridge state, MCP round-trip with a real MCP client, importer, CRX, rules, sleep) plus a macOS type-check of the WebKit/AppKit code; the running app is judged on a Mac"
 extra_paths = ["Cargo.toml", "Cargo.lock", "third_party"]
-# The self-hosted runner has a small disk. Portable tests run here, their
-# target tree is freed, then the Apple type-check runs; the macOS job runs the
-# full workspace suite (including relay-ui and its stdio-proxy test).
+# Hosted Ubuntu has the disk for the full suite; the macOS job adds the real
+# WebKit engine and the packaged app.
 verification = [
-  ["cargo", "test", "--workspace", "--exclude", "relay-ui", "--locked"],
-  ["cargo", "clean"],
+  ["cargo", "test", "--workspace", "--locked"],
   ["bash", "../scripts/mac-check.sh"],
 ]
 
@@ -241,7 +239,10 @@ kind = "code"
 status = "active"
 owner = "TomSzenessy"
 quality_oracle = "node:test suite running bridge.js in WebKit; every emitted message must parse in Rust (relay-bridge examples/validate.rs)"
-setup = [["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], ["npx", "playwright", "install", "webkit"]]
+setup = [
+  ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+  ["npx", "playwright", "install", "--with-deps", "webkit"],
+]
 verification = [
   ["cargo", "build", "-q", "-p", "relay-bridge", "--example", "validate"],
   ["npm", "test"],

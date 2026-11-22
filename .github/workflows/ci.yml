@@ -22,7 +22,7 @@ jobs:
     # A draft PR is still being edited: it must not spend CI minutes.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: repository verification (python ${{ matrix.python }})
-    runs-on: [self-hosted, linux, arm64]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read  # gh run list/view for tree-hash reuse
@@ -58,6 +58,14 @@ jobs:
           fi
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/rustup" target add aarch64-apple-darwin || true
+
+      - name: Install GPUI's Linux build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libxcb1-dev libxcb-xkb-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libfontconfig1-dev libfreetype-dev
 
       - name: Reclaim disk before the gate
         # The runner hosts several projects on a small disk. Old target trees
@@ -96,7 +104,7 @@ jobs:
   test-future:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: tests 800 days ahead (no calendar rot)
-    runs-on: [self-hosted, linux, arm64]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read  # gh run list/view for tree-hash reuse

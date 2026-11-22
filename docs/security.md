@@ -3,7 +3,7 @@
 <!-- index: design | Secure implementation baseline | Auth, secrets, CI, dependencies, deployment, or untrusted input changes. -->
 <!-- covers: .github/workflows/ci.yml .github/workflows/specialist-scans.yml .github/dependabot.yml .security/config.json tools/kit/docs.py -->
 
-The verify job runs `repoctl ci gate` on the interpreter `setup-python` configured; in an adopted project it runs only the toolchain-free `repoctl check` (see [`adopt.md`](./adopt.md#kit-ci-and-your-toolchains)), so CI installs no project toolchains beyond a surface's own `setup` commands, which verification runs only under the workflow's `REPOCTL_SETUP=1`; pin them to a lockfile and disable install scripts (`npm ci --ignore-scripts`). This repository's verify job additionally installs Node 22 with `actions/setup-node` (pinned commit) and Rust 1.100 with rustup before the gate because its self-hosted runner is a general Linux box without either image; the installer is fetched over HTTPS from `sh.rustup.rs`, runs in the runner's home, and puts `~/.cargo/bin` on `GITHUB_PATH` for the verification step. Each matrix job removes its `target/` tree and the Cargo download cache afterwards (`if: always()`), because the runner's disk is small; the toolchain itself is kept for the next run. A pre-gate step also clears a stale `target/` and the Cargo download cache, so a previous failed run cannot starve the next one.
+The verify job runs `repoctl ci gate` on the interpreter `setup-python` configured; in an adopted project it runs only the toolchain-free `repoctl check` (see [`adopt.md`](./adopt.md#kit-ci-and-your-toolchains)), so CI installs no project toolchains beyond a surface's own `setup` commands, which verification runs only under the workflow's `REPOCTL_SETUP=1`; pin them to a lockfile and disable install scripts (`npm ci --ignore-scripts`). Workflows run on GitHub-hosted Ubuntu runners because the repository is public and they provide the disk and toolchains a Rust build needs; the verify job installs Node 22 with `actions/setup-node` (pinned commit) and Rust 1.100 with rustup before the gate; the installer is fetched over HTTPS from `sh.rustup.rs`, runs in the runner's home, and puts `~/.cargo/bin` on `GITHUB_PATH` for the verification step. Each matrix job removes its `target/` tree and the Cargo download cache afterwards (`if: always()`) to keep the hosted-runner disk and caches small; the toolchain itself is kept for the next run. A pre-gate step also clears a stale `target/` and the Cargo download cache, so a previous failed run cannot starve the next one.
 
 CI logic lives in tested repository code, not in workflow YAML: workflows
 check out the repository and call `make verify`, `make test-future`, or `repoctl ci <check>`
@@ -160,11 +160,11 @@ known slow German legal site with a documented manual-review exception; a 403,
   history.
 - Treat lockfile changes, install hooks, generated binaries, and workflow edits
   as security-sensitive changes.
-- Relay's workflows run on the owner's self-hosted runner
-  (`runs-on: [self-hosted, linux, arm64]`), so a workflow job runs code on that
-  machine. Keep "Require approval for all outside collaborators" on for fork
-  pull requests (Settings → Actions → General), never expose secrets to
-  `pull_request` jobs, and keep the runner user without sudo or deploy rights.
+- Relay's Linux workflows run on GitHub-hosted `ubuntu-latest` runners and the
+  macOS job is manual; a workflow job still runs code you did not write. Keep
+  "Require approval for all outside collaborators" on for fork pull requests
+  (Settings → Actions → General), never expose secrets to `pull_request` jobs,
+  and keep the verification gate credential-free.
 - Keep `repoctl check` in CI and make the aggregate verification command cover
   every active surface. A green job for one language is not repository proof.
 - Keep general verification credential-free: the verification runner scrubs
