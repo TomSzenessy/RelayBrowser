@@ -76,8 +76,10 @@ bash scripts/verify-macos.sh --no-open  # same without launching the app
 `relay doctor` prints the version, engine availability, data and socket paths,
 profile counts, effective settings, and the exact `claude mcp add` command —
 include its output in a bug report. `relay config`, `relay export [FILE]`, and
-`relay clear-data --history --yes` manage local settings, backups, and erasure
-(clearing history also erases the saved session; `--session` clears only that).
+`relay clear-data --history --yes` manage local settings, backups, and erasure.
+Open tabs come back asleep on relaunch (`relay config set restore_session off`
+to disable); clearing history also erases the saved session, and `--session`
+clears only that.
 
 ## Working on this repository
 

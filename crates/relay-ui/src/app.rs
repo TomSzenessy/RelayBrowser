@@ -11,8 +11,8 @@ use gpui::{
     actions, canvas, div, img, prelude::*, px, Bounds, ClipboardItem, Context, FocusHandle, Image, ImageFormat,
     KeyBinding, KeyDownEvent, Pixels, SharedString, Window,
 };
-use relay_bridge::{BrowserRequest, ConsoleLevel, NodeId, Op, Owner, SharedHub, TabId};
-use relay_extensions::store::Store;
+use relay_bridge::{BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId};
+use relay_extensions::store::{SessionTab, Store};
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -124,6 +124,8 @@ pub struct RelayApp {
     mcp_socket: String,
     /// Last title pushed to the native window; avoids a call every frame.
     window_title: String,
+    /// The session as last written, so the periodic save skips no-op writes.
+    saved_session: Vec<SessionTab>,
 }
 
 impl RelayApp {
@@ -179,10 +181,45 @@ impl RelayApp {
             snapshots: HashMap::new(),
             mcp_socket,
             window_title: String::new(),
+            saved_session: vec![],
         };
         app.load_installed_extensions();
+        app.restore_session();
         app.start_pump(cx);
         app
+    }
+
+    /// Reopen the saved session's tabs asleep (no WKWebView, 0 MB); only the
+    /// previously active tab loads now. Off with `restore_session = off`.
+    fn restore_session(&mut self) {
+        let Some(store) = &self.store else { return };
+        if !setting_enabled(store.setting("restore_session").ok().flatten().as_deref()) {
+            return;
+        }
+        let saved = store.load_session().unwrap_or_default();
+        let (restored, active) = self.hub.update(|h| restore_into(h, &saved));
+        for (tab, url, scroll_y) in &restored {
+            self.web.borrow_mut().restore_asleep(*tab, url, *scroll_y);
+        }
+        if let Some(tab) = active {
+            self.web.borrow_mut().wake(tab);
+        }
+        self.saved_session = saved;
+    }
+
+    /// Persist the user's open tabs when they changed since the last write.
+    fn save_session(&mut self) {
+        let Some(store) = &self.store else { return };
+        let web = self.web.borrow();
+        let tabs = session_snapshot(&self.hub.lock(), |t| web.slept_scroll_y(t));
+        drop(web);
+        if tabs == self.saved_session {
+            return;
+        }
+        match store.save_session(&tabs) {
+            Ok(()) => self.saved_session = tabs,
+            Err(e) => eprintln!("relay: could not save the session: {e}"),
+        }
     }
 
     fn load_installed_extensions(&self) {
@@ -259,6 +296,7 @@ impl RelayApp {
         if self.last_sleep_check.elapsed() > Duration::from_secs(30) {
             self.last_sleep_check = Instant::now();
             self.sleep_idle_tabs(cx);
+            self.save_session();
         }
         if self.toast.as_ref().is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(3)) {
             self.toast = None;
@@ -1470,7 +1508,10 @@ impl Render for RelayApp {
                 app.run_command(Command::LinkHints, cx);
                 cx.notify()
             }))
-            .on_action(cx.listener(|_, _: &Quit, _, cx| cx.quit()));
+            .on_action(cx.listener(|app, _: &Quit, _, cx| {
+                app.save_session();
+                cx.quit()
+            }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
                 $(root = root.on_action(cx.listener(|app, _: &$a, _, cx| { app.select_index($i); cx.notify() }));)*
@@ -1486,6 +1527,48 @@ impl Render for RelayApp {
         }
         root
     }
+}
+
+/// The user's open tabs in display order, as the store persists them.
+/// Agent tabs are not part of the user's session. Awake tabs restore at the
+/// top (their scroll is only known once they sleep).
+fn session_snapshot(hub: &Hub, slept_scroll_y: impl Fn(TabId) -> Option<f64>) -> Vec<SessionTab> {
+    let active = hub.active();
+    hub.tabs()
+        .filter(|t| t.owner == Owner::User && is_http_url(&t.url))
+        .enumerate()
+        .map(|(i, t)| SessionTab {
+            url: t.url.clone(),
+            title: t.title.clone(),
+            pinned: t.pinned,
+            scroll_y: if t.sleeping { slept_scroll_y(t.id).unwrap_or(0.0) } else { 0.0 },
+            active: Some(t.id) == active,
+            position: i as i64,
+        })
+        .collect()
+}
+
+/// Recreate saved tabs in the hub. Returns each new tab with its URL and
+/// scroll, plus the tab to activate (the saved active one, else the first).
+fn restore_into(hub: &mut Hub, saved: &[SessionTab]) -> (Vec<(TabId, String, f64)>, Option<TabId>) {
+    let mut restored = Vec::with_capacity(saved.len());
+    let mut active = None;
+    for s in saved.iter().filter(|s| is_http_url(&s.url)) {
+        let id = hub.create_tab(&s.url, Owner::User);
+        if let Some(t) = hub.tab_mut(id) {
+            t.title = s.title.clone();
+            t.pinned = s.pinned;
+        }
+        if s.active {
+            active = Some(id);
+        }
+        restored.push((id, s.url.clone(), s.scroll_y));
+    }
+    let active = active.or_else(|| restored.first().map(|r| r.0));
+    if let Some(id) = active {
+        hub.set_active(id);
+    }
+    (restored, active)
 }
 
 pub(crate) fn setting_enabled(value: Option<&str>) -> bool {
@@ -1526,6 +1609,12 @@ fn blocklist() -> String {
         s.push_str(&extra);
     }
     s
+}
+
+/// What the saved session keeps (matches `Store::save_session`).
+fn is_http_url(url: &str) -> bool {
+    let l = url.to_ascii_lowercase();
+    l.starts_with("https://") || l.starts_with("http://")
 }
 
 fn is_web_url(url: &str) -> bool {
@@ -1576,6 +1665,66 @@ mod tests {
     use super::*;
     use gpui::Action;
     use std::collections::HashSet;
+
+    fn saved(url: &str, pinned: bool, active: bool, scroll_y: f64) -> SessionTab {
+        SessionTab { url: url.into(), title: format!("T {url}"), pinned, scroll_y, active, position: 0 }
+    }
+
+    #[test]
+    fn restore_recreates_tabs_in_order_with_pins_and_activates_the_saved_tab() {
+        let hub = SharedHub::new();
+        let saved = vec![
+            saved("https://a.example/", true, false, 0.0),
+            saved("about:blank", false, false, 0.0),
+            saved("https://b.example/", false, true, 340.0),
+        ];
+        let (restored, active) = hub.update(|h| restore_into(h, &saved));
+        assert_eq!(restored.len(), 2, "non-web URLs are not restored");
+        assert_eq!(restored[1].1, "https://b.example/");
+        assert_eq!(restored[1].2, 340.0);
+        assert_eq!(active, Some(restored[1].0));
+        let h = hub.lock();
+        assert_eq!(h.active(), active);
+        let tabs: Vec<_> = h.tabs().map(|t| (t.url.clone(), t.pinned, t.title.clone())).collect();
+        assert_eq!(tabs[0], ("https://a.example/".into(), true, "T https://a.example/".into()));
+        assert_eq!(tabs[1].0, "https://b.example/");
+    }
+
+    #[test]
+    fn restore_without_a_saved_active_tab_activates_the_first() {
+        let hub = SharedHub::new();
+        let two = [saved("https://a.example/", false, false, 0.0), saved("https://b.example/", false, false, 0.0)];
+        let (restored, active) = hub.update(|h| restore_into(h, &two));
+        assert_eq!(active, Some(restored[0].0));
+        let (none, no_active) = SharedHub::new().update(|h| restore_into(h, &[]));
+        assert!(none.is_empty() && no_active.is_none());
+    }
+
+    #[test]
+    fn snapshot_keeps_user_web_tabs_in_order_and_round_trips() {
+        let hub = SharedHub::new();
+        let a = hub.update(|h| {
+            let a = h.create_tab("https://a.example/", Owner::User);
+            h.create_tab("https://agent.example/", Owner::Agent);
+            let b = h.create_tab("https://b.example/", Owner::User);
+            h.tab_mut(b).unwrap().pinned = true;
+            h.tab_mut(a).unwrap().sleeping = true;
+            h.set_active(b);
+            a
+        });
+        let snap = session_snapshot(&hub.lock(), |t| (t == a).then_some(512.0));
+        assert_eq!(snap.len(), 2, "agent tabs are not saved");
+        assert!(snap.iter().all(|s| s.url != "https://agent.example/"));
+        assert_eq!((snap[0].scroll_y, snap[0].active, snap[0].position), (512.0, false, 0));
+        assert_eq!((snap[1].pinned, snap[1].active, snap[1].position), (true, true, 1));
+
+        let fresh = SharedHub::new();
+        let (_, active) = fresh.update(|h| restore_into(h, &snap));
+        let again = session_snapshot(&fresh.lock(), |_| None);
+        let key = |v: &[SessionTab]| v.iter().map(|s| (s.url.clone(), s.pinned, s.active)).collect::<Vec<_>>();
+        assert_eq!(key(&again), key(&snap));
+        assert_eq!(fresh.lock().active(), active);
+    }
 
     #[test]
     fn key_bindings_cover_documented_shortcuts() {

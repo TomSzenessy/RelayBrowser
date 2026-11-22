@@ -405,6 +405,20 @@ impl Engine {
         unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
     }
 
+    /// Register a tab restored from the saved session as already asleep: no
+    /// WKWebView (0 MB) until [`Engine::wake`] loads `url` and restores scroll.
+    pub fn restore_asleep(&mut self, tab: TabId, url: &str, scroll_y: f64) {
+        if self.tabs.contains_key(&tab) {
+            return;
+        }
+        self.slept.borrow_mut().insert(tab, SleptTab { url: url.to_string(), scroll_x: 0.0, scroll_y, snapshot_jpeg: None });
+        self.hub.update(|h| {
+            if let Some(s) = h.tab_mut(tab) {
+                s.sleeping = true;
+            }
+        });
+    }
+
     pub fn slept(&self, tab: TabId) -> Option<SleptTab> {
         self.slept.borrow().get(&tab).cloned()
     }

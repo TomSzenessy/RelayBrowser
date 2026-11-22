@@ -106,6 +106,16 @@ mod imp {
             self.engine.slept(tab).and_then(|s| s.snapshot_jpeg)
         }
 
+        /// A restored session tab: asleep until activated.
+        pub fn restore_asleep(&mut self, tab: TabId, url: &str, scroll_y: f64) {
+            self.engine.restore_asleep(tab, url, scroll_y);
+        }
+
+        /// The remembered scroll offset of a sleeping tab.
+        pub fn slept_scroll_y(&self, tab: TabId) -> Option<f64> {
+            self.engine.slept(tab).map(|s| s.scroll_y)
+        }
+
         /// Position web views over the given GPUI bounds; hide the rest.
         pub fn layout(&self, placements: &[(TabId, Bounds<Pixels>)]) {
             let Some(shell) = &self.shell else { return };
@@ -164,6 +174,10 @@ mod imp {
         pub fn after_load(&mut self, _tab: TabId) {}
         pub fn sleep(&mut self, _tab: TabId, _scroll: (f64, f64)) {}
         pub fn snapshot(&self, _tab: TabId) -> Option<Vec<u8>> {
+            None
+        }
+        pub fn restore_asleep(&mut self, _tab: TabId, _url: &str, _scroll_y: f64) {}
+        pub fn slept_scroll_y(&self, _tab: TabId) -> Option<f64> {
             None
         }
         pub fn layout(&self, _placements: &[(TabId, Bounds<Pixels>)]) {}

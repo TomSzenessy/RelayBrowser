@@ -59,12 +59,14 @@ fn config_list_get_set_and_rejects_unknown_key() {
     assert!(list_text.contains("blocking = on"), ":\n{list_text}");
     assert!(list_text.contains("sleep_minutes = 15"), ":\n{list_text}");
     assert!(list_text.contains("mcp = on"), ":\n{list_text}");
+    assert!(list_text.contains("restore_session = on"), ":\n{list_text}");
 
     for args in [
         &["config", "set", "search", "kagi"][..],
         &["config", "set", "blocking", "off"][..],
         &["config", "set", "sleep_minutes", "0"][..],
         &["config", "set", "mcp", "off"][..],
+        &["config", "set", "restore_session", "off"][..],
     ] {
         let out = relay(dir.path(), args);
         assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
@@ -75,6 +77,7 @@ fn config_list_get_set_and_rejects_unknown_key() {
         ("blocking", "off"),
         ("sleep_minutes", "0"),
         ("mcp", "off"),
+        ("restore_session", "off"),
     ];
     for (key, expected) in checks {
         let out = relay(dir.path(), &["config", "get", key]);

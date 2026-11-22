@@ -97,6 +97,18 @@ hidden until the bridge delivers a DOM, while the shell paints the JPEG the tab
 slept on. So the snapshot is what you see during the reload, not a white
 WKWebView. `after_load` restores scroll once the bridge says `hello`.
 
+## Session restore
+
+With `restore_session` on (the default; `relay config set restore_session off`),
+the shell saves the user's open `http(s)` tabs (order, title, pinned, active,
+and the scroll offset of sleeping tabs) to `Store::save_session` on ⌘Q and on
+the 30 s sleep tick when the set changed. Agent tabs are not saved. On launch,
+`restore_into` recreates the tabs and `Engine::restore_asleep` registers each
+one as already asleep (no `WKWebView`, no snapshot); only the previously
+active tab loads. The others load on first click through the normal wake path,
+which restores their scroll. `relay clear-data --history` or `--session`
+erases the saved session.
+
 ## Palette smart input
 
 [`bangs.rs`](../crates/relay-ui/src/bangs.rs), [`calc.rs`](../crates/relay-ui/src/calc.rs)

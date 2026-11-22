@@ -116,6 +116,7 @@ struct EffectiveConfig {
     blocking: bool,
     sleep_minutes: u64,
     mcp: bool,
+    restore_session: bool,
 }
 
 fn load_config(store: Option<&Store>) -> EffectiveConfig {
@@ -127,7 +128,8 @@ fn load_config(store: Option<&Store>) -> EffectiveConfig {
     let blocking = app::setting_enabled(store.and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
     let sleep_minutes = store.and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok()).unwrap_or(15);
     let mcp = app::setting_enabled(store.and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
-    EffectiveConfig { search, search_is_default, blocking, sleep_minutes, mcp }
+    let restore_session = app::setting_enabled(store.and_then(|s| s.setting("restore_session").ok().flatten()).as_deref());
+    EffectiveConfig { search, search_is_default, blocking, sleep_minutes, mcp, restore_session }
 }
 
 fn print_doctor_settings(cfg: &EffectiveConfig) {
@@ -141,6 +143,7 @@ fn print_doctor_settings(cfg: &EffectiveConfig) {
     println!("blocking: {}", if cfg.blocking { "on" } else { "off" });
     println!("sleep: {sleep}");
     println!("mcp: {}", if cfg.mcp { "on" } else { "off" });
+    println!("restore session: {}", if cfg.restore_session { "on" } else { "off" });
 }
 
 fn open_store() -> anyhow::Result<Store> {
@@ -172,7 +175,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             }
             bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
         }
-        "blocking" | "mcp" => match trimmed.to_ascii_lowercase().as_str() {
+        "blocking" | "mcp" | "restore_session" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
             _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
@@ -186,7 +189,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             }
             Ok(mins.to_string())
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session)"),
     }
 }
 
@@ -202,6 +205,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("blocking = {}", if cfg.blocking { "on" } else { "off" });
             println!("sleep_minutes = {}", cfg.sleep_minutes);
             println!("mcp = {}", if cfg.mcp { "on" } else { "off" });
+            println!("restore_session = {}", if cfg.restore_session { "on" } else { "off" });
             Ok(())
         }
         Some("get") => {
@@ -216,7 +220,8 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "blocking" => println!("{}", if cfg.blocking { "on" } else { "off" }),
                 "sleep_minutes" => println!("{}", cfg.sleep_minutes),
                 "mcp" => println!("{}", if cfg.mcp { "on" } else { "off" }),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp)"),
+                "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session)"),
             }
             Ok(())
         }
