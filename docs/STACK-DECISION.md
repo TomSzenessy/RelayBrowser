@@ -20,7 +20,7 @@ The owner's brief chose this stack. Versions were checked on crates.io on
   `WKContentRuleListStore`, `WKHTTPCookieStore`).
 - Agents: `rmcp` 3.11 (official Rust MCP SDK) on `tokio` 1.x, served on a Unix
   socket and bridged to stdio by `relay mcp`.
-- Storage: `rusqlite` 0.43 (system SQLite on macOS, bundled elsewhere);
+- Storage: `rusqlite` 0.43 with bundled SQLite by default (`bundled-sqlite` feature, disabled only for Linux's `--target aarch64-apple-darwin` cross-check because macOS 15's system SQLite 3.43.2 lacks `sqlite3_set_clientdata`);
   passwords in the macOS Keychain through `security-framework` 3.7.
 - Extensions: `zip` 9 plus `ureq` 3 (native TLS) for the Chrome Web Store
   `.crx` installer.
@@ -41,10 +41,10 @@ The owner's brief chose this stack. Versions were checked on crates.io on
 
 ## Verification and rollback
 
-- `cargo test --workspace --locked` and
-  `cargo check --workspace --locked --exclude relay-ui --target aarch64-apple-darwin` (CI, on the
-  self-hosted linux/arm64 runner); `npm test` in `js/`.
-- The running app must be judged on a Mac (`cargo run -p relay-ui --release`);
-  Linux can only type-check the AppKit/WebKit code.
+- `cargo test --workspace --locked`, `bash scripts/mac-check.sh`, and `npm test`
+  in `js/` (GitHub-hosted `ubuntu-24.04`); full macOS build, tests, real-WebKit
+  smoke, and `Relay.app` packaging on `macos-15` (`.github/workflows/macos.yml`).
+- The running app's visual polish must still be judged on a Mac
+  (`cargo run -p relay-ui --release` or `bash scripts/verify-macos.sh`).
 - Rollback: each crate sits behind a narrow seam (`Browser` trait,
   `SharedHub`, `PageMessage`). Replacing GPUI or rmcp touches one crate.

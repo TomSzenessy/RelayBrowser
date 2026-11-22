@@ -61,6 +61,39 @@ Apply the applicable consent/terminal-device rule before optional access or
 storage; provide a real withdrawal path. A source search does not prove runtime
 behavior—test an authenticated production-like browser.
 
+## Relay browser data and agent access
+
+Relay is a local-only desktop browser. It operates no cloud sync service,
+telemetry pipeline, crash-upload endpoint, or analytics SDK.
+
+- **Local profile storage:** History, bookmarks, settings, and installed
+  extension metadata live in `$RELAY_HOME/profile.sqlite` (default
+  `~/Library/Application Support/Relay` on macOS). The profile directory uses
+  mode `0700` and `profile.sqlite` (along with its SQLite `-wal`/`-shm`
+  sidecars) is hardened to mode `0600`. Nothing in the profile is synced to a
+  Relay server or sent as telemetry.
+- **Passwords and form secrets:** Imported logins (`relay import-passwords`)
+  are written directly to the macOS login Keychain through `Security.framework`,
+  and the source plaintext CSV is deleted once every entry succeeds. Passwords
+  are never stored in `profile.sqlite`, `Credential`'s `Debug` output redacts
+  password values, and `js/bridge.js` suppresses `<input type="password">`
+  values so password fields are never streamed from the page.
+- **Connected MCP agent access:** While Relay is running, local agents connect
+  over `$RELAY_HOME/mcp.sock` (mode `0600` inside the `0700` profile directory,
+  accessible only to the local OS user). Over that socket, an attached agent can
+  inspect the live DOM (minus password input values), console entries, network
+  request/response metadata and text bodies up to 4 KB (`4096` bytes), and site
+  cookies. Agent automation pauses automatically when a CAPTCHA or 2FA
+  challenge is detected, and agents can only open `http(s)`/`about:blank` URLs
+  and close their own tabs—they cannot close user tabs. Any data an external
+  MCP client forwards to a model provider is governed by that client's policy.
+- **User export and erasure:** Users can export local profile data with
+  `relay export`, clear browsing history with
+  `relay clear-data --history --yes`, or erase all Relay-managed local state
+  (profile, unpacked extensions, and socket state) by removing `$RELAY_HOME`.
+  Passwords imported into the macOS Keychain are managed and deleted through
+  macOS Keychain Access or the Passwords app.
+
 ## Launch gate
 
 Before public launch, the operator and qualified counsel must validate the

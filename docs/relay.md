@@ -15,7 +15,7 @@ frontends read it: the native Inspector and the local MCP server.
 | `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy; `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback | policy portable, engine macOS |
 | `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
 | `relay-mcp` | `RelayMcp` (rmcp 3.x tool router), user-only Unix socket server, `relay mcp` stdio proxy | portable (Unix) |
-| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (tab bar with agent group, panes and split, ⌘K palette, Inspector, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md). `main.rs`: the CLI (`mcp`, `import-chrome`, `install-extension`, `compile-rules`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
+| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (tab bar with agent group, panes and split, ⌘K palette, ⌘, Settings overlay, Inspector with console/network filters, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md) with WCAG AA contrast tests. `main.rs`: the CLI (`mcp`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
 
 ## Data flow
 
@@ -86,25 +86,28 @@ the page, and their status line goes in the status bar.
 
 ## Tab sleeping
 
-`SleepPolicy::due` picks background tabs idle for 15 minutes that are not
-active, visible in a split, pinned, or playing audio (from the bridge's `media`
-message). It always keeps at least one tab awake. `Engine::sleep` snapshots the
-viewport to JPEG, records URL and scroll, then destroys the view. `Engine::wake`
-recreates it and marks it *warming*: the native view stays hidden until the
-bridge delivers a DOM, while the shell paints the JPEG the tab slept on. So the
-snapshot is what you see during the reload, not a white WKWebView. `after_load`
-restores scroll once the bridge says `hello`.
+`SleepPolicy::due` picks background tabs idle for the configured timeout
+(default 15 minutes; `0` disables sleeping) that are not active, visible in a
+split, pinned, or playing audio (from the bridge's `media` message). It always
+keeps at least one tab awake. `Engine::sleep` requests a viewport JPEG
+snapshot, records URL and scroll, and tears down the `WKWebView` inside the
+snapshot completion callback so in-flight snapshots are never aborted.
+`Engine::wake` recreates it and marks it *warming*: the native view stays
+hidden until the bridge delivers a DOM, while the shell paints the JPEG the tab
+slept on. So the snapshot is what you see during the reload, not a white
+WKWebView. `after_load` restores scroll once the bridge says `hello`.
 
 ## Checking Relay off-Mac
 
 Six layers, cheapest first:
 
-1. **Portable tests** (`cargo test --workspace`, 50 tests) run anywhere:
-   protocol, hub, MCP round-trip with a real client, Chrome import, CRX,
-   content rules, sleep, palette, inspector, hints. The stdio transport itself
-   is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which spawns the real
-   `relay mcp` binary, connects it to a socket-backed hub, and performs the
-   initialize / tools list / list_tabs handshake.
+1. **Portable tests** (`cargo test --workspace`) run anywhere: protocol, hub,
+   MCP round-trip with a real client, Chrome import, CRX, content rules, sleep,
+   palette, inspector filters, hints, WCAG AA theme contrast, key bindings, and
+   CLI subcommands (`doctor`, `config`, `export`, `clear-data`). The stdio
+   transport itself is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which
+   spawns the real `relay mcp` binary, connects it to a socket-backed hub, and
+   performs the initialize / tools list / list_tabs handshake.
 2. **The injected bridge runs in Playwright's WebKit 26.0** in Linux CI
    (`js/`, 8 tests): DOM snapshots and patches, fetch/XHR status and bodies,
    console and uncaught errors, click/type/highlight, hints, and 2FA detection.
@@ -112,18 +115,24 @@ Six layers, cheapest first:
 3. **The GPUI shell builds on Linux** with GPUI's system libraries
    (`libxkbcommon`, wayland, xcb, fontconfig, freetype); CI installs them and
    runs `cargo check -p relay-ui` through the full suite. Its macOS-only
-   `web.rs` needs a macOS build.
+   `web.rs` is compiled and linked in the macOS job.
 4. **The Darwin type-check** is `bash scripts/mac-check.sh`: it installs the
    Apple standard library when rustup is available and type-checks
    `relay-webkit`, `relay-extensions`, `relay-mcp`, including the `smoke`
-   example. It proves API use, not behaviour.
-5. **The macOS job** (`.github/workflows/macos.yml`) is the intended runtime
-   evidence: the full `cargo test --workspace`, the WebKit smoke page, the same
-   bridge suite on Apple's WebKit, then the release build packaged by
-   [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh). It is manual
-   because this account's GitHub-hosted macOS requests stay queued; dispatch
-   it on a Mac or with a macOS runner attached, choosing the label with
-   `gh workflow run macos.yml -f runner=macos-15`. On the owner's Mac,
+   example, with `--no-default-features` so `libsqlite3-sys` does not invoke a
+   Darwin C cross-compiler on Linux. It proves API use, not behaviour.
+5. **The macOS job** (`.github/workflows/macos.yml`) runs on Apple Silicon
+   `macos-15` (on pull requests, pushes to `main` touching browser paths,
+   published releases, and `workflow_dispatch`): it caches Cargo artifacts and
+   Playwright WebKit by lockfile, runs `cargo test --workspace`, the real-WebKit
+   `smoke` example (hosted in an offscreen borderless `NSWindow`), and the
+   bridge suite on Apple's WebKit, then packages `Relay.app` (with
+   `assets/AppIcon.icns`) and `Relay-macOS.dmg` via
+   [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh), checks `relay
+   doctor`, uploads the DMG/zip as workflow artifacts, and publishes them to
+   GitHub Releases (`macos-latest` on `main`, or the release tag) via
+   [`scripts/publish-macos-release.sh`](../scripts/publish-macos-release.sh).
+   On the owner's Mac,
    [`scripts/verify-macos.sh`](../scripts/verify-macos.sh) is the one-command
    equivalent and writes `dist/macos-verification.txt`.
 6. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
@@ -138,20 +147,24 @@ Six layers, cheapest first:
 
 - Minimum macOS: 13.3 (`WKWebView.isInspectable`). Extensions need 15.4
   (`WKWebExtension`); on older systems Relay runs without them.
-
+- `assets/AppIcon.icns` is generated deterministically from Relay's design
+  tokens by [`scripts/make-icon.py`](../scripts/make-icon.py) and bundled into
+  `Relay.app` by [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh).
 - Dev-profile dependencies build at `opt-level = 0` to keep CI cold builds
   short; release builds keep `opt-level = 3`, `lto = "thin"`, and `strip = true`.
 - `cargo test --workspace` runs everywhere. On Linux,
-  `bash scripts/mac-check.sh` (or its `cargo check --workspace --exclude
-  relay-ui --target aarch64-apple-darwin` body) type-checks the macOS code in
-  `relay-webkit` and `relay-extensions` (including the `smoke` example); the
-  script skips with a message when the Apple std is not installed. `relay-ui`
-  cannot be checked for the Darwin target here: gpui's macOS build compiles C
-  and Metal code (`ring`, shaders), which needs the Apple SDK. Its macOS-only
-  `web.rs` therefore needs a macOS build, and no such build has run yet.
-- On macOS, SQLite links the system `libsqlite3`; elsewhere it is bundled.
-  `ureq` uses native TLS (Security.framework on macOS), so no C
-  cross-compilation is needed.
+  `bash scripts/mac-check.sh` (`cargo check --workspace --exclude relay-ui
+  --no-default-features --target aarch64-apple-darwin`) type-checks the macOS
+  code in `relay-webkit` and `relay-extensions` (including the `smoke`
+  example); the script skips with a message when the Apple std is not
+  installed. `relay-ui` cannot be checked for the Darwin target on Linux:
+  gpui's macOS build compiles C and Metal code (`ring`, shaders), which needs
+  the Apple SDK (covered by `.github/workflows/macos.yml`).
+- `relay-extensions` bundles SQLite by default (`bundled-sqlite` feature) on
+  both macOS and Linux because `rusqlite` 0.43 uses `sqlite3_set_clientdata`
+  (SQLite 3.44.0+), which macOS 15's system SQLite 3.43.2 lacks. Linux's Darwin
+  cross-check disables that feature (`--no-default-features`). `ureq` uses
+  native TLS (Security.framework on macOS), so no C cross-compilation is needed.
 - Linux builds of the `relay` binary need GPUI's system libraries (xkbcommon,
   wayland, xcb, fontconfig, freetype, vulkan headers). Linux CI installs the
   subset it needs on ubuntu-24.04 (Playwright 1.56 does not support 26.04).

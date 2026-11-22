@@ -67,14 +67,17 @@ jobs:
             libxcb1-dev libxcb-xkb-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libfontconfig1-dev libfreetype-dev
 
-      - name: Reclaim disk before the gate
-        # The runner hosts several projects on a small disk. Old target trees
-        # and Cargo downloads are reproducible; source and caches we need are
-        # untouched.
-        run: |
-          df -h
-          rm -rf "$GITHUB_WORKSPACE/target" "$HOME/.cargo/registry/cache" "$HOME/.cargo/git"
-          df -h
+      - name: Cache Cargo registry and incremental build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: linux-rust-1.100-py-${{ matrix.python }}
+          cache-on-failure: true
+
+      - name: Cache Playwright WebKit browser
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-webkit-linux-${{ hashFiles('js/package-lock.json') }}
 
       - name: Decide tree-hash reuse
         id: reuse
@@ -93,14 +96,6 @@ jobs:
       - name: Reuse a verified tree
         if: steps.reuse.outputs.reuse == 'true'
         run: echo "Tree already verified by a successful ci run; heavy verification skipped."
-
-      - name: Reclaim build space
-        if: always()
-        # The self-hosted runner has a small disk; a debug workspace plus the
-        # registry cache is several GB per matrix job.
-        run: |
-          rm -rf "$GITHUB_WORKSPACE/target"
-          rm -rf "$HOME/.cargo/registry/cache" "$HOME/.cargo/git"
   test-future:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: tests 800 days ahead (no calendar rot)

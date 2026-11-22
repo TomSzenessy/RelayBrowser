@@ -16,4 +16,4 @@ if ! ls "$libdir"/libcore-*.rlib >/dev/null 2>&1; then
   fi
 fi
 
-exec cargo check --workspace --locked --examples --exclude relay-ui --target "$target"
+exec cargo check --workspace --locked --examples --exclude relay-ui --no-default-features --target "$target"

@@ -5,6 +5,18 @@
 use relay_bridge::TabId;
 
 pub const DEFAULT_SEARCH: &str = "https://duckduckgo.com/?q=%s";
+
+pub const SEARCH_PRESETS: &[(&str, &str)] = &[
+    ("DuckDuckGo", DEFAULT_SEARCH),
+    ("Kagi", "https://kagi.com/search?q=%s"),
+    ("Google", "https://www.google.com/search?q=%s"),
+    ("Brave", "https://search.brave.com/search?q=%s"),
+];
+
+pub fn search_label(template: &str) -> &'static str {
+    SEARCH_PRESETS.iter().find(|(_, url)| *url == template).map(|(name, _)| *name).unwrap_or("Custom")
+}
+
 const MAX_ITEMS: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,12 +31,13 @@ pub enum Command {
     WebInspector,
     ToggleSplit,
     LinkHints,
+    Settings,
     ImportChrome,
     CopyMcpSetup,
 }
 
 impl Command {
-    pub const ALL: [Command; 12] = [
+    pub const ALL: [Command; 13] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -35,6 +48,7 @@ impl Command {
         Command::WebInspector,
         Command::ToggleSplit,
         Command::LinkHints,
+        Command::Settings,
         Command::ImportChrome,
         Command::CopyMcpSetup,
     ];
@@ -51,6 +65,7 @@ impl Command {
             Command::WebInspector => "Open WebKit Web Inspector",
             Command::ToggleSplit => "Toggle Split View",
             Command::LinkHints => "Link Hints",
+            Command::Settings => "Settings",
             Command::ImportChrome => "Import from Chrome",
             Command::CopyMcpSetup => "Copy MCP Setup Command",
         }
@@ -68,6 +83,7 @@ impl Command {
             Command::WebInspector => "⌘⌥U",
             Command::ToggleSplit => "⌘\\",
             Command::LinkHints => "⌘J",
+            Command::Settings => "⌘,",
             Command::ImportChrome | Command::CopyMcpSetup => "",
         }
     }
@@ -344,5 +360,14 @@ mod tests {
         let mut p = Palette::default();
         p.refresh(&Sources::default(), DEFAULT_SEARCH);
         assert_eq!(p.items.first(), Some(&Item::Command(Command::NewTab)));
+    }
+
+    #[test]
+    fn search_presets_and_labels() {
+        for &(name, template) in SEARCH_PRESETS {
+            assert_eq!(search_label(template), name);
+        }
+        assert_eq!(search_label(DEFAULT_SEARCH), "DuckDuckGo");
+        assert_eq!(search_label("https://example.com/search?q=%s"), "Custom");
     }
 }

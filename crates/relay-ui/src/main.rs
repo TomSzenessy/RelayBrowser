@@ -17,6 +17,11 @@ const HELP: &str = "relay — keyboard-first WebKit browser with a built-in MCP 
 USAGE:
   relay [URL]                       open the browser (optionally at URL)
   relay mcp                         stdio MCP server for agents (connects to the running browser)
+  relay config [list | get KEY | set KEY VALUE]
+                                    inspect or update profile settings
+  relay export [FILE]               export bookmarks, history, settings, and extensions as JSON
+  relay clear-data [--history] [--bookmarks] --yes
+                                    delete stored browsing history and/or bookmarks
   relay import-chrome [--dry-run] [--profile DIR]
                                     import Chrome bookmarks + history into Relay's profile
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
@@ -40,6 +45,9 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Some("mcp") => run_mcp_proxy(),
+        Some("config") => config(&args[1..]),
+        Some("export") => export_profile(args.get(1).map(String::as_str)),
+        Some("clear-data") => clear_data(&args[1..]),
         Some("import-chrome") => import_chrome(&args[1..]),
         Some("import-passwords") => import_passwords(args.get(1).map(String::as_str)),
         Some("install-extension") => install_extension(args.get(1).map(String::as_str)),
@@ -83,14 +91,14 @@ fn doctor() -> anyhow::Result<()> {
             Ok(store) => {
                 let bookmarks = store.bookmarks().map(|b| b.len()).unwrap_or(0);
                 let extensions = store.enabled_extensions().map(|e| e.len()).unwrap_or(0);
-                let search = store.setting("search").ok().flatten().unwrap_or_else(|| "default (Google)".into());
                 println!("profile: {} — {bookmarks} bookmarks, {extensions} enabled extensions", db.display());
-                println!("search: {search}");
+                print_doctor_settings(&load_config(Some(&store)));
             }
             Err(e) => println!("profile: {} — unreadable: {e}", db.display()),
         }
     } else {
         println!("profile: {} — absent (created on first run)", db.display());
+        print_doctor_settings(&load_config(None));
     }
 
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "relay".into());
@@ -99,9 +107,186 @@ fn doctor() -> anyhow::Result<()> {
     Ok(())
 }
 
+struct EffectiveConfig {
+    search: String,
+    search_is_default: bool,
+    blocking: bool,
+    sleep_minutes: u64,
+    mcp: bool,
+}
+
+fn load_config(store: Option<&Store>) -> EffectiveConfig {
+    let raw_search = store.and_then(|s| s.setting("search").ok().flatten());
+    let (search, search_is_default) = match raw_search {
+        Some(s) => (s, false),
+        None => (palette::DEFAULT_SEARCH.to_string(), true),
+    };
+    let blocking = app::setting_enabled(store.and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
+    let sleep_minutes = store.and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok()).unwrap_or(15);
+    let mcp = app::setting_enabled(store.and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
+    EffectiveConfig { search, search_is_default, blocking, sleep_minutes, mcp }
+}
+
+fn print_doctor_settings(cfg: &EffectiveConfig) {
+    let search = if cfg.search_is_default {
+        "default (DuckDuckGo)".to_string()
+    } else {
+        format!("{} ({})", cfg.search, palette::search_label(&cfg.search))
+    };
+    let sleep = if cfg.sleep_minutes == 0 { "off".to_string() } else { format!("{} min", cfg.sleep_minutes) };
+    println!("search: {search}");
+    println!("blocking: {}", if cfg.blocking { "on" } else { "off" });
+    println!("sleep: {sleep}");
+    println!("mcp: {}", if cfg.mcp { "on" } else { "off" });
+}
+
 fn open_store() -> anyhow::Result<Store> {
     let path = paths::relay_home().join("profile.sqlite");
     Store::open(&path).with_context(|| format!("opening {}", path.display()))
+}
+
+fn open_store_if_exists() -> anyhow::Result<Option<Store>> {
+    let path = paths::relay_home().join("profile.sqlite");
+    if path.exists() {
+        Ok(Some(Store::open(&path).with_context(|| format!("opening {}", path.display()))?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    match key {
+        "search" => {
+            if let Some(&(_, template)) = palette::SEARCH_PRESETS.iter().find(|&&(name, _)| name.eq_ignore_ascii_case(trimmed)) {
+                return Ok(template.to_string());
+            }
+            if (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+                && trimmed.contains("%s")
+                && !trimmed.chars().any(char::is_whitespace)
+            {
+                return Ok(trimmed.to_string());
+            }
+            bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
+        }
+        "blocking" | "mcp" => match trimmed.to_ascii_lowercase().as_str() {
+            "on" => Ok("on".to_string()),
+            "off" => Ok("off".to_string()),
+            _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
+        },
+        "sleep_minutes" => {
+            let mins: u64 = trimmed
+                .parse()
+                .with_context(|| format!("invalid sleep_minutes {value:?}: expected a non-negative integer (0 disables sleeping)"))?;
+            Ok(mins.to_string())
+        }
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp)"),
+    }
+}
+
+fn config(args: &[String]) -> anyhow::Result<()> {
+    match args.first().map(String::as_str) {
+        None | Some("list") => {
+            if args.len() > 1 {
+                bail!("usage: relay config [list | get KEY | set KEY VALUE]");
+            }
+            let store = open_store_if_exists()?;
+            let cfg = load_config(store.as_ref());
+            println!("search = {} ({})", cfg.search, palette::search_label(&cfg.search));
+            println!("blocking = {}", if cfg.blocking { "on" } else { "off" });
+            println!("sleep_minutes = {}", cfg.sleep_minutes);
+            println!("mcp = {}", if cfg.mcp { "on" } else { "off" });
+            Ok(())
+        }
+        Some("get") => {
+            if args.len() != 2 {
+                bail!("usage: relay config get KEY");
+            }
+            let key = args[1].as_str();
+            let store = open_store_if_exists()?;
+            let cfg = load_config(store.as_ref());
+            match key {
+                "search" => println!("{}", cfg.search),
+                "blocking" => println!("{}", if cfg.blocking { "on" } else { "off" }),
+                "sleep_minutes" => println!("{}", cfg.sleep_minutes),
+                "mcp" => println!("{}", if cfg.mcp { "on" } else { "off" }),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp)"),
+            }
+            Ok(())
+        }
+        Some("set") => {
+            if args.len() != 3 {
+                bail!("usage: relay config set KEY VALUE");
+            }
+            let (key, value) = (args[1].as_str(), args[2].as_str());
+            let canonical = validate_config_value(key, value)?;
+            open_store()?.set_setting(key, &canonical)?;
+            println!("Set {key} = {canonical}");
+            Ok(())
+        }
+        _ => bail!("usage: relay config [list | get KEY | set KEY VALUE]"),
+    }
+}
+
+fn export_profile(file: Option<&str>) -> anyhow::Result<()> {
+    let json = open_store()?.export_json()?;
+    if let Some(file) = file {
+        let path = std::path::Path::new(file);
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)?;
+        }
+        write_private_file(path, json.as_bytes())?;
+        println!("Exported profile to {}", path.display());
+    } else {
+        println!("{json}");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    f.write_all(bytes)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    std::fs::write(path, bytes)?;
+    Ok(())
+}
+
+fn clear_data(args: &[String]) -> anyhow::Result<()> {
+    let mut history = false;
+    let mut bookmarks = false;
+    let mut yes = false;
+    for arg in args {
+        match arg.as_str() {
+            "--history" => history = true,
+            "--bookmarks" => bookmarks = true,
+            "--yes" => yes = true,
+            other => bail!("unknown flag {other}\nusage: relay clear-data [--history] [--bookmarks] --yes"),
+        }
+    }
+    if !history && !bookmarks {
+        history = true;
+    }
+    if !yes {
+        bail!("refusing to clear data without --yes (pass --yes to confirm)");
+    }
+    let store = open_store()?;
+    if history {
+        let n = store.clear_history()?;
+        println!("Cleared {n} history entries.");
+    }
+    if bookmarks {
+        let n = store.clear_bookmarks()?;
+        println!("Cleared {n} bookmarks.");
+    }
+    Ok(())
 }
 
 fn import_chrome(args: &[String]) -> anyhow::Result<()> {
@@ -199,23 +384,6 @@ fn run_browser(initial_url: Option<String>) {
     let shell_requests = browser.clone();
     let socket = paths::mcp_socket();
 
-    // MCP server: background tokio runtime, same hub.
-    {
-        let hub = hub.clone();
-        let socket = socket.clone();
-        std::thread::Builder::new()
-            .name("relay-mcp".into())
-            .spawn(move || match runtime() {
-                Ok(rt) => {
-                    if let Err(e) = rt.block_on(relay_mcp::serve_socket(&socket, hub, Arc::new(browser))) {
-                        eprintln!("relay: MCP server stopped: {e:#}");
-                    }
-                }
-                Err(e) => eprintln!("relay: no runtime for MCP: {e}"),
-            })
-            .expect("spawn MCP thread");
-    }
-
     let store = match open_store() {
         Ok(s) => Some(s),
         Err(e) => {
@@ -223,7 +391,27 @@ fn run_browser(initial_url: Option<String>) {
             None
         }
     };
-    let socket_label = socket.display().to_string();
+    let cfg = load_config(store.as_ref());
+    let socket_label = if cfg.mcp {
+        // MCP server: background tokio runtime, same hub.
+        let hub = hub.clone();
+        let socket_for_thread = socket.clone();
+        std::thread::Builder::new()
+            .name("relay-mcp".into())
+            .spawn(move || match runtime() {
+                Ok(rt) => {
+                    if let Err(e) = rt.block_on(relay_mcp::serve_socket(&socket_for_thread, hub, Arc::new(browser))) {
+                        eprintln!("relay: MCP server stopped: {e:#}");
+                    }
+                }
+                Err(e) => eprintln!("relay: no runtime for MCP: {e}"),
+            })
+            .expect("spawn MCP thread");
+        socket.display().to_string()
+    } else {
+        "disabled".to_string()
+    };
+    let initial_search = cfg.search;
 
     Application::new().run(move |cx| {
         cx.bind_keys(app::key_bindings());
@@ -243,7 +431,7 @@ fn run_browser(initial_url: Option<String>) {
             return;
         }
         if let Some(url) = initial_url {
-            let url = match palette::resolve(&url, palette::DEFAULT_SEARCH) {
+            let url = match palette::resolve(&url, &initial_search) {
                 palette::Item::Open(u) | palette::Item::Search { url: u, .. } => u,
                 _ => url,
             };

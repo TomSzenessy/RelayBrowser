@@ -55,3 +55,15 @@ codesign --verify --deep --strict "$app"
 
 "$app/Contents/MacOS/relay" --version
 echo "bundle: $app"
+
+# Build a drag-to-Applications disk image for direct downloads.
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+ditto "$app" "$stage/Relay.app"
+ln -s /Applications "$stage/Applications"
+dmg="$root/dist/Relay-macOS.dmg"
+rm -f "$dmg" "$dmg.sha256"
+hdiutil create -volname "Relay" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
+(cd "$root/dist" && shasum -a 256 Relay-macOS.dmg > Relay-macOS.dmg.sha256)
+ls -lh "$dmg"
+echo "dmg: $dmg"

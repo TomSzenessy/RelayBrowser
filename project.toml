@@ -125,7 +125,7 @@ make = "3.81"
 group = "verify"
 workflow = ".github/workflows/ci.yml"
 job = "verify"
-digest = "sha256:8b6286d789579ee034bce2628a595eb3292c297bfd63fb66f00b602a8cef16e8"
+digest = "sha256:93a1877ebc1b45116d51c5485a282c3e4a4efb7a8cc29626dc7e30c5c138a9e9"
 tools = ["python3", "make"]
 commands = [["make", "verify"]]
 
@@ -158,7 +158,12 @@ reason = "lychee scans external URLs; needs network access and the workflow's re
 [[ci.local.not_local]]
 workflow = ".github/workflows/macos.yml"
 job = "macos"
-reason = "needs Apple Silicon macOS with Xcode and the system WebKit; it is the only job that links the GPUI window and runs the real-WebKit smoke example, and GitHub-hosted macOS runners are the intended host"
+reason = "needs Apple Silicon macOS 15 with Xcode and the system WebKit; it is the only job that links the GPUI window, runs the real-WebKit smoke example, and packages Relay.app/Relay-macOS.dmg, and GitHub-hosted macos-15 runners are the intended host"
+
+[[ci.local.not_local]]
+workflow = ".github/workflows/macos.yml"
+job = "publish-release"
+reason = "uploads Relay-macOS.dmg and checksums to GitHub Releases with GITHUB_TOKEN contents:write on main pushes and published releases"
 
 [[ci.local.not_local]]
 workflow = ".github/workflows/issue-contract.yml"
@@ -223,7 +228,7 @@ kind = "desktop"
 status = "active"
 owner = "TomSzenessy"
 quality_oracle = "cargo tests (bridge state, MCP round-trip with a real MCP client, importer, CRX, rules, sleep) plus a macOS type-check of the WebKit/AppKit code; the running app is judged on a Mac"
-extra_paths = ["Cargo.toml", "Cargo.lock", "third_party"]
+extra_paths = ["Cargo.toml", "Cargo.lock", "third_party", "assets"]
 # Hosted Ubuntu has the disk for the full suite; the macOS job adds the real
 # WebKit engine and the packaged app.
 verification = [

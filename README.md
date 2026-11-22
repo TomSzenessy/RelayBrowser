@@ -27,18 +27,15 @@ Early development, built in the open. Honest evidence as of this commit:
 | Part | Evidence |
 |---|---|
 | Bridge (`js/bridge.js`) | Playwright WebKit 26.0 in Linux CI: 8/8 tests for DOM snapshots/patches, fetch/XHR bodies, console, errors, click/type/highlight, hints, 2FA detection |
-| Shared state, MCP server, Chrome import, CRX, rules, sleep | `cargo test --workspace` in CI: 50/50 tests, including the real `relay mcp` stdio proxy |
-| macOS `WKWebView` engine + bridge | Type-checked for Apple Silicon; a real-WebKit smoke page (`relay-webkit` example) exists for the manual `macos` workflow |
-| GPUI window | Builds and links on Linux CI; it has not been observed on a Mac yet |
-| `.app` bundle | `scripts/bundle-macos.sh` packages and ad-hoc signs it; produced by a macOS run |
+| Shared state, MCP server, Chrome import, CRX, rules, sleep, theme contrast, CLI | `cargo test --workspace` in CI, including the real `relay mcp` stdio proxy, `config`/`export`/`clear-data`/`doctor` CLI, and WCAG AA contrast tests |
+| macOS `WKWebView` engine + bridge | Type-checked for Apple Silicon (`scripts/mac-check.sh`); `.github/workflows/macos.yml` runs the workspace tests, real-WebKit `smoke` example, bridge suite, and `Relay.app` packaging on `macos-15` |
+| GPUI window | Builds and links on Linux CI and macOS CI; visual polish is still judged on a Mac |
+| `.app` bundle & DMG | `scripts/bundle-macos.sh` packages `Relay.app` (with `assets/AppIcon.icns`) and `Relay-macOS.dmg`; CI uploads both as artifacts and publishes `macos-latest` on GitHub Releases |
 
-Linux CI is green on `ubuntu-24.04` (run
-[`45033566781`](https://github.com/TomSzenessy/RelayBrowser/actions/runs/45033566781)).
-The `macos` workflow is manual: this account has no working GitHub-hosted macOS
-runner (jobs stay queued), so the engine's real-WebKit smoke evidence and the
-GPUI window are still pending. Extensions need macOS 15.4. See [`docs/relay.md`](./docs/relay.md) for the architecture and
+See [`docs/relay.md`](./docs/relay.md) for the architecture,
+[`docs/privacy.md`](./docs/privacy.md) for local data and agent boundaries, and
 [`docs/product/features.csv`](./docs/product/features.csv) for the live feature
-matrix.
+matrix. Extensions need macOS 15.4.
 
 ## Quick start
 
@@ -57,13 +54,13 @@ claude mcp add relay -- "$PWD/target/release/relay" mcp
 ```
 
 `⌘K` opens everything: URLs, searches, tabs, history, bookmarks and commands.
-`⌘T` new tab, `⌘W` close, `⌘⇧T` reopen, `⌘L` address, `⌘⌥I` Inspector, `⌘\\`
-split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector.
+`⌘T` new tab, `⌘W` close, `⌘⇧T` reopen, `⌘L` address, `⌘,` Settings, `⌘⌥I`
+Inspector, `⌘\\` split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector.
 
 Tests:
 
 ```bash
-cargo test --workspace          # 50 tests: crates, UI logic, MCP stdio proxy
+cargo test --workspace          # crates, UI logic, WCAG contrast, CLI, MCP stdio proxy
 make check                      # repository gates
 npm --prefix js test            # bridge in Playwright's WebKit (needs its browser)
 ```
@@ -77,8 +74,9 @@ bash scripts/verify-macos.sh --no-open  # same without launching the app
 ```
 
 `relay doctor` prints the version, engine availability, data and socket paths,
-profile counts, and the exact `claude mcp add` command — include its output in a
-bug report.
+profile counts, effective settings, and the exact `claude mcp add` command —
+include its output in a bug report. `relay config`, `relay export [FILE]`, and
+`relay clear-data --history --yes` manage local settings, backups, and erasure.
 
 ## Working on this repository
 

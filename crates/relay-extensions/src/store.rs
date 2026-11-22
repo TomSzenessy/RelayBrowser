@@ -5,6 +5,8 @@
 use crate::chrome_import::{Bookmark, HistoryEntry};
 use crate::Error;
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 const SCHEMA_VERSION: i64 = 1;
@@ -155,6 +157,65 @@ impl Store {
         Ok(())
     }
 
+    pub fn settings_all(&self) -> Result<Vec<(String, String)>, Error> {
+        let mut stmt = self.conn.prepare("SELECT key, value FROM settings ORDER BY key")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn clear_history(&self) -> Result<usize, Error> {
+        Ok(self.conn.execute("DELETE FROM history", [])?)
+    }
+
+    pub fn clear_bookmarks(&self) -> Result<usize, Error> {
+        Ok(self.conn.execute("DELETE FROM bookmarks", [])?)
+    }
+
+    /// Pretty-printed JSON backup of bookmarks, history, settings, and
+    /// installed extension metadata. Passwords are never stored or exported.
+    pub fn export_json(&self) -> Result<String, Error> {
+        let bookmarks = self
+            .bookmarks()?
+            .into_iter()
+            .map(|b| ExportBookmark { title: b.title, url: b.url, folder: b.folder })
+            .collect();
+        let mut hist_stmt = self.conn.prepare(
+            "SELECT url, title, visit_count, last_visit FROM history ORDER BY last_visit DESC, url ASC",
+        )?;
+        let history = hist_stmt
+            .query_map([], |r| {
+                Ok(ExportVisit {
+                    url: r.get(0)?,
+                    title: r.get(1)?,
+                    visit_count: r.get(2)?,
+                    last_visit: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let settings: BTreeMap<String, String> = self.settings_all()?.into_iter().collect();
+        let mut ext_stmt = self.conn.prepare(
+            "SELECT id, name, version, enabled FROM extensions ORDER BY name, id",
+        )?;
+        let extensions = ext_stmt
+            .query_map([], |r| {
+                Ok(ExportExtension {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    version: r.get(2)?,
+                    enabled: r.get::<_, i64>(3)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let export = ProfileExport {
+            schema_version: SCHEMA_VERSION,
+            bookmarks,
+            history,
+            settings,
+            extensions,
+        };
+        Ok(serde_json::to_string_pretty(&export)?)
+    }
+
     pub fn record_extension(&self, id: &str, name: &str, version: &str, path: &Path) -> Result<(), Error> {
         self.conn.execute(
             "INSERT INTO extensions(id, name, version, path) VALUES(?1, ?2, ?3, ?4)
@@ -170,6 +231,38 @@ impl Store {
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+}
+
+#[derive(Serialize)]
+struct ProfileExport {
+    schema_version: i64,
+    bookmarks: Vec<ExportBookmark>,
+    history: Vec<ExportVisit>,
+    settings: BTreeMap<String, String>,
+    extensions: Vec<ExportExtension>,
+}
+
+#[derive(Serialize)]
+struct ExportBookmark {
+    title: String,
+    url: String,
+    folder: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ExportVisit {
+    url: String,
+    title: String,
+    visit_count: i64,
+    last_visit: i64,
+}
+
+#[derive(Serialize)]
+struct ExportExtension {
+    id: String,
+    name: String,
+    version: String,
+    enabled: bool,
 }
 
 /// History and bookmarks are private: only the user may read the profile,
@@ -244,6 +337,60 @@ mod tests {
         let s = Store::in_memory().unwrap();
         assert_eq!(s.setting("search").unwrap(), None);
         s.set_setting("search", "https://duckduckgo.com/?q=%s").unwrap();
+        s.set_setting("adblock", "true").unwrap();
         assert_eq!(s.setting("search").unwrap().as_deref(), Some("https://duckduckgo.com/?q=%s"));
+        assert_eq!(
+            s.settings_all().unwrap(),
+            vec![
+                ("adblock".into(), "true".into()),
+                ("search".into(), "https://duckduckgo.com/?q=%s".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn clear_history_and_bookmarks() {
+        let s = Store::in_memory().unwrap();
+        s.record_visit("https://a.test/", "A", 100).unwrap();
+        s.record_visit("https://b.test/", "B", 200).unwrap();
+        s.add_bookmark(&Bookmark { title: "A".into(), url: "https://a.test/".into(), folder: vec!["Bar".into()] }).unwrap();
+        assert_eq!(s.clear_history().unwrap(), 2);
+        assert!(s.search_history("", 10).unwrap().is_empty());
+        assert_eq!(s.clear_history().unwrap(), 0);
+        assert_eq!(s.clear_bookmarks().unwrap(), 1);
+        assert!(s.bookmarks().unwrap().is_empty());
+        assert_eq!(s.clear_bookmarks().unwrap(), 0);
+    }
+
+    #[test]
+    fn export_json_contains_profile_without_passwords() {
+        let s = Store::in_memory().unwrap();
+        s.add_bookmark(&Bookmark { title: "Docs".into(), url: "https://docs.rs/".into(), folder: vec!["Dev".into()] }).unwrap();
+        s.record_visit("https://older.test/", "Older", 100).unwrap();
+        s.record_visit("https://newer.test/", "Newer", 200).unwrap();
+        s.record_visit("https://newer.test/", "Newer", 250).unwrap();
+        s.set_setting("search", "https://kagi.com/search?q=%s").unwrap();
+        s.set_setting("sleep_minutes", "15").unwrap();
+        s.record_extension("ext1", "uBlock", "1.0.0", Path::new("/tmp/ext1")).unwrap();
+
+        let json = s.export_json().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["schema_version"], SCHEMA_VERSION);
+        assert_eq!(v["bookmarks"][0]["title"], "Docs");
+        assert_eq!(v["bookmarks"][0]["url"], "https://docs.rs/");
+        assert_eq!(v["bookmarks"][0]["folder"], serde_json::json!(["Dev"]));
+        assert_eq!(v["history"].as_array().unwrap().len(), 2);
+        assert_eq!(v["history"][0]["url"], "https://newer.test/");
+        assert_eq!(v["history"][0]["visit_count"], 2);
+        assert_eq!(v["history"][0]["last_visit"], 250);
+        assert_eq!(v["history"][1]["url"], "https://older.test/");
+        assert_eq!(v["settings"]["search"], "https://kagi.com/search?q=%s");
+        assert_eq!(v["settings"]["sleep_minutes"], "15");
+        assert_eq!(v["extensions"][0]["id"], "ext1");
+        assert_eq!(v["extensions"][0]["name"], "uBlock");
+        assert_eq!(v["extensions"][0]["version"], "1.0.0");
+        assert_eq!(v["extensions"][0]["enabled"], true);
+        assert!(v.get("passwords").is_none());
+        assert!(!json.contains("password"));
     }
 }

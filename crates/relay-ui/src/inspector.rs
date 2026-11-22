@@ -111,10 +111,14 @@ pub struct NetworkRow {
 }
 
 pub fn network_rows(tab: &TabState, filter: &str) -> Vec<NetworkRow> {
+    network_rows_filtered(tab, filter, false)
+}
+
+pub fn network_rows_filtered(tab: &TabState, filter: &str, failed_only: bool) -> Vec<NetworkRow> {
     tab.network
         .iter()
         .rev()
-        .filter(|n| filter.is_empty() || n.url.contains(filter))
+        .filter(|n| (!failed_only || n.failed()) && (filter.is_empty() || n.url.contains(filter)))
         .map(|n| NetworkRow {
             method: n.method.clone(),
             status: match (&n.error, n.status) {
@@ -213,6 +217,24 @@ mod tests {
         let c = console_rows(t, ConsoleLevel::Log);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].source, "app.js:1:2");
+    }
+
+    #[test]
+    fn network_rows_filtered_returns_only_failed() {
+        let (hub, tab) = tab_with_dom();
+        hub.ingest_json(tab, r#"{"kind":"network","id":"2","api":"fetch","method":"GET","url":"https://a.test/api/ok","status":200,"duration_ms":12.0}"#).unwrap();
+        hub.ingest_json(tab, r#"{"kind":"network","id":"3","api":"fetch","method":"GET","url":"https://a.test/api/down","error":"timeout","duration_ms":50.0}"#).unwrap();
+        let h = hub.lock();
+        let t = h.tab(tab).unwrap();
+        assert_eq!(network_rows_filtered(t, "", false).len(), 3);
+        let failed = network_rows_filtered(t, "", true);
+        assert_eq!(failed.len(), 2);
+        assert!(failed.iter().all(|r| r.failed));
+        assert_eq!(failed[0].status, "ERR");
+        assert_eq!(failed[1].status, "502");
+        let filtered_failed = network_rows_filtered(t, "pay", true);
+        assert_eq!(filtered_failed.len(), 1);
+        assert_eq!(filtered_failed[0].url, "a.test/api/pay");
     }
 
     #[test]
