@@ -79,6 +79,14 @@ to the window's **first responder** with `tryToPerform:with:` rather than
 command back into Relay instead of the page. The focused page's first responder
 is WebKit's content view, which owns the real editing implementation.
 
+Page focus after a transition is deferred, not fired once: palette Enter/a row
+click, Esc, Settings, find, a CLI URL, and switching to a slept tab all set
+`focus_pending`, and the pump retries `Engine::focus_page` until WebKit's view
+is attached and actually took first responder. The retry never fires while the
+palette, Settings, or hints own the keyboard. Switching tabs also hides the
+previous tab's link hints; Esc then focuses the newly active page, not the old
+one.
+
 ## Tab strip
 
 `tabstrip.rs` owns the placement (`Left`, `Top`, `Right`), fold state, metrics,

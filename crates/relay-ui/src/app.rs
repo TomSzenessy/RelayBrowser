@@ -578,7 +578,7 @@ impl RelayApp {
             changed = true;
         }
         self.try_focus_pending();
-        if self.focus_initial {
+        if self.focus_initial && self.palette.is_none() && !self.settings_open && self.hints.is_none() {
             if let Some(tab) = self.active() {
                 if self.web.borrow().focus_page(tab) {
                     self.focus_initial = false;
