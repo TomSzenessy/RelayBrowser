@@ -11,7 +11,8 @@ a browser engine: every tab is the macOS WebKit you already trust, so video
 decoding, security patches and 120fps scrolling are Apple's job. Relay adds the
 parts WebKit does not give you:
 
-- a keyboard-first GPUI shell (⌘K palette, vertical tabs, splits, link hints);
+- a keyboard-first GPUI shell (⌘K palette, tabs down the side or across the
+  top, native menu bar, splits, link hints);
 - one ~5 KB injected bridge that streams DOM, network and console state into a
   single Rust store;
 - a native Inspector and a local MCP server that read that **same** store, so
@@ -71,7 +72,8 @@ commands.
 
 Open a site that publishes a web app manifest and choose **Install This Site as
 an App** in `⌘K` (or File → Install This Site as an App). Relay writes a small
-`.app` to `~/Applications` with the site's name and icon; launching it runs the
+`.app` to `~/Applications` with the site's name and icon (Relay's icon when the
+manifest has no usable PNG); launching it runs the
 installed Relay with `--app <start-url>` — one WKWebView, no tab strip, no
 Chrome runtime, no second MCP socket, and the same cookies and session as your
 browser. Remove it with the matching palette command, which asks for a second

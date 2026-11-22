@@ -117,7 +117,8 @@ built yet.
   it restores the strip.
 - Web app install: the palette reports "Reading the web app manifest…", then
   "Installed … in ~/Applications", or a specific reason (no manifest,
-  cross-origin start, non-PNG icon, disk error). Removal says "Click again to
+  cross-origin start, disk error). A missing or non-PNG icon is not an error:
+  the app uses Relay's fallback icon. Removal says "Click again to
   remove …" before deleting anything.
 - App window: no tab strip or status bar with one page; a popup link
   navigates that page rather than revealing hidden chrome.

@@ -18,6 +18,10 @@ use std::path::{Path, PathBuf};
 /// A manifest icon larger than this is ignored rather than copied.
 pub const MAX_ICON_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_NAME_CHARS: usize = 64;
+
+/// Used when a manifest has no usable PNG icon: the app still gets a real
+/// Finder/Dock icon instead of a generic document. This is Relay's own icon.
+pub const FALLBACK_ICNS: &[u8] = include_bytes!("../../../assets/AppIcon.icns");
 const DEFAULT_BUNDLE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The parts of a web app manifest Relay acts on.
@@ -184,6 +188,28 @@ pub fn same_origin(a: &str, b: &str) -> bool {
     }
 }
 
+/// A usable web address for `--app` and the installer (scheme, host, and no
+/// whitespace). `http://` alone is not enough.
+pub fn is_http_url(url: &str) -> bool {
+    !url.chars().any(char::is_whitespace) && Origin::parse(url).is_some()
+}
+
+/// Which installed app a "Remove This Site's App" command targets. An exact
+/// start URL wins; a host with one app is unambiguous. Two apps on one host
+/// must be removed from their own start page so the marker check cannot
+/// delete the wrong bundle.
+pub fn select_app_for_url(apps: &[relay_extensions::store::WebAppRecord], page_url: &str) -> Result<relay_extensions::store::WebAppRecord, String> {
+    if let Some(exact) = apps.iter().find(|r| r.start_url == page_url) {
+        return Ok(exact.clone());
+    }
+    let same: Vec<_> = apps.iter().filter(|r| same_origin(&r.start_url, page_url)).collect();
+    match same.as_slice() {
+        [] => Err("This site is not installed as an app".to_string()),
+        [one] => Ok((*one).clone()),
+        _ => Err("This site has more than one installed app; open its start page to remove one".to_string()),
+    }
+}
+
 /// A PNG data URL the bridge produced. SVG and other formats are refused
 /// because macOS's icon pipeline wants a bitmap.
 pub fn decode_png_data_url(url: &str) -> Option<Vec<u8>> {
@@ -256,12 +282,9 @@ pub fn plan_bundle(apps_dir: &Path, manifest: &Manifest, source_binary: &Path) -
     let bundle_id = bundle_id(&manifest.start_url);
     let path = unique_bundle_path(apps_dir, &bundle_name(&manifest.name), &manifest.start_url);
     let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| manifest.name.clone());
-    let info_plist = info_plist(&name, &bundle_id, manifest.icon_png.is_some());
-    let icon = manifest
-        .icon_png
-        .as_ref()
-        .map(|_| path.join("Contents/Resources/AppIcon.icns"));
-    let launcher = launcher(&manifest.start_url, source_binary, &name, icon.as_deref());
+    let info_plist = info_plist(&name, &bundle_id);
+    let icon = path.join("Contents/Resources/AppIcon.icns");
+    let launcher = launcher(&manifest.start_url, source_binary, &name, &icon);
     let marker = serde_json::json!({
         "relay_web_app": 1,
         "name": manifest.name,
@@ -317,13 +340,17 @@ pub fn write_bundle(plan: &BundlePlan) -> io::Result<PathBuf> {
     fs::create_dir_all(contents.join("Resources"))?;
     fs::write(contents.join("Info.plist"), plan.info_plist.as_bytes())?;
     write_executable(&contents.join("MacOS/RelayApp"), plan.launcher.as_bytes())?;
+    let icns = contents.join("Resources/AppIcon.icns");
     if let Some(png) = &plan.icon_png {
         let icon = contents.join("Resources/icon.png");
         fs::write(&icon, png)?;
-        let icns = contents.join("Resources/AppIcon.icns");
         if !build_icns(&icon, &icns) {
-            let _ = fs::remove_file(&icns);
+            fs::write(&icns, FALLBACK_ICNS)?;
         }
+    } else {
+        // No usable PNG (no manifest icon, or an SVG/other format): keep a
+        // real app icon rather than refusing an otherwise installable app.
+        fs::write(&icns, FALLBACK_ICNS)?;
     }
     fs::write(marker_path(&plan.path), plan.marker.as_bytes())?;
     Ok(plan.path.clone())
@@ -369,12 +396,8 @@ pub fn default_apps_dir() -> PathBuf {
     }
 }
 
-fn info_plist(name: &str, bundle_id: &str, has_icon: bool) -> String {
-    let icon = if has_icon {
-        "  <key>CFBundleIconFile</key><string>AppIcon</string>\n"
-    } else {
-        ""
-    };
+fn info_plist(name: &str, bundle_id: &str) -> String {
+    let icon = "  <key>CFBundleIconFile</key><string>AppIcon</string>\n";
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -402,11 +425,11 @@ fn info_plist(name: &str, bundle_id: &str, has_icon: bool) -> String {
     )
 }
 
-fn launcher(start_url: &str, source_binary: &Path, name: &str, icon: Option<&Path>) -> String {
+fn launcher(start_url: &str, source_binary: &Path, name: &str, icon: &Path) -> String {
     let src = shell_quote(&source_binary.to_string_lossy());
     let url = shell_quote(start_url);
     let name = shell_quote(name);
-    let icon = icon.map(|p| format!(" --app-icon {}", shell_quote(&p.to_string_lossy()))).unwrap_or_default();
+    let icon = format!(" --app-icon {}", shell_quote(&icon.to_string_lossy()));
     format!(
         "#!/bin/sh\n\
          # Relay web app. Runs the installed Relay so the app shares its session,\n\
@@ -598,6 +621,7 @@ mod tests {
         assert!(plan.info_plist.contains("<string>app.relay.webapp.shop-relay-test."));
         assert!(plan.launcher.contains("--app 'https://shop.relay.test/app'"));
         assert!(plan.launcher.contains("--app-name 'Relay Shop'"));
+        assert!(plan.launcher.contains("--app-icon '/tmp/apps/Relay Shop.app/Contents/Resources/AppIcon.icns'"));
         assert!(plan.launcher.contains("exec '/Applications/Relay.app/Contents/MacOS/relay'"));
     }
 
@@ -610,6 +634,8 @@ mod tests {
         let first = install(&apps, &manifest(), &source).unwrap();
         assert_eq!(first.path, apps.join("Relay Shop.app"));
         assert!(!first.path.join("Contents/MacOS/Relay").exists(), "no second copy of Relay is bundled");
+        assert_eq!(fs::read(first.path.join("Contents/Resources/AppIcon.icns")).unwrap(), FALLBACK_ICNS);
+        assert!(!first.path.join("Contents/Resources/icon.png").exists());
         let launcher = fs::read_to_string(first.path.join("Contents/MacOS/RelayApp")).unwrap();
         assert!(launcher.starts_with("#!/bin/sh"));
         assert!(launcher.contains("--app 'https://shop.relay.test/app'"));
@@ -665,9 +691,49 @@ mod tests {
         let lines: Vec<String> = fs::read_to_string(&args).unwrap().lines().map(str::to_string).collect();
         assert_eq!(
             lines,
-            vec!["--app", "https://shop.relay.test/app", "--app-name", "Relay Shop"],
-            "the launcher passes the URL and the bundle's display name"
+            vec![
+                "--app",
+                "https://shop.relay.test/app",
+                "--app-name",
+                "Relay Shop",
+                "--app-icon",
+                &installed.path.join("Contents/Resources/AppIcon.icns").display().to_string(),
+            ],
+            "the launcher passes the URL, the bundle's name, and its icon"
         );
+    }
+
+    #[test]
+    fn a_non_png_icon_is_ignored_and_the_app_uses_the_fallback_icon() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("relay");
+        fs::write(&source, b"relay-binary").unwrap();
+        let mut m = manifest();
+        m.icon_png = None;
+        let installed = install(&dir.path().join("Applications"), &m, &source).unwrap();
+        assert_eq!(fs::read(installed.path.join("Contents/Resources/AppIcon.icns")).unwrap(), FALLBACK_ICNS);
+        assert!(!installed.path.join("Contents/Resources/icon.png").exists());
+        let info = fs::read_to_string(installed.path.join("Contents/Info.plist")).unwrap();
+        assert!(info.contains("<key>CFBundleIconFile</key><string>AppIcon</string>"));
+    }
+
+    #[test]
+    fn removal_targets_one_app_even_when_a_host_has_two() {
+        use relay_extensions::store::WebAppRecord;
+        let rec = |name: &str, start: &str| WebAppRecord {
+            id: format!("id-{name}"),
+            name: name.into(),
+            start_url: start.into(),
+            bundle_path: format!("/tmp/{name}.app"),
+            installed_at: 0,
+        };
+        let apps = vec![rec("Shop", "https://shop.test/app"), rec("Shop Admin", "https://shop.test/admin")];
+        assert_eq!(select_app_for_url(&apps, "https://shop.test/app").unwrap().name, "Shop");
+        assert_eq!(select_app_for_url(&apps, "https://shop.test/admin").unwrap().name, "Shop Admin");
+        assert!(select_app_for_url(&apps, "https://shop.test/other").is_err(), "ambiguous host");
+        assert!(select_app_for_url(&apps, "https://other.test/").is_err());
+        let one = vec![rec("Shop", "https://shop.test/app")];
+        assert_eq!(select_app_for_url(&one, "https://shop.test/cart").unwrap().name, "Shop");
     }
 
     #[test]

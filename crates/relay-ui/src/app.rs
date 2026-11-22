@@ -945,11 +945,13 @@ impl RelayApp {
             self.toast("Open the installed app's site first");
             return;
         };
-        let Some(record) = self.store.as_ref().and_then(|s| s.web_apps().ok()).and_then(|apps| {
-            apps.into_iter().find(|r| webapp::same_origin(&r.start_url, &page_url))
-        }) else {
-            self.toast("This site is not installed as an app");
-            return;
+        let apps = self.store.as_ref().and_then(|s| s.web_apps().ok()).unwrap_or_default();
+        let record = match webapp::select_app_for_url(&apps, &page_url) {
+            Ok(record) => record,
+            Err(reason) => {
+                self.toast(reason);
+                return;
+            }
         };
         let now = Instant::now();
         let confirmed = matches!(&self.pending_remove_app, Some((url, at)) if url == &page_url && now.duration_since(*at) < Duration::from_secs(6));

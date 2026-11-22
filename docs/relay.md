@@ -100,8 +100,10 @@ as an ordinary async command result.
   tested against malformed base64.
 - The bundle goes to `~/Applications/<Name>.app` (with ` 2`, ` 3` on a name
   collision): `Contents/Info.plist`, a `/bin/sh` launcher, `Contents/Resources/icon.png`,
-  and `AppIcon.icns` built with `sips` + `iconutil` when available. It does not
-  copy Relay: the launcher runs the installed binary, so the app shares the
+  and `AppIcon.icns` built with `sips` + `iconutil` when possible. No usable
+  PNG icon (none declared, or only SVG/other formats) falls back to Relay's
+  bundled icon rather than refusing an installable app. It does not copy
+  Relay: the launcher runs the installed binary, so the app shares the
   browser's cookies, WebKit data store, and updates.
 - `Contents/.relay-webapp` is the marker: it records the start URL and bundle
   id. Removal refuses a folder without a matching marker, so Relay never

@@ -101,7 +101,7 @@ fn launch_app(args: &[String]) -> anyhow::Result<()> {
 
 /// The only URLs an installed app window may start on.
 fn is_web_url(url: &str) -> bool {
-    (url.starts_with("http://") || url.starts_with("https://")) && !url.chars().any(char::is_whitespace)
+    webapp::is_http_url(url)
 }
 
 fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {

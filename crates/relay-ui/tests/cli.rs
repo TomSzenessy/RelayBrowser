@@ -212,7 +212,14 @@ fn config_bangs_validates_and_round_trips() {
 #[test]
 fn app_mode_requires_an_http_url() {
     let dir = tempfile::tempdir().unwrap();
-    for args in [&["--app", "file:///etc/passwd"][..], &["--app", "javascript:alert(1)"][..], &["--app"][..]] {
+    for args in [
+        &["--app", "file:///etc/passwd"][..],
+        &["--app", "javascript:alert(1)"][..],
+        &["--app", "http://"][..],
+        &["--app", "https://"][..],
+        &["--app", "https:///nohost"][..],
+        &["--app"][..],
+    ] {
         let out = relay(dir.path(), args);
         assert!(!out.status.success(), "{args:?} must be refused");
         let stderr = String::from_utf8_lossy(&out.stderr);
