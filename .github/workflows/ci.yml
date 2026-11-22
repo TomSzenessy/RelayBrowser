@@ -43,9 +43,14 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
       - name: Install the pinned Rust toolchain
-        # The self-hosted runner is a general Linux box: Rust is not part of
-        # its image, so install it (idempotently) before any surface check.
+        # The self-hosted runner is a general Linux box: Rust and Node are not
+        # part of its image, so install them before any surface check.
         run: |
           if ! command -v cargo >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
