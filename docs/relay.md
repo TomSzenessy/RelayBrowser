@@ -97,6 +97,100 @@ hidden until the bridge delivers a DOM, while the shell paints the JPEG the tab
 slept on. So the snapshot is what you see during the reload, not a white
 WKWebView. `after_load` restores scroll once the bridge says `hello`.
 
+## Find and zoom
+
+⌘F opens a find bar over the content; each keystroke calls
+`Engine::find` (`WKWebView findString`, wrapping, case-insensitive) and the
+match answer returns as `WebEvent::Found`, so the bar can say "No matches".
+Switching tabs or opening the palette closes it. ⌘= / ⌘- / ⌘0 step through
+browser-style presets (50%–300%) and store the result in the host's
+`SitePrefs.zoom`; every page load applies its host's zoom via
+`Engine::set_zoom` (`pageZoom`), so a site keeps its zoom across tabs and
+relaunches.
+
+## Per-site blocking
+
+The palette command "Toggle Blocking on This Site" flips the host's
+`SitePrefs.blocking_off`, recompiles the rule list, and reloads the page once
+WebKit has applied it (`Engine::load_content_rules_then` →
+`WebEvent::RulesApplied`), never before. IPv6-literal hosts are refused (WebKit
+`if-domain` cannot express them); if the recompile fails, nothing reloads and
+the error is only logged.
+`rules_json` appends one final `ignore-previous-rules` rule whose
+`if-domain` lists every such host (`Compiled::allow_sites`, subdomains
+included), so requests and element hiding on those pages are left alone.
+
+"Toggle Compatibility Mode on This Site" flips `SitePrefs.compat_mode`: the
+tab then sends a Safari-shaped user agent (`SAFARI_USER_AGENT`, via
+`Engine::set_user_agent` / `customUserAgent`) for sites that reject WebKit's
+default one. On every load `apply_site_prefs` reconciles the tab's agent with
+its host: a compat site first fetched with the default agent reloads once
+(`compat_change`, tested against loops); leaving it restores the default.
+Sleeping or closing a tab forgets its agent, since a woken view starts fresh.
+Known gaps: the agent is decided on the host where a load finishes, so a
+site that redirects to another host before sniffing is not covered; a compat
+site loads twice in a fresh view (default agent, then the reload), and that
+reload can resubmit a POST that landed there.
+
+## Cookie banners
+
+With blocking on, the compiled rule list also includes
+`content_rules::CMP_FILTERS`: `css-display-none` rules for the outer
+containers of common consent platforms (OneTrust, Cookiebot, Usercentrics,
+TrustArc, iubenda, Complianz, Osano, CookieYes, Klaro), by vendor-specific id
+or class. Hiding a banner records no choice, so the site's configured
+default applies (opt-in regions usually keep non-essential cookies off;
+opt-out regions may set them). Platforms whose modal locks page
+scrolling (Sourcepoint, Didomi popups, Quantcast) are left out, because a
+hidden modal would leave the page unscrollable.
+
+## Pinned tabs
+
+`Hub::set_pinned` keeps pinned tabs as a block at the top of the order. The
+sleep policy never picks them, and ⌘W on a pinned tab switches to the next tab
+and sleeps the pinned one (scroll kept) instead of closing it; a lone pinned
+tab stays open. Pins persist through the saved session.
+
+## Session restore
+
+With `restore_session` on (the default; `relay config set restore_session off`),
+the shell saves the user's open `http(s)` tabs (order, title, pinned, active,
+and the scroll offset of sleeping tabs) to `Store::save_session` when the app
+quits (any quit path, via GPUI's `on_app_quit`) and on the 30 s sleep tick
+when the set changed. Agent tabs are not saved. With it off nothing is
+written, and launch erases any session an earlier run saved. On launch,
+`restore_into` recreates the tabs and `Engine::restore_asleep` registers each
+one as already asleep (no `WKWebView`, no snapshot); only the previously
+active tab loads. The others load on first click through the normal wake path,
+which restores their scroll once the real page says `hello` (`load_seq > 0`;
+`page_loaded_since` keeps the restore off WebKit's initial blank document).
+`relay clear-data --history` or `--session`, and Settings → Clear history,
+erase the saved session.
+
+## Palette smart input
+
+[`bangs.rs`](../crates/relay-ui/src/bangs.rs), [`calc.rs`](../crates/relay-ui/src/calc.rs)
+and [`clean_url.rs`](../crates/relay-ui/src/clean_url.rs) are pure string
+modules the palette calls before its normal URL/search item:
+
+- **Offline !bangs**: `!gh rust lang` or `rust lang !gh` (also `rs`, `crates`,
+  `docs`, `mdn`, `yt`, `so`, `npm`, `w`, `k`, `g`, `ddg`, `maps`) becomes
+  `Item::Bang` at the top; an empty query opens the site homepage; unknown
+  bangs fall through to the normal search. Custom bangs come from the
+  `bangs` setting (`relay config set bangs "gh=https://example.com/s?q=%s
+  w=https://wiki.test/?q=%s"`): space-separated `trigger=template` pairs,
+  http(s) templates only, validated by `bangs::parse_custom`; they override
+  built-ins and load at launch. No network lookup.
+- **Calculator**: `+ - * / % ^`, parentheses, unary minus, decimals, optional
+  leading `=`. Bare numbers, versions/IPs, dates, division by zero and
+  non-finite results return nothing; nesting is capped at 64. The result is
+  `Item::Calc` and Enter copies it.
+- **Clean URL**: `clean_url::clean` strips `utm_*` and click ids (`si` only on
+  YouTube/Spotify) and unwraps google `/url?q=` and facebook `l.php?u=`
+  redirects. Backs the `Copy Clean URL` command (⌘⇧C). `Copy Page as
+  Markdown` (⌘⇧M) runs `Op::Markdown` on the active tab, waits up to 3 s for
+  the bridge's reply, and copies it; `Close Duplicate Tabs` runs in `app.rs`.
+
 ## Checking Relay off-Mac
 
 Six layers, cheapest first:

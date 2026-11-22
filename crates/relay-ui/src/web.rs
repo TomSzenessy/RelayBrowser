@@ -12,6 +12,10 @@ use relay_bridge::{BrowserRequest, SharedHub, TabId};
 pub enum WebEvent {
     OpenInNewTab { opener: TabId, url: String },
     Slept(TabId),
+    /// Recompiled content rules are live: reload this tab now.
+    RulesApplied { reload: TabId },
+    /// Reply to [`WebHost::find`]: whether the text occurs in the page.
+    Found { tab: TabId, found: bool },
 }
 
 #[cfg(target_os = "macos")]
@@ -68,6 +72,13 @@ mod imp {
             self.engine.clear_content_rules();
         }
 
+        /// Recompile the rules, then reload `tab` once they apply
+        /// ([`WebEvent::RulesApplied`]).
+        pub fn load_content_rules_and_reload(&self, json: &str, tab: TabId) {
+            let events = self.events.clone();
+            self.engine.load_content_rules_then(json, move || events.borrow_mut().push(WebEvent::RulesApplied { reload: tab }));
+        }
+
         pub fn apply(&mut self, req: BrowserRequest) {
             match req {
                 BrowserRequest::Open { tab, url } => {
@@ -104,6 +115,31 @@ mod imp {
 
         pub fn snapshot(&self, tab: TabId) -> Option<Vec<u8>> {
             self.engine.slept(tab).and_then(|s| s.snapshot_jpeg)
+        }
+
+        pub fn set_zoom(&self, tab: TabId, zoom: f64) {
+            self.engine.set_zoom(tab, zoom);
+        }
+
+        pub fn set_user_agent(&self, tab: TabId, ua: Option<&str>) {
+            self.engine.set_user_agent(tab, ua);
+        }
+
+        /// Select the next (or previous) match; the answer arrives as
+        /// [`WebEvent::Found`].
+        pub fn find(&self, tab: TabId, text: &str, backwards: bool) {
+            let events = self.events.clone();
+            self.engine.find(tab, text, backwards, move |found| events.borrow_mut().push(WebEvent::Found { tab, found }));
+        }
+
+        /// A restored session tab: asleep until activated.
+        pub fn restore_asleep(&mut self, tab: TabId, url: &str, scroll_y: f64) {
+            self.engine.restore_asleep(tab, url, scroll_y);
+        }
+
+        /// The remembered scroll offset of a sleeping tab.
+        pub fn slept_scroll_y(&self, tab: TabId) -> Option<f64> {
+            self.engine.slept(tab).map(|s| s.scroll_y)
         }
 
         /// Position web views over the given GPUI bounds; hide the rest.
@@ -159,11 +195,19 @@ mod imp {
         }
         pub fn load_content_rules(&self, _json: &str) {}
         pub fn clear_content_rules(&self) {}
+        pub fn load_content_rules_and_reload(&self, _json: &str, _tab: TabId) {}
         pub fn apply(&mut self, _req: BrowserRequest) {}
         pub fn wake(&mut self, _tab: TabId) {}
         pub fn after_load(&mut self, _tab: TabId) {}
         pub fn sleep(&mut self, _tab: TabId, _scroll: (f64, f64)) {}
         pub fn snapshot(&self, _tab: TabId) -> Option<Vec<u8>> {
+            None
+        }
+        pub fn restore_asleep(&mut self, _tab: TabId, _url: &str, _scroll_y: f64) {}
+        pub fn set_zoom(&self, _tab: TabId, _zoom: f64) {}
+        pub fn set_user_agent(&self, _tab: TabId, _ua: Option<&str>) {}
+        pub fn find(&self, _tab: TabId, _text: &str, _backwards: bool) {}
+        pub fn slept_scroll_y(&self, _tab: TabId) -> Option<f64> {
             None
         }
         pub fn layout(&self, _placements: &[(TabId, Bounds<Pixels>)]) {}

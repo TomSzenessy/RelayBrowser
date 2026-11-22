@@ -240,6 +240,8 @@ pub struct TabState {
     pub load_error: Option<String>,
     /// Hotkeys from the page, drained by the shell (`Hub::take_hotkeys`).
     pub hotkeys: Vec<String>,
+    /// Last Markdown rendering of the page (`Op::Markdown`); cleared on load.
+    pub markdown: Option<String>,
 }
 
 impl TabState {
@@ -261,6 +263,7 @@ impl TabState {
             sleeping: false,
             load_error: None,
             hotkeys: vec![],
+            markdown: None,
         }
     }
 
@@ -450,6 +453,16 @@ impl Hub {
         &self.order
     }
 
+    /// Pin or unpin a tab. Pinned tabs form a block at the top of the order:
+    /// pinning moves a tab to the end of that block, unpinning to just after
+    /// it. Returns the new state, or `None` for an unknown tab.
+    pub fn set_pinned(&mut self, id: TabId, pinned: bool) -> Option<bool> {
+        self.tabs.get_mut(&id)?.pinned = pinned;
+        let others_pinned = self.order.iter().filter(|t| **t != id && self.tabs.get(t).is_some_and(|s| s.pinned)).count();
+        self.move_tab(id, others_pinned);
+        Some(pinned)
+    }
+
     pub fn move_tab(&mut self, id: TabId, to: usize) {
         if let Some(pos) = self.order.iter().position(|x| *x == id) {
             self.order.remove(pos);
@@ -492,6 +505,11 @@ impl Hub {
         }
     }
 
+    /// The last Markdown the page produced for `Op::Markdown`, if any.
+    pub fn page_markdown(&self, tab: TabId) -> Option<String> {
+        self.tabs.get(&tab).and_then(|t| t.markdown.clone())
+    }
+
     pub fn ingest(&mut self, tab: TabId, msg: PageMessage) {
         if let PageMessage::Result(r) = msg {
             if let Some((owner, tx)) = self.pending.remove(&r.id) {
@@ -513,6 +531,7 @@ impl Hub {
                 t.challenge = None;
                 t.playing_audio = false;
                 t.load_error = None;
+                t.markdown = None;
             }
             PageMessage::Page { url, title } => {
                 t.url = url;
@@ -535,6 +554,7 @@ impl Hub {
             PageMessage::Challenge { challenge } => t.challenge = challenge,
             PageMessage::Media { playing } => t.playing_audio = playing,
             PageMessage::Hotkey { key } => t.hotkeys.push(key),
+            PageMessage::Markdown { text } => t.markdown = Some(text),
             PageMessage::Result(_) => unreachable!(),
         }
     }
@@ -624,6 +644,32 @@ mod tests {
     }
 
     #[test]
+    fn pinned_tabs_form_a_block_at_the_top() {
+        let hub = SharedHub::new();
+        let [a, b, c, d] = hub.update(|h| ["a", "b", "c", "d"].map(|n| h.create_tab(&format!("https://{n}.test/"), Owner::User)));
+        hub.update(|h| {
+            assert_eq!(h.set_pinned(c, true), Some(true));
+            assert_eq!(h.set_pinned(d, true), Some(true));
+        });
+        assert_eq!(hub.lock().tab_ids(), &[c, d, a, b], "pinning appends to the pinned block");
+        hub.update(|h| h.set_pinned(c, false));
+        assert_eq!(hub.lock().tab_ids(), &[d, c, a, b], "unpinning lands right after the block");
+        assert!(!hub.lock().tab(c).unwrap().pinned);
+        assert_eq!(hub.update(|h| h.set_pinned(999, true)), None);
+    }
+
+    #[test]
+    fn markdown_message_is_stored_and_cleared_on_load() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://a.test/", Owner::User));
+        assert_eq!(hub.lock().page_markdown(tab), None);
+        hub.ingest_json(tab, r##"{"kind":"markdown","text":"# Hi"}"##).unwrap();
+        assert_eq!(hub.lock().page_markdown(tab).as_deref(), Some("# Hi"));
+        hub.ingest_json(tab, r#"{"kind":"hello","url":"https://b.test/","version":1}"#).unwrap();
+        assert_eq!(hub.lock().page_markdown(tab), None);
+    }
+
+    #[test]
     fn agent_tabs_pause_on_challenge_but_reads_continue() {
         let hub = SharedHub::new();
         // The user's own tab: agents act there too, so the pause must hold.
@@ -631,6 +677,7 @@ mod tests {
         hub.ingest_json(tab, r#"{"kind":"challenge","challenge":"two_factor"}"#).unwrap();
         assert_eq!(hub.begin(tab, Op::Click { target: 1 }, Actor::Agent).unwrap_err(), HubError::WaitingForHuman(tab, Challenge::TwoFactor));
         assert!(hub.begin(tab, Op::ReadText { target: None }, Actor::Agent).is_ok());
+        assert!(hub.begin(tab, Op::Markdown, Actor::Agent).is_ok(), "markdown is read-only");
         assert!(hub.begin_command(tab, Op::Click { target: 1 }).is_ok(), "the human may click through");
         // Agent activity keeps a tab awake.
         let before = hub.lock().tab(tab).unwrap().last_active_at;

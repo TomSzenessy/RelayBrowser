@@ -55,7 +55,10 @@ claude mcp add relay -- "$PWD/target/release/relay" mcp
 
 `⌘K` opens everything: URLs, searches, tabs, history, bookmarks and commands.
 `⌘T` new tab, `⌘W` close, `⌘⇧T` reopen, `⌘L` address, `⌘,` Settings, `⌘⌥I`
-Inspector, `⌘\\` split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector.
+Inspector, `⌘\\` split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector,
+`⌘⇧C` copy a clean URL, `⌘⇧M` copy the page as Markdown, `⌘D` bookmark, `⌘⌥P` pin (⌘W then sleeps a
+pinned tab instead of closing it), `⌘F` find, `⌘=` / `⌘-` / `⌘0` zoom (remembered
+per site).
 
 Tests:
 
@@ -77,6 +80,9 @@ bash scripts/verify-macos.sh --no-open  # same without launching the app
 profile counts, effective settings, and the exact `claude mcp add` command —
 include its output in a bug report. `relay config`, `relay export [FILE]`, and
 `relay clear-data --history --yes` manage local settings, backups, and erasure.
+Open tabs come back asleep on relaunch (`relay config set restore_session off`
+to disable); clearing history also erases the saved session, and `--session`
+clears only that. Custom `!bangs`: `relay config set bangs "gh=https://example.com/s?q=%s"`.
 
 ## Working on this repository
 

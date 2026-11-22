@@ -13,7 +13,7 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURLRequest, NSURL};
 use objc2_web_kit::{
-    WKContentRuleList, WKContentRuleListStore, WKNavigation, WKNavigationAction, WKNavigationDelegate, WKScriptMessage,
+    WKContentRuleList, WKContentRuleListStore, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction, WKNavigationDelegate, WKScriptMessage,
     WKScriptMessageHandler, WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime,
     WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
 };
@@ -171,6 +171,13 @@ impl Engine {
     /// Compile WebKit content-blocker JSON once (cached by WebKit across launches)
     /// and apply it to every tab.
     pub fn load_content_rules(&self, json: &str) {
+        self.load_content_rules_then(json, || {});
+    }
+
+    /// [`Engine::load_content_rules`], calling `applied` once the compiled
+    /// list is on every tab (not on failure, nor if blocking was turned off
+    /// meanwhile). Reload a page from `applied`, never right after the call.
+    pub fn load_content_rules_then(&self, json: &str, applied: impl Fn() + 'static) {
         self.blocking_enabled.set(true);
         let Some(store) = (unsafe { WKContentRuleListStore::defaultStore(self.mtm) }) else { return };
         let slot = self.rules.clone();
@@ -188,6 +195,7 @@ impl Engine {
                     }
                 }
                 *slot.borrow_mut() = Some(list);
+                applied();
             } else if let Some(e) = unsafe { err.as_ref() } {
                 eprintln!("relay: content rules failed to compile: {}", e.localizedDescription());
             }
@@ -300,6 +308,42 @@ impl Engine {
         });
     }
 
+    /// Override a tab's user agent for its next requests (`None` restores
+    /// WebKit's default). No-op for sleeping tabs.
+    pub fn set_user_agent(&self, tab: TabId, ua: Option<&str>) {
+        if let Some(t) = self.tabs.get(&tab) {
+            let ua = ua.map(NSString::from_str);
+            unsafe { t.view.setCustomUserAgent(ua.as_deref()) };
+        }
+    }
+
+    /// Set a tab's page zoom (1.0 = 100%). No-op for sleeping tabs.
+    pub fn set_zoom(&self, tab: TabId, zoom: f64) {
+        if let Some(t) = self.tabs.get(&tab) {
+            unsafe { t.view.setPageZoom(zoom) };
+        }
+    }
+
+    /// Find `text` in the page, selecting and scrolling to the next match
+    /// (wrapping). `done` receives whether anything matched.
+    pub fn find(&self, tab: TabId, text: &str, backwards: bool, done: impl Fn(bool) + 'static) {
+        let Some(t) = self.tabs.get(&tab) else {
+            done(false);
+            return;
+        };
+        let mtm = MainThreadMarker::from(&*t.view);
+        let config = unsafe { WKFindConfiguration::new(mtm) };
+        unsafe {
+            config.setBackwards(backwards);
+            config.setWraps(true);
+            config.setCaseSensitive(false);
+        }
+        let block = RcBlock::new(move |result: NonNull<WKFindResult>| {
+            done(unsafe { result.as_ref().matchFound() });
+        });
+        unsafe { t.view.findString_withConfiguration_completionHandler(&NSString::from_str(text), Some(&config), &block) };
+    }
+
     pub fn eval(&self, tab: TabId, script: &str) {
         if let Some(t) = self.tabs.get(&tab) {
             unsafe { t.view.evaluateJavaScript_completionHandler(&NSString::from_str(script), None) };
@@ -403,6 +447,20 @@ impl Engine {
         });
         let view = tab_holder.borrow().as_ref().unwrap().view.clone();
         unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
+    }
+
+    /// Register a tab restored from the saved session as already asleep: no
+    /// WKWebView (0 MB) until [`Engine::wake`] loads `url` and restores scroll.
+    pub fn restore_asleep(&mut self, tab: TabId, url: &str, scroll_y: f64) {
+        if self.tabs.contains_key(&tab) {
+            return;
+        }
+        self.slept.borrow_mut().insert(tab, SleptTab { url: url.to_string(), scroll_x: 0.0, scroll_y, snapshot_jpeg: None });
+        self.hub.update(|h| {
+            if let Some(s) = h.tab_mut(tab) {
+                s.sleeping = true;
+            }
+        });
     }
 
     pub fn slept(&self, tab: TabId) -> Option<SleptTab> {

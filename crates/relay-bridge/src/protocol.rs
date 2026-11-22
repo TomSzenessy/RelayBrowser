@@ -110,6 +110,8 @@ pub enum PageMessage {
     /// A browser hotkey pressed while the page had keyboard focus (e.g. `f`
     /// for link hints); WebKit, not GPUI, receives keys then.
     Hotkey { key: String },
+    /// Markdown rendering of the page's main content (reply to `Op::Markdown`).
+    Markdown { text: String },
     Result(CommandResult),
 }
 
@@ -150,6 +152,9 @@ pub enum Op {
     /// Label interactive elements for keyboard clicking: `[id, label]` pairs.
     ShowHints { hints: Vec<(NodeId, String)> },
     HideHints,
+    /// Convert the main content (article/main/body) to Markdown, capped at
+    /// 200 KB. The string is both the command result and a `markdown` message.
+    Markdown,
 }
 
 fn yes() -> bool {
@@ -199,6 +204,7 @@ mod tests {
             r#"{"kind":"challenge","challenge":null}"#,
             r#"{"kind":"media","playing":true}"#,
             r#"{"kind":"hotkey","key":"f"}"#,
+            r##"{"kind":"markdown","text":"# T\n","t":2}"##,
             r#"{"kind":"result","id":7,"ok":true,"value":{"tag":"button"},"error":null}"#,
         ];
         for c in cases {
@@ -216,6 +222,19 @@ mod tests {
         assert_eq!(v["op"], "type");
         assert_eq!(v["target"], 9);
         assert_eq!(v["id"], 3);
+    }
+
+    #[test]
+    fn markdown_op_round_trips_and_is_read_only() {
+        let op: Op = serde_json::from_str(r#"{"op":"markdown"}"#).unwrap();
+        assert_eq!(op, Op::Markdown);
+        assert!(!op.mutates());
+        let s = Command { id: 4, op }.to_script();
+        assert!(s.contains(r#""op":"markdown""#), "{s}");
+        match PageMessage::parse(r#"{"kind":"markdown","text":"hi"}"#).unwrap() {
+            PageMessage::Markdown { text } => assert_eq!(text, "hi"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

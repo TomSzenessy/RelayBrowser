@@ -11,8 +11,8 @@ use gpui::{
     actions, canvas, div, img, prelude::*, px, Bounds, ClipboardItem, Context, FocusHandle, Image, ImageFormat,
     KeyBinding, KeyDownEvent, Pixels, SharedString, Window,
 };
-use relay_bridge::{BrowserRequest, ConsoleLevel, NodeId, Op, Owner, SharedHub, TabId};
-use relay_extensions::store::Store;
+use relay_bridge::{BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId};
+use relay_extensions::store::{SessionTab, Store};
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -39,6 +39,14 @@ actions!(
         ToggleSplit,
         ToggleSettings,
         LinkHints,
+        CopyCleanUrl,
+        CopyMarkdown,
+        ToggleBookmark,
+        TogglePin,
+        Find,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
         Quit,
         SelectTab1,
         SelectTab2,
@@ -70,6 +78,14 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-\\", ToggleSplit, None),
         KeyBinding::new("secondary-,", ToggleSettings, None),
         KeyBinding::new("secondary-j", LinkHints, None),
+        KeyBinding::new("secondary-shift-c", CopyCleanUrl, None),
+        KeyBinding::new("secondary-shift-m", CopyMarkdown, None),
+        KeyBinding::new("secondary-d", ToggleBookmark, None),
+        KeyBinding::new("secondary-alt-p", TogglePin, None),
+        KeyBinding::new("secondary-f", Find, None),
+        KeyBinding::new("secondary-=", ZoomIn, None),
+        KeyBinding::new("secondary--", ZoomOut, None),
+        KeyBinding::new("secondary-0", ZoomReset, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-1", SelectTab1, None),
         KeyBinding::new("secondary-2", SelectTab2, None),
@@ -81,6 +97,13 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-8", SelectTab8, None),
         KeyBinding::new("secondary-9", SelectTab9, None),
     ]
+}
+
+/// The ⌘F bar: what is being searched in which tab, and the last answer.
+struct FindBar {
+    tab: TabId,
+    query: String,
+    found: Option<bool>,
 }
 
 struct Hints {
@@ -113,8 +136,11 @@ pub struct RelayApp {
     split: Option<TabId>,
     closed: Vec<String>,
     hints: Option<Hints>,
+    find: Option<FindBar>,
     toast: Option<(String, Instant)>,
     search: String,
+    /// `bangs` setting, parsed; invalid settings are ignored with a log line.
+    custom_bangs: Vec<(String, String)>,
     seen_version: u64,
     recorded: HashMap<TabId, (u64, String)>,
     sleep_policy: SleepPolicy,
@@ -124,6 +150,12 @@ pub struct RelayApp {
     mcp_socket: String,
     /// Last title pushed to the native window; avoids a call every frame.
     window_title: String,
+    /// The session as last written, so the periodic save skips no-op writes.
+    saved_session: Vec<SessionTab>,
+    /// Tabs whose web view currently sends the compat (Safari) user agent.
+    compat_tabs: std::collections::HashSet<TabId>,
+    /// `restore_session` setting: when off, no tabs are written at all.
+    session_enabled: bool,
 }
 
 impl RelayApp {
@@ -138,11 +170,20 @@ impl RelayApp {
         let web = WebHost::new(hub.clone(), window);
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
+        let custom_bangs = store
+            .as_ref()
+            .and_then(|s| s.setting("bangs").ok().flatten())
+            .map(|raw| {
+                crate::bangs::parse_custom(&raw).unwrap_or_else(|bad| {
+                    eprintln!("relay: ignoring the bangs setting, invalid entry {bad:?}");
+                    vec![]
+                })
+            })
+            .unwrap_or_default();
         let sleep_minutes = store.as_ref().and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok()).unwrap_or(15);
         let mcp_enabled = setting_enabled(store.as_ref().and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
         if blocking {
-            let rules = relay_webkit::content_rules::compile(&blocklist());
-            web.load_content_rules(&rules.to_json());
+            web.load_content_rules(&rules_json(store.as_ref()));
         }
         let focus = cx.focus_handle();
         window.focus(&focus);
@@ -169,8 +210,10 @@ impl RelayApp {
             split: None,
             closed: vec![],
             hints: None,
+            find: None,
             toast: None,
             search,
+            custom_bangs,
             seen_version: 0,
             recorded: HashMap::new(),
             sleep_policy: SleepPolicy { idle_after: Duration::from_secs(sleep_minutes.saturating_mul(60)), keep_awake_min: 1 },
@@ -179,10 +222,59 @@ impl RelayApp {
             snapshots: HashMap::new(),
             mcp_socket,
             window_title: String::new(),
+            saved_session: vec![],
+            session_enabled: false,
+            compat_tabs: Default::default(),
         };
         app.load_installed_extensions();
+        app.restore_session();
+        // Menu, Dock, logout and ⌘Q all end here, not only the ⌘Q action.
+        cx.on_app_quit(|app, _| {
+            app.save_session();
+            async {}
+        })
+        .detach();
         app.start_pump(cx);
         app
+    }
+
+    /// Reopen the saved session's tabs asleep (no WKWebView, 0 MB); only the
+    /// previously active tab loads now. Off with `restore_session = off`.
+    fn restore_session(&mut self) {
+        let Some(store) = &self.store else { return };
+        self.session_enabled = setting_enabled(store.setting("restore_session").ok().flatten().as_deref());
+        if !self.session_enabled {
+            // Turning restore off also drops whatever an earlier run saved.
+            let _ = store.clear_session();
+            return;
+        }
+        let saved = store.load_session().unwrap_or_default();
+        let (restored, active) = self.hub.update(|h| restore_into(h, &saved));
+        for (tab, url, scroll_y) in &restored {
+            self.web.borrow_mut().restore_asleep(*tab, url, *scroll_y);
+        }
+        if let Some(tab) = active {
+            self.web.borrow_mut().wake(tab);
+        }
+        self.saved_session = saved;
+    }
+
+    /// Persist the user's open tabs when they changed since the last write.
+    fn save_session(&mut self) {
+        if !self.session_enabled {
+            return;
+        }
+        let Some(store) = &self.store else { return };
+        let web = self.web.borrow();
+        let tabs = session_snapshot(&self.hub.lock(), |t| web.slept_scroll_y(t));
+        drop(web);
+        if tabs == self.saved_session {
+            return;
+        }
+        match store.save_session(&tabs) {
+            Ok(()) => self.saved_session = tabs,
+            Err(e) => eprintln!("relay: could not save the session: {e}"),
+        }
     }
 
     fn load_installed_extensions(&self) {
@@ -234,7 +326,9 @@ impl RelayApp {
                     let tab = self.hub.update(|h| {
                         let id = h.create_tab(&url, owner);
                         if let Some(pos) = h.tab_ids().iter().position(|t| *t == opener) {
-                            h.move_tab(id, pos + 1);
+                            // Never inside the pinned block at the top.
+                            let pinned = h.tabs().filter(|t| t.pinned).count();
+                            h.move_tab(id, (pos + 1).max(pinned));
                         }
                         if owner == Owner::User {
                             h.set_active(id);
@@ -242,6 +336,14 @@ impl RelayApp {
                         id
                     });
                     self.web.borrow_mut().apply(BrowserRequest::Open { tab, url });
+                }
+                WebEvent::RulesApplied { reload } => {
+                    self.web.borrow_mut().apply(BrowserRequest::Reload(reload));
+                }
+                WebEvent::Found { tab, found } => {
+                    if let Some(f) = self.find.as_mut().filter(|f| f.tab == tab) {
+                        f.found = Some(found);
+                    }
                 }
                 WebEvent::Slept(tab) => {
                     if let Some(jpeg) = self.web.borrow().snapshot(tab) {
@@ -259,6 +361,7 @@ impl RelayApp {
         if self.last_sleep_check.elapsed() > Duration::from_secs(30) {
             self.last_sleep_check = Instant::now();
             self.sleep_idle_tabs(cx);
+            self.save_session();
         }
         if self.toast.as_ref().is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(3)) {
             self.toast = None;
@@ -277,7 +380,7 @@ impl RelayApp {
             let h = self.hub.lock();
             for t in h.tabs() {
                 let rec = self.recorded.get(&t.id);
-                if rec.map(|r| r.0) != Some(t.load_seq) {
+                if page_loaded_since(rec.map(|r| r.0), t.load_seq) {
                     loads.push(t.id);
                 }
                 if t.dom.root().is_some() {
@@ -293,6 +396,7 @@ impl RelayApp {
         }
         for tab in loads {
             self.web.borrow_mut().after_load(tab);
+            self.apply_site_prefs(tab);
         }
         // Keep the sleep snapshot until the reloaded page has a DOM; it is
         // what covers the white WebKit view while the tab warms up.
@@ -316,31 +420,37 @@ impl RelayApp {
             self.sleep_policy.due(&h, &visible, Instant::now())
         };
         for tab in due {
-            // Ask the page for its scroll offset, then sleep it.
-            let Ok((script, rx)) = self.hub.begin_command(tab, Op::PageInfo) else { continue };
-            self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
-            cx.spawn(async move |this, cx| {
-                let reply = futures_timeout(rx, Duration::from_millis(500), cx).await;
-                let scroll = reply
-                    .map(|v| (v["scroll_x"].as_f64().unwrap_or(0.0), v["scroll_y"].as_f64().unwrap_or(0.0)))
-                    .unwrap_or((0.0, 0.0));
-                let _ = this.update(cx, |app, cx| {
-                    if app.sleep_minutes == 0 {
-                        return;
-                    }
-                    // The user (or an agent) may have used the tab meanwhile.
-                    let still_due = {
-                        let h = app.hub.lock();
-                        app.sleep_policy.due(&h, &app.visible_tabs(), Instant::now()).contains(&tab)
-                    };
-                    if still_due {
-                        app.web.borrow_mut().sleep(tab, scroll);
-                        cx.notify();
-                    }
-                });
-            })
-            .detach();
+            let _ = self.sleep_with_scroll(tab, cx, |app, tab| {
+                // The user (or an agent) may have used the tab meanwhile.
+                app.sleep_minutes != 0 && {
+                    let h = app.hub.lock();
+                    app.sleep_policy.due(&h, &app.visible_tabs(), Instant::now()).contains(&tab)
+                }
+            });
         }
+    }
+
+    /// Ask the page for its scroll offset, then sleep it if `still` holds
+    /// when the reply (or a 500 ms timeout) arrives.
+    fn sleep_with_scroll(&mut self, tab: TabId, cx: &mut Context<Self>, still: fn(&RelayApp, TabId) -> bool) -> bool {
+        let Ok((script, rx)) = self.hub.begin_command(tab, Op::PageInfo) else { return false };
+        self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
+        cx.spawn(async move |this, cx| {
+            let reply = futures_timeout(rx, Duration::from_millis(500), cx).await;
+            let scroll = reply
+                .map(|v| (v["scroll_x"].as_f64().unwrap_or(0.0), v["scroll_y"].as_f64().unwrap_or(0.0)))
+                .unwrap_or((0.0, 0.0));
+            let _ = this.update(cx, |app, cx| {
+                if still(app, tab) {
+                    // The woken view starts with WebKit's default agent.
+                    app.compat_tabs.remove(&tab);
+                    app.web.borrow_mut().sleep(tab, scroll);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        true
     }
 
     // -------------------------------------------------------- helpers
@@ -375,13 +485,20 @@ impl RelayApp {
     }
 
     fn activate(&mut self, tab: TabId) {
+        if self.find.as_ref().is_some_and(|f| f.tab != tab) {
+            self.find = None;
+        }
         self.hub.update(|h| h.set_active(tab));
         self.web.borrow_mut().wake(tab);
         self.web.borrow().focus_page(tab);
     }
 
-    fn close_active(&mut self) {
+    fn close_active(&mut self, cx: &mut Context<Self>) {
         let Some(tab) = self.active() else { return };
+        if self.hub.lock().tab(tab).is_some_and(|t| t.pinned) {
+            self.put_pinned_away(tab, cx);
+            return;
+        }
         if let Some(t) = self.hub.update(|h| h.close_tab(tab)) {
             if t.url.starts_with("http") {
                 self.closed.push(t.url);
@@ -391,9 +508,168 @@ impl RelayApp {
             self.split = None;
         }
         self.snapshots.remove(&tab);
+        self.compat_tabs.remove(&tab);
         self.web.borrow_mut().apply(BrowserRequest::Close(tab));
         if let Some(next) = self.active() {
             self.activate(next);
+        }
+    }
+
+    /// ⌘W on a pinned tab keeps it: switch to a neighbour and sleep it (0 MB).
+    fn put_pinned_away(&mut self, tab: TabId, cx: &mut Context<Self>) {
+        if self.hub.lock().tab_ids().len() < 2 {
+            self.toast("Pinned tabs stay open; unpin with ⌘⌥P to close");
+            return;
+        }
+        if self.split == Some(tab) {
+            self.split = None;
+        }
+        self.cycle(1);
+        let asleep = self.hub.lock().tab(tab).is_some_and(|t| t.sleeping);
+        if asleep || self.sleep_with_scroll(tab, cx, |app, tab| app.active() != Some(tab) && !app.visible_tabs().contains(&tab)) {
+            self.toast("Pinned tab put to sleep");
+        } else {
+            self.toast("Switched away; the pinned tab stays open");
+        }
+    }
+
+    /// Apply the tab's host prefs after each load: zoom (1.0 when none) and
+    /// compat mode. A compat site first fetched with WebKit's own user agent
+    /// is reloaded once with the Safari one.
+    fn apply_site_prefs(&mut self, tab: TabId) {
+        let Some(host) = self.hub.lock().tab(tab).map(|t| crate::clean_url::host_of(&t.url)).filter(|h| !h.is_empty()) else {
+            return;
+        };
+        let prefs = self.store.as_ref().and_then(|s| s.site_pref(&host).ok()).unwrap_or_default();
+        self.web.borrow().set_zoom(tab, prefs.zoom);
+        match compat_change(self.compat_tabs.contains(&tab), prefs.compat_mode) {
+            CompatChange::None => {}
+            CompatChange::Enable => {
+                self.compat_tabs.insert(tab);
+                self.web.borrow().set_user_agent(tab, Some(SAFARI_USER_AGENT));
+                self.web.borrow_mut().apply(BrowserRequest::Reload(tab));
+            }
+            CompatChange::Disable => {
+                self.compat_tabs.remove(&tab);
+                self.web.borrow().set_user_agent(tab, None);
+            }
+        }
+    }
+
+    /// Palette: send a Safari user agent on this site (for sites that reject
+    /// WebKit's default one), or stop doing so, and reload.
+    fn toggle_compat_mode(&mut self) {
+        let Some(tab) = self.active() else { return };
+        let Some(host) = self.hub.lock().tab(tab).filter(|t| is_http_url(&t.url)).map(|t| crate::clean_url::host_of(&t.url)) else {
+            self.toast("Compatibility mode applies to web pages only");
+            return;
+        };
+        let Some(store) = &self.store else {
+            self.toast("Site settings are unavailable: the profile could not be opened");
+            return;
+        };
+        let mut prefs = store.site_pref(&host).unwrap_or_default();
+        prefs.compat_mode = !prefs.compat_mode;
+        let on = prefs.compat_mode;
+        if let Err(e) = store.set_site_pref(&host, prefs) {
+            self.toast(format!("Could not save the site setting: {e}"));
+            return;
+        }
+        if on {
+            self.compat_tabs.insert(tab);
+        } else {
+            self.compat_tabs.remove(&tab);
+        }
+        self.web.borrow().set_user_agent(tab, on.then_some(SAFARI_USER_AGENT));
+        self.web.borrow_mut().apply(BrowserRequest::Reload(tab));
+        self.toast(if on { format!("Compatibility mode on for {host}") } else { format!("Compatibility mode off for {host}") });
+    }
+
+    /// ⌘= / ⌘- / ⌘0: step the active page's zoom and remember it per host.
+    fn zoom(&mut self, direction: i8) {
+        let Some(tab) = self.active() else { return };
+        let Some(host) = self.hub.lock().tab(tab).map(|t| crate::clean_url::host_of(&t.url)).filter(|h| !h.is_empty()) else {
+            return;
+        };
+        let mut prefs = self.store.as_ref().and_then(|s| s.site_pref(&host).ok()).unwrap_or_default();
+        prefs.zoom = zoom_step(prefs.zoom, direction);
+        let zoom = prefs.zoom;
+        self.web.borrow().set_zoom(tab, zoom);
+        if let Some(Err(e)) = self.store.as_ref().map(|s| s.set_site_pref(&host, prefs)) {
+            eprintln!("relay: could not save zoom for {host}: {e}");
+        }
+        self.toast(format!("Zoom {}% on {host}", (zoom * 100.0).round()));
+    }
+
+    /// Palette: turn ad/tracker blocking off (or back on) for the active
+    /// page's site, recompile the rule list, and reload the page.
+    fn toggle_site_blocking(&mut self) {
+        let Some(tab) = self.active() else { return };
+        let Some(host) = self.hub.lock().tab(tab).filter(|t| is_http_url(&t.url)).map(|t| crate::clean_url::host_of(&t.url)) else {
+            self.toast("Blocking applies to web pages only");
+            return;
+        };
+        if !relay_webkit::content_rules::is_site_host(&host) {
+            self.toast("Per-site blocking needs a domain name or IPv4 address, not an IPv6 literal");
+            return;
+        }
+        let Some(store) = &self.store else {
+            self.toast("Site settings are unavailable: the profile could not be opened");
+            return;
+        };
+        let mut prefs = store.site_pref(&host).unwrap_or_default();
+        prefs.blocking_off = !prefs.blocking_off;
+        let off = prefs.blocking_off;
+        if let Err(e) = store.set_site_pref(&host, prefs) {
+            self.toast(format!("Could not save the site setting: {e}"));
+            return;
+        }
+        if self.blocking {
+            // Reload only once WebKit has applied the recompiled list.
+            self.web.borrow().load_content_rules_and_reload(&rules_json(self.store.as_ref()), tab);
+        }
+        self.toast(match (off, self.blocking) {
+            (true, _) => format!("Blocking off on {host}"),
+            (false, true) => format!("Blocking on for {host}"),
+            (false, false) => format!("{host} will be blocked once blocking is turned on in Settings"),
+        });
+    }
+
+    fn open_find(&mut self) {
+        let Some(tab) = self.active() else { return };
+        self.palette = None;
+        self.end_hints();
+        let query = self.find.take().map(|f| f.query).unwrap_or_default();
+        self.find = Some(FindBar { tab, query, found: None });
+        self.web.borrow().focus_shell();
+    }
+
+    fn close_find(&mut self) {
+        if let Some(f) = self.find.take() {
+            self.web.borrow().focus_page(f.tab);
+        }
+    }
+
+    fn run_find(&mut self, backwards: bool) {
+        let Some(f) = self.find.as_mut() else { return };
+        if f.query.is_empty() {
+            f.found = None;
+            return;
+        }
+        self.web.borrow().find(f.tab, &f.query, backwards);
+    }
+
+    /// ⌘⌥P: pin or unpin the active tab (pinned tabs sit at the top).
+    fn toggle_pin(&mut self) {
+        let Some(tab) = self.active() else { return };
+        let now = self.hub.update(|h| {
+            let pinned = h.tab(tab).is_some_and(|t| t.pinned);
+            h.set_pinned(tab, !pinned)
+        });
+        match now {
+            Some(true) => self.toast("Pinned tab"),
+            Some(false) => self.toast("Unpinned tab"),
+            None => {}
         }
     }
 
@@ -427,6 +703,7 @@ impl RelayApp {
 
     fn open_palette(&mut self, prefill: Option<String>, new_tab: bool) {
         self.settings_open = false;
+        self.find = None;
         self.confirm_clear_history = false;
         self.palette_new_tab = new_tab;
         self.sources = Sources {
@@ -441,7 +718,7 @@ impl RelayApp {
                 .collect(),
             bookmarks: self.store.as_ref().and_then(|s| s.bookmarks().ok()).unwrap_or_default().into_iter().map(|b| (b.title, b.url)).collect(),
         };
-        let mut p = Palette { query: prefill.unwrap_or_default(), ..Default::default() };
+        let mut p = Palette { query: prefill.unwrap_or_default(), custom_bangs: self.custom_bangs.clone(), ..Default::default() };
         p.refresh(&self.sources, &self.search);
         self.palette = Some(p);
         self.web.borrow().focus_shell();
@@ -476,7 +753,13 @@ impl RelayApp {
     fn run_item(&mut self, item: Item, cx: &mut Context<Self>) {
         let new_tab = self.palette_new_tab || self.active().is_none();
         match item {
-            Item::Open(url) | Item::Search { url, .. } | Item::History { url, .. } | Item::Bookmark { url, .. } => self.open_url(url, new_tab),
+            Item::Open(url) | Item::Search { url, .. } | Item::Bang { url, .. } | Item::History { url, .. } | Item::Bookmark { url, .. } => {
+                self.open_url(url, new_tab);
+            }
+            Item::Calc(result) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(result.clone()));
+                self.toast(format!("Copied: {result}"));
+            }
             Item::Tab { id, .. } => self.activate(id),
             Item::Command(c) => self.run_command(c, cx),
         }
@@ -486,7 +769,7 @@ impl RelayApp {
         let active = self.active();
         match c {
             Command::NewTab => self.open_palette(None, true),
-            Command::CloseTab => self.close_active(),
+            Command::CloseTab => self.close_active(cx),
             Command::ReopenClosedTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_url(url, true);
@@ -512,6 +795,108 @@ impl RelayApp {
                 cx.write_to_clipboard(ClipboardItem::new_string(mcp_setup_command()));
                 self.toast("Copied: claude mcp add relay -- relay mcp");
             }
+            Command::CopyCleanUrl => {
+                let url = active.and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())).unwrap_or_default();
+                if url.is_empty() {
+                    self.toast("No active URL to copy");
+                } else {
+                    let cleaned = crate::clean_url::clean(&url);
+                    cx.write_to_clipboard(ClipboardItem::new_string(cleaned));
+                    self.toast("Copied clean URL");
+                }
+            }
+            Command::CopyMarkdown => self.copy_markdown(cx),
+            Command::ToggleBookmark => self.toggle_bookmark(),
+            Command::TogglePin => self.toggle_pin(),
+            Command::Find => self.open_find(),
+            Command::ZoomIn => self.zoom(1),
+            Command::ZoomOut => self.zoom(-1),
+            Command::ZoomReset => self.zoom(0),
+            Command::ToggleSiteBlocking => self.toggle_site_blocking(),
+            Command::ToggleCompatMode => self.toggle_compat_mode(),
+            Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
+        }
+    }
+
+    /// Ask the active page for its main content as Markdown (`Op::Markdown`,
+    /// read-only, capped at 200 KB by the bridge) and copy it.
+    fn copy_markdown(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active() else {
+            self.toast("No page to copy");
+            return;
+        };
+        let (script, rx) = match self.hub.begin_command(tab, Op::Markdown) {
+            Ok(v) => v,
+            Err(e) => {
+                self.toast(format!("Could not read the page: {e}"));
+                return;
+            }
+        };
+        self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
+        cx.spawn(async move |this, cx| {
+            let reply = futures_timeout(rx, Duration::from_secs(3), cx).await;
+            let _ = this.update(cx, |app, cx| {
+                match reply.as_ref().and_then(|v| v.as_str()).filter(|t| !t.trim().is_empty()) {
+                    Some(text) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+                        app.toast(format!("Copied page as Markdown ({})", byte_size(text.len())));
+                    }
+                    None => app.toast("This page has no content to copy as Markdown"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// ⌘D: bookmark the active http(s) page, or remove it if already saved.
+    fn toggle_bookmark(&mut self) {
+        let page = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| (s.url.clone(), s.title.clone())));
+        let Some((url, title)) = page.filter(|(u, _)| is_http_url(u)) else {
+            self.toast("Only web pages can be bookmarked");
+            return;
+        };
+        let title = if title.trim().is_empty() { palette::short_url(&url) } else { title };
+        let msg = match self.store.as_ref().map(|s| s.toggle_bookmark(&url, &title)) {
+            None => "Bookmarks are unavailable: the profile could not be opened".to_string(),
+            Some(Ok(true)) => format!("Bookmarked {title}"),
+            Some(Ok(false)) => "Bookmark removed".to_string(),
+            Some(Err(e)) => format!("Could not update bookmarks: {e}"),
+        };
+        self.toast(msg);
+    }
+
+    fn close_duplicate_tabs(&mut self) {
+        let active = self.active();
+        let to_close: Vec<TabId> = {
+            let h = self.hub.lock();
+            let mut seen = std::collections::HashSet::new();
+            let mut dups = Vec::new();
+            for &id in h.tab_ids() {
+                let Some(tab) = h.tab(id) else { continue };
+                if tab.url.is_empty() {
+                    continue;
+                }
+                if !seen.insert(tab.url.clone()) && tab.owner == Owner::User && Some(id) != active {
+                    dups.push(id);
+                }
+            }
+            dups
+        };
+        let count = to_close.len();
+        for id in to_close {
+            if self.split == Some(id) {
+                self.split = None;
+            }
+            self.snapshots.remove(&id);
+            self.compat_tabs.remove(&id);
+            self.web.borrow_mut().apply(BrowserRequest::Close(id));
+            self.hub.update(|h| h.close_tab(id));
+        }
+        if count == 0 {
+            self.toast("No duplicate tabs");
+        } else {
+            self.toast(format!("Closed {count} duplicate tab{}", if count == 1 { "" } else { "s" }));
         }
     }
 
@@ -618,6 +1003,29 @@ impl RelayApp {
             }
             return;
         }
+        if let Some(f) = self.find.as_mut() {
+            match k.key.as_str() {
+                "escape" => self.close_find(),
+                "enter" => {
+                    let back = k.modifiers.shift;
+                    self.run_find(back);
+                }
+                "backspace" => {
+                    f.query.pop();
+                    self.run_find(false);
+                }
+                _ => match k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                    Some(c) => {
+                        f.query.push_str(c);
+                        self.run_find(false);
+                    }
+                    None => return, // ⌘ shortcuts keep working while the bar is open
+                },
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.palette.is_none() && self.active().is_none() {
             if let Some(c) = k
                 .key_char
@@ -707,6 +1115,12 @@ impl RelayApp {
             }
             if tab.challenge.is_some() {
                 r = r.child(div().text_color(t.warn).child("⚠"));
+            }
+            if tab.playing_audio {
+                r = r.child(div().text_color(t.muted).text_size(px(11.)).child("♪"));
+            }
+            if tab.pinned {
+                r = r.child(div().text_color(t.muted).text_size(px(11.)).child("pin"));
             }
             if tab.sleeping {
                 r = r.child(div().text_color(t.muted).text_size(px(11.)).child("zz"));
@@ -1190,8 +1604,7 @@ impl RelayApp {
                     let _ = store.set_setting("blocking", if app.blocking { "on" } else { "off" });
                 }
                 if app.blocking {
-                    let rules = relay_webkit::content_rules::compile(&blocklist());
-                    app.web.borrow().load_content_rules(&rules.to_json());
+                    app.web.borrow().load_content_rules(&rules_json(app.store.as_ref()));
                 } else {
                     app.web.borrow().clear_content_rules();
                 }
@@ -1225,8 +1638,11 @@ impl RelayApp {
                     app.confirm_clear_history = true;
                 } else {
                     app.confirm_clear_history = false;
-                    match app.store.as_ref().map(|s| s.clear_history()) {
-                        Some(Ok(n)) => app.toast(format!("Cleared {n} history entries")),
+                    match app.store.as_ref().map(|s| s.clear_history().and_then(|n| s.clear_session().map(|_| n))) {
+                        Some(Ok(n)) => {
+                            app.saved_session.clear();
+                            app.toast(format!("Cleared {n} history entries and the saved session"))
+                        }
                         Some(Err(e)) => app.toast(format!("Clear history failed: {e}")),
                         None => app.toast("Profile store unavailable"),
                     }
@@ -1287,6 +1703,37 @@ impl RelayApp {
             Some(t) => format!("{} — Relay", palette::short_url(&t.url)),
             None => "Relay".to_string(),
         }
+    }
+
+    fn render_find(&self, f: &FindBar) -> impl IntoElement {
+        let t = self.theme;
+        let (text, color) = if f.query.is_empty() {
+            ("Find in page…".to_string(), t.muted)
+        } else {
+            (f.query.clone(), t.text)
+        };
+        let status = match f.found {
+            Some(false) => "No matches",
+            Some(true) => "↩ next · ⇧↩ previous",
+            None => "esc to close",
+        };
+        div().absolute().top(px(10.)).right(px(16.)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .w(px(340.))
+                .h(px(34.))
+                .px_3()
+                .rounded(px(8.))
+                .bg(t.surface)
+                .border_1()
+                .border_color(if f.found == Some(false) { t.warn } else { t.border })
+                .shadow_lg()
+                .text_size(px(13.))
+                .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(color).child(SharedString::from(text)))
+                .child(div().text_size(px(11.)).text_color(if f.found == Some(false) { t.warn } else { t.muted }).child(status)),
+        )
     }
 
     fn render_status(&self) -> impl IntoElement {
@@ -1416,7 +1863,42 @@ impl Render for RelayApp {
                 app.run_command(Command::LinkHints, cx);
                 cx.notify()
             }))
-            .on_action(cx.listener(|_, _: &Quit, _, cx| cx.quit()));
+            .on_action(cx.listener(|app, _: &CopyCleanUrl, _, cx| {
+                app.run_command(Command::CopyCleanUrl, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &CopyMarkdown, _, cx| {
+                app.run_command(Command::CopyMarkdown, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ToggleBookmark, _, cx| {
+                app.run_command(Command::ToggleBookmark, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &TogglePin, _, cx| {
+                app.run_command(Command::TogglePin, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &Find, _, cx| {
+                app.run_command(Command::Find, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ZoomIn, _, cx| {
+                app.run_command(Command::ZoomIn, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ZoomOut, _, cx| {
+                app.run_command(Command::ZoomOut, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ZoomReset, _, cx| {
+                app.run_command(Command::ZoomReset, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &Quit, _, cx| {
+                app.save_session();
+                cx.quit()
+            }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
                 $(root = root.on_action(cx.listener(|app, _: &$a, _, cx| { app.select_index($i); cx.notify() }));)*
@@ -1424,6 +1906,9 @@ impl Render for RelayApp {
         }
         select!(SelectTab1 => 0, SelectTab2 => 1, SelectTab3 => 2, SelectTab4 => 3, SelectTab5 => 4, SelectTab6 => 5, SelectTab7 => 6, SelectTab8 => 7, SelectTab9 => 8);
         root = root.child(main).child(self.render_status());
+        if let Some(f) = &self.find {
+            root = root.child(self.render_find(f));
+        }
         if let Some(p) = &self.palette {
             root = root.child(self.render_palette(p, cx));
         }
@@ -1432,6 +1917,48 @@ impl Render for RelayApp {
         }
         root
     }
+}
+
+/// The user's open tabs in display order, as the store persists them.
+/// Agent tabs are not part of the user's session. Awake tabs restore at the
+/// top (their scroll is only known once they sleep).
+fn session_snapshot(hub: &Hub, slept_scroll_y: impl Fn(TabId) -> Option<f64>) -> Vec<SessionTab> {
+    let active = hub.active();
+    hub.tabs()
+        .filter(|t| t.owner == Owner::User && is_http_url(&t.url))
+        .enumerate()
+        .map(|(i, t)| SessionTab {
+            url: t.url.clone(),
+            title: t.title.clone(),
+            pinned: t.pinned,
+            scroll_y: if t.sleeping { slept_scroll_y(t.id).unwrap_or(0.0) } else { 0.0 },
+            active: Some(t.id) == active,
+            position: i as i64,
+        })
+        .collect()
+}
+
+/// Recreate saved tabs in the hub. Returns each new tab with its URL and
+/// scroll, plus the tab to activate (the saved active one, else the first).
+fn restore_into(hub: &mut Hub, saved: &[SessionTab]) -> (Vec<(TabId, String, f64)>, Option<TabId>) {
+    let mut restored = Vec::with_capacity(saved.len());
+    let mut active = None;
+    for s in saved.iter().filter(|s| is_http_url(&s.url)) {
+        let id = hub.create_tab(&s.url, Owner::User);
+        if let Some(t) = hub.tab_mut(id) {
+            t.title = s.title.clone();
+            t.pinned = s.pinned;
+        }
+        if s.active {
+            active = Some(id);
+        }
+        restored.push((id, s.url.clone(), s.scroll_y));
+    }
+    let active = active.or_else(|| restored.first().map(|r| r.0));
+    if let Some(id) = active {
+        hub.set_active(id);
+    }
+    (restored, active)
 }
 
 pub(crate) fn setting_enabled(value: Option<&str>) -> bool {
@@ -1465,13 +1992,86 @@ fn now_unix() -> i64 {
 }
 
 /// Built-in list plus the user's `relay_home()/filters.txt` (EasyList syntax).
+/// The content-blocker JSON: built-in + cookie-banner + `filters.txt` rules,
+/// then an exception for every site the user turned blocking off on.
+fn rules_json(store: Option<&Store>) -> String {
+    let mut rules = relay_webkit::content_rules::compile(&blocklist());
+    let off: Vec<String> = store
+        .and_then(|s| s.all_site_prefs().ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, p)| p.blocking_off)
+        .map(|(host, _)| host)
+        .collect();
+    rules.allow_sites(&off);
+    rules.to_json()
+}
+
 fn blocklist() -> String {
     let mut s = relay_webkit::content_rules::BUILTIN_FILTERS.to_string();
+    s.push_str(relay_webkit::content_rules::CMP_FILTERS);
     if let Ok(extra) = std::fs::read_to_string(relay_bridge::paths::relay_home().join("filters.txt")) {
         s.push('\n');
         s.push_str(&extra);
     }
     s
+}
+
+/// Whether a tab finished a page load the shell has not handled yet. A tab
+/// whose page never said `hello` (`load_seq == 0`: just created, or restored
+/// and woken but still on WebKit's blank document) has not loaded anything;
+/// running `after_load` then would restore scroll onto the blank page.
+fn page_loaded_since(recorded_seq: Option<u64>, load_seq: u64) -> bool {
+    load_seq > 0 && recorded_seq != Some(load_seq)
+}
+
+/// What compat mode sends: Safari's user agent shape (WebKit's default omits
+/// the `Version/… Safari/…` tokens some sites sniff for).
+const SAFARI_USER_AGENT: &str =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15";
+
+#[derive(Debug, PartialEq)]
+enum CompatChange {
+    None,
+    /// Switch to the Safari agent and reload once (this load used the default).
+    Enable,
+    /// Back to the default agent for the next requests; no reload needed.
+    Disable,
+}
+
+fn compat_change(view_has_compat: bool, site_wants_compat: bool) -> CompatChange {
+    match (view_has_compat, site_wants_compat) {
+        (false, true) => CompatChange::Enable,
+        (true, false) => CompatChange::Disable,
+        _ => CompatChange::None,
+    }
+}
+
+/// Browser-style zoom presets; `direction` 1 / -1 steps, 0 resets.
+const ZOOM_STEPS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+fn zoom_step(current: f64, direction: i8) -> f64 {
+    let current = if current.is_finite() && current > 0.0 { current } else { 1.0 };
+    match direction {
+        0 => 1.0,
+        d if d > 0 => ZOOM_STEPS.iter().copied().find(|z| *z > current + 1e-6).unwrap_or(ZOOM_STEPS[ZOOM_STEPS.len() - 1]),
+        _ => ZOOM_STEPS.iter().rev().copied().find(|z| *z < current - 1e-6).unwrap_or(ZOOM_STEPS[0]),
+    }
+}
+
+/// "820 B", "14 KB" for toasts.
+fn byte_size(n: usize) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else {
+        format!("{} KB", n.div_ceil(1024))
+    }
+}
+
+/// What the saved session keeps (matches `Store::save_session`).
+fn is_http_url(url: &str) -> bool {
+    let l = url.to_ascii_lowercase();
+    l.starts_with("https://") || l.starts_with("http://")
 }
 
 fn is_web_url(url: &str) -> bool {
@@ -1523,12 +2123,108 @@ mod tests {
     use gpui::Action;
     use std::collections::HashSet;
 
+    fn saved(url: &str, pinned: bool, active: bool, scroll_y: f64) -> SessionTab {
+        SessionTab { url: url.into(), title: format!("T {url}"), pinned, scroll_y, active, position: 0 }
+    }
+
+    #[test]
+    fn restore_recreates_tabs_in_order_with_pins_and_activates_the_saved_tab() {
+        let hub = SharedHub::new();
+        let saved = vec![
+            saved("https://a.example/", true, false, 0.0),
+            saved("about:blank", false, false, 0.0),
+            saved("https://b.example/", false, true, 340.0),
+        ];
+        let (restored, active) = hub.update(|h| restore_into(h, &saved));
+        assert_eq!(restored.len(), 2, "non-web URLs are not restored");
+        assert_eq!(restored[1].1, "https://b.example/");
+        assert_eq!(restored[1].2, 340.0);
+        assert_eq!(active, Some(restored[1].0));
+        let h = hub.lock();
+        assert_eq!(h.active(), active);
+        let tabs: Vec<_> = h.tabs().map(|t| (t.url.clone(), t.pinned, t.title.clone())).collect();
+        assert_eq!(tabs[0], ("https://a.example/".into(), true, "T https://a.example/".into()));
+        assert_eq!(tabs[1].0, "https://b.example/");
+    }
+
+    #[test]
+    fn restore_without_a_saved_active_tab_activates_the_first() {
+        let hub = SharedHub::new();
+        let two = [saved("https://a.example/", false, false, 0.0), saved("https://b.example/", false, false, 0.0)];
+        let (restored, active) = hub.update(|h| restore_into(h, &two));
+        assert_eq!(active, Some(restored[0].0));
+        let (none, no_active) = SharedHub::new().update(|h| restore_into(h, &[]));
+        assert!(none.is_empty() && no_active.is_none());
+    }
+
+    #[test]
+    fn snapshot_keeps_user_web_tabs_in_order_and_round_trips() {
+        let hub = SharedHub::new();
+        let a = hub.update(|h| {
+            let a = h.create_tab("https://a.example/", Owner::User);
+            h.create_tab("https://agent.example/", Owner::Agent);
+            let b = h.create_tab("https://b.example/", Owner::User);
+            h.tab_mut(b).unwrap().pinned = true;
+            h.tab_mut(a).unwrap().sleeping = true;
+            h.set_active(b);
+            a
+        });
+        let snap = session_snapshot(&hub.lock(), |t| (t == a).then_some(512.0));
+        assert_eq!(snap.len(), 2, "agent tabs are not saved");
+        assert!(snap.iter().all(|s| s.url != "https://agent.example/"));
+        assert_eq!((snap[0].scroll_y, snap[0].active, snap[0].position), (512.0, false, 0));
+        assert_eq!((snap[1].pinned, snap[1].active, snap[1].position), (true, true, 1));
+
+        let fresh = SharedHub::new();
+        let (_, active) = fresh.update(|h| restore_into(h, &snap));
+        let again = session_snapshot(&fresh.lock(), |_| None);
+        let key = |v: &[SessionTab]| v.iter().map(|s| (s.url.clone(), s.pinned, s.active)).collect::<Vec<_>>();
+        assert_eq!(key(&again), key(&snap));
+        assert_eq!(fresh.lock().active(), active);
+    }
+
+    #[test]
+    fn only_a_real_page_load_counts_as_loaded() {
+        assert!(!page_loaded_since(None, 0), "created or restored-and-woken tab on the blank document");
+        assert!(page_loaded_since(None, 1), "first hello");
+        assert!(!page_loaded_since(Some(1), 1), "already handled");
+        assert!(page_loaded_since(Some(1), 2), "next navigation");
+    }
+
+    #[test]
+    fn compat_reloads_only_when_a_compat_site_used_the_default_agent() {
+        assert_eq!(compat_change(false, true), CompatChange::Enable);
+        assert_eq!(compat_change(true, true), CompatChange::None, "after the one reload, no loop");
+        assert_eq!(compat_change(true, false), CompatChange::Disable);
+        assert_eq!(compat_change(false, false), CompatChange::None);
+        assert!(SAFARI_USER_AGENT.contains("Version/") && SAFARI_USER_AGENT.ends_with("Safari/605.1.15"));
+    }
+
+    #[test]
+    fn zoom_steps_through_presets_and_clamps() {
+        assert_eq!(zoom_step(1.0, 1), 1.1);
+        assert_eq!(zoom_step(1.0, -1), 0.9);
+        assert_eq!(zoom_step(1.3, 1), 1.5, "off-preset values move to the next preset");
+        assert_eq!(zoom_step(1.3, -1), 1.25);
+        assert_eq!(zoom_step(3.0, 1), 3.0);
+        assert_eq!(zoom_step(0.5, -1), 0.5);
+        assert_eq!(zoom_step(2.5, 0), 1.0);
+        assert_eq!(zoom_step(f64::NAN, 1), 1.1);
+    }
+
+    #[test]
+    fn byte_size_reads_naturally() {
+        assert_eq!(byte_size(820), "820 B");
+        assert_eq!(byte_size(1024), "1 KB");
+        assert_eq!(byte_size(14_000), "14 KB");
+    }
+
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 25);
+        assert_eq!(bindings.len(), 33);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 25] = [
+        let required: [&'static str; 33] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -1544,6 +2240,14 @@ mod tests {
             ToggleSplit.name(),
             ToggleSettings.name(),
             LinkHints.name(),
+            CopyCleanUrl.name(),
+            CopyMarkdown.name(),
+            ToggleBookmark.name(),
+            TogglePin.name(),
+            Find.name(),
+            ZoomIn.name(),
+            ZoomOut.name(),
+            ZoomReset.name(),
             Quit.name(),
             SelectTab1.name(),
             SelectTab2.name(),

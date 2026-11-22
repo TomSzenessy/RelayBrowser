@@ -59,12 +59,14 @@ fn config_list_get_set_and_rejects_unknown_key() {
     assert!(list_text.contains("blocking = on"), ":\n{list_text}");
     assert!(list_text.contains("sleep_minutes = 15"), ":\n{list_text}");
     assert!(list_text.contains("mcp = on"), ":\n{list_text}");
+    assert!(list_text.contains("restore_session = on"), ":\n{list_text}");
 
     for args in [
         &["config", "set", "search", "kagi"][..],
         &["config", "set", "blocking", "off"][..],
         &["config", "set", "sleep_minutes", "0"][..],
         &["config", "set", "mcp", "off"][..],
+        &["config", "set", "restore_session", "off"][..],
     ] {
         let out = relay(dir.path(), args);
         assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
@@ -75,6 +77,7 @@ fn config_list_get_set_and_rejects_unknown_key() {
         ("blocking", "off"),
         ("sleep_minutes", "0"),
         ("mcp", "off"),
+        ("restore_session", "off"),
     ];
     for (key, expected) in checks {
         let out = relay(dir.path(), &["config", "get", key]);
@@ -152,4 +155,56 @@ fn clear_data_requires_yes_confirmation() {
     let ok_bm = relay(dir.path(), &["clear-data", "--bookmarks", "--yes"]);
     assert!(ok_bm.status.success(), "{}", String::from_utf8_lossy(&ok_bm.stderr));
     assert!(String::from_utf8_lossy(&ok_bm.stdout).contains("Cleared 0 bookmarks"));
+}
+
+#[test]
+fn clear_data_removes_the_saved_session() {
+    use relay_extensions::store::{SessionTab, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let seed = |n: usize| {
+        let store = Store::open(&dir.path().join("profile.sqlite")).unwrap();
+        let tabs: Vec<SessionTab> = (0..n)
+            .map(|i| SessionTab {
+                url: format!("https://example.com/{i}"),
+                title: "T".into(),
+                pinned: false,
+                scroll_y: 0.0,
+                active: i == 0,
+                position: i as i64,
+            })
+            .collect();
+        store.save_session(&tabs).unwrap();
+    };
+    let saved = || Store::open(&dir.path().join("profile.sqlite")).unwrap().load_session().unwrap().len();
+
+    seed(2);
+    let only = relay(dir.path(), &["clear-data", "--session", "--yes"]);
+    assert!(only.status.success(), "{}", String::from_utf8_lossy(&only.stderr));
+    let text = String::from_utf8_lossy(&only.stdout);
+    assert!(text.contains("Cleared 2 saved session tabs"), "{text}");
+    assert!(!text.contains("history entries"), "--session alone must not clear history:\n{text}");
+    assert_eq!(saved(), 0);
+
+    seed(3);
+    let hist = relay(dir.path(), &["clear-data", "--history", "--yes"]);
+    assert!(hist.status.success(), "{}", String::from_utf8_lossy(&hist.stderr));
+    assert!(String::from_utf8_lossy(&hist.stdout).contains("Cleared 3 saved session tabs"));
+    assert_eq!(saved(), 0, "clearing history must also clear the saved session");
+}
+
+#[test]
+fn config_bangs_validates_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let ok = relay(dir.path(), &["config", "set", "bangs", "!GH=https://example.com/s?q=%s  w=https://wiki.test/?q=%s"]);
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    let get = relay(dir.path(), &["config", "get", "bangs"]);
+    assert_eq!(String::from_utf8_lossy(&get.stdout).trim(), "gh=https://example.com/s?q=%s w=https://wiki.test/?q=%s");
+    let list = relay(dir.path(), &["config", "list"]);
+    assert!(String::from_utf8_lossy(&list.stdout).contains("bangs = gh=https://example.com/s?q=%s"));
+
+    let bad = relay(dir.path(), &["config", "set", "bangs", "x=javascript:alert(1)"]);
+    assert!(!bad.status.success(), "non-http templates must be rejected");
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("invalid bangs entry"));
+    let still = relay(dir.path(), &["config", "get", "bangs"]);
+    assert!(String::from_utf8_lossy(&still.stdout).starts_with("gh="), "a rejected value leaves the old one");
 }

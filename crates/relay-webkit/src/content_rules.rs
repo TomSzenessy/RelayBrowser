@@ -20,9 +20,35 @@ pub struct Compiled {
     pub skipped: usize,
 }
 
+/// A host `allow_sites` can express as a WebKit `if-domain` (DNS names; not
+/// IPv6 literals or hosts with odd characters).
+pub fn is_site_host(host: &str) -> bool {
+    !host.is_empty() && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
+
 impl Compiled {
     pub fn to_json(&self) -> String {
         serde_json::to_string(&self.rules).expect("rules serialize")
+    }
+
+    /// Turn blocking off on these sites (and their subdomains): one final
+    /// `ignore-previous-rules` rule keyed on the page's domain, so requests
+    /// and element hiding on those pages are left alone. Must run last.
+    pub fn allow_sites<S: AsRef<str>>(&mut self, hosts: &[S]) {
+        let domains: Vec<String> = hosts
+            .iter()
+            .map(|h| h.as_ref().trim().trim_start_matches("www.").to_ascii_lowercase())
+            .filter(|h| is_site_host(h))
+            .map(|h| format!("*{h}"))
+            .collect();
+        if !domains.is_empty() {
+            // Stay within WebKit's cap, or the whole list fails to compile.
+            if self.rules.len() >= WEBKIT_MAX_RULES {
+                self.skipped += self.rules.len() + 1 - WEBKIT_MAX_RULES;
+                self.rules.truncate(WEBKIT_MAX_RULES - 1);
+            }
+            self.rules.push(json!({ "trigger": { "url-filter": ".*", "if-domain": domains }, "action": { "type": "ignore-previous-rules" } }));
+        }
     }
 }
 
@@ -45,6 +71,27 @@ pub const BUILTIN_FILTERS: &str = "\
 ||facebook.net^$third-party,script
 ##.ad-banner
 ##.adsbygoogle
+";
+
+/// Conservative cookie-consent (CMP) banner hiding: only the outer containers
+/// of widely deployed consent platforms, by their vendor-specific ids and
+/// classes, so no site content shares the selector. Hiding a banner clicks
+/// nothing, so it records no choice: the site's configured default applies
+/// (opt-in regions usually keep non-essential cookies off; opt-out regions
+/// may set them). Modal
+/// CMPs that lock page scrolling while open (Sourcepoint, Didomi popups,
+/// Quantcast) are left out: hiding them would leave the page unscrollable.
+/// Applied with the built-in blocklist (off when blocking is off).
+pub const CMP_FILTERS: &str = "\
+###onetrust-consent-sdk
+###CybotCookiebotDialog
+###usercentrics-root
+###truste-consent-track
+###iubenda-cs-banner
+###cmplz-cookiebanner-container
+##.osano-cm-window
+##.cky-consent-container
+##.klaro
 ";
 
 pub fn compile(filters: &str) -> Compiled {
@@ -238,6 +285,31 @@ mod tests {
 
     #[test]
     fn builtin_list_compiles_fully() {
+        let mut allowed = compile(BUILTIN_FILTERS);
+        let before = allowed.rules.len();
+        allowed.allow_sites(&["www.News.example", "bad host", "", "shop.test"]);
+        assert_eq!(allowed.rules.len(), before + 1);
+        assert_eq!(
+            allowed.rules.last().unwrap(),
+            &json!({"trigger":{"url-filter":".*","if-domain":["*news.example","*shop.test"]},"action":{"type":"ignore-previous-rules"}})
+        );
+        let mut full = Compiled { rules: vec![json!({}); WEBKIT_MAX_RULES], skipped: 0 };
+        full.allow_sites(&["a.test"]);
+        assert_eq!(full.rules.len(), WEBKIT_MAX_RULES, "the exception fits under the cap");
+        assert_eq!(full.rules.last().unwrap()["action"]["type"], "ignore-previous-rules");
+        assert_eq!(full.skipped, 1);
+        assert!(!is_site_host("[") && !is_site_host("::1") && is_site_host("news.example"));
+        let mut none = compile(BUILTIN_FILTERS);
+        none.allow_sites::<&str>(&[]);
+        assert_eq!(none.rules.len(), before, "no sites, no extra rule");
+
+        let cmp = compile(CMP_FILTERS);
+        assert_eq!(cmp.skipped, 0);
+        assert_eq!(cmp.rules.len(), 9);
+        assert!(cmp.rules.iter().all(|r| r["action"]["type"] == "css-display-none" && r["trigger"]["url-filter"] == ".*"));
+        let selectors: Vec<&str> = cmp.rules.iter().map(|r| r["action"]["selector"].as_str().unwrap()).collect();
+        assert!(selectors.contains(&"#onetrust-consent-sdk") && selectors.contains(&"#CybotCookiebotDialog"), "{selectors:?}");
+        assert!(selectors.iter().all(|s| s.starts_with('#') || s.starts_with('.')), "{selectors:?}");
         let c = compile(BUILTIN_FILTERS);
         assert_eq!(c.skipped, 0);
         assert!(c.rules.len() >= 15);

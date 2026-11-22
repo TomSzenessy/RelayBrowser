@@ -66,7 +66,7 @@ behavior—test an authenticated production-like browser.
 Relay is a local-only desktop browser. It operates no cloud sync service,
 telemetry pipeline, crash-upload endpoint, or analytics SDK.
 
-- **Local profile storage:** History, bookmarks, settings, and installed
+- **Local profile storage:** History, bookmarks, settings, saved session tabs (http/https URL, title, pinned, scroll offset; max 200; replaced on every save; erased by `relay clear-data` and Settings → Clear history; not written at all with `restore_session off`), per-site preferences (zoom, compat, blocking, hidden selectors), and installed
   extension metadata live in `$RELAY_HOME/profile.sqlite` (default
   `~/Library/Application Support/Relay` on macOS). The profile directory uses
   mode `0700` and `profile.sqlite` (along with its SQLite `-wal`/`-shm`
@@ -88,8 +88,8 @@ telemetry pipeline, crash-upload endpoint, or analytics SDK.
   and close their own tabs—they cannot close user tabs. Any data an external
   MCP client forwards to a model provider is governed by that client's policy.
 - **User export and erasure:** Users can export local profile data with
-  `relay export`, clear browsing history with
-  `relay clear-data --history --yes`, or erase all Relay-managed local state
+  `relay export`, clear browsing history and the saved session with
+  `relay clear-data --history --yes` (`--session` clears only the saved tabs), or erase all Relay-managed local state
   (profile, unpacked extensions, and socket state) by removing `$RELAY_HOME`.
   Passwords imported into the macOS Keychain are managed and deleted through
   macOS Keychain Access or the Passwords app.

@@ -187,3 +187,70 @@ test("link hints label visible elements and 'f' is forwarded only outside inputs
   assert.equal(all.filter(m => m.kind === "hotkey").length, before, "typing 'f' in an input is not a hotkey");
   assert.match(await page.inputValue("#email"), /f$/);
 });
+
+const MD_PAGE = `<!doctype html><html><head><title>Doc</title><style>.x{color:red}</style></head><body>
+  <nav><a href="/home">NAVLINK</a></nav>
+  <header>Site header</header>
+  <article>
+    <h1>Hello <em>World</em></h1>
+    <p>Intro with <strong>bold</strong>, <a href="/rel">a link</a> and <code>inline()</code>.</p>
+    <p hidden>HIDDEN-ATTR</p>
+    <p style="display:none">HIDDEN-STYLE</p>
+    <aside>ASIDE-TEXT</aside>
+    <h2>List</h2>
+    <ul><li>one</li><li>two</li></ul>
+    <ol><li>first</li><li>second</li></ol>
+    <blockquote>quoted text</blockquote>
+    <pre><code>let x = 1;\nlet y = 2;</code></pre>
+    <img src="/pic.png" alt="A picture">
+    <table><thead><tr><th>Name</th><th>Qty</th></tr></thead>
+      <tbody><tr><td>Apple</td><td>3</td></tr><tr><td>Pear</td><td>5</td></tr></tbody></table>
+    <script>window.SCRIPT_TEXT = "SCRIPT-BODY"</script>
+  </article>
+  <footer>FOOTER-TEXT</footer>
+</body></html>`;
+
+test("markdown op converts main content and posts it", async () => {
+  const mdPage = await browser.newPage();
+  await mdPage.addInitScript(BRIDGE);
+  await mdPage.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: MD_PAGE }));
+  await mdPage.goto(`${ORIGIN}/doc`);
+  await mdPage.evaluate(() => window.__relay.exec({ id: 90, op: "markdown" }));
+  const msgs = await mdPage.evaluate(() => window.__relay.drain());
+  all.push(...msgs); // the after-hook proves Rust parses them
+  const result = msgs.find(m => m.kind === "result" && m.id === 90);
+  const posted = msgs.find(m => m.kind === "markdown");
+  assert.ok(result.ok);
+  assert.equal(posted.text, result.value);
+  const md = result.value;
+  assert.match(md, /^# Hello \*World\*$/m);
+  assert.match(md, /\*\*bold\*\*/);
+  assert.ok(md.includes(`[a link](${ORIGIN}/rel)`), md);
+  assert.ok(md.includes("`inline()`"));
+  assert.match(md, /^- one$/m);
+  assert.match(md, /^1\. first$/m);
+  assert.match(md, /^2\. second$/m);
+  assert.match(md, /^> quoted text$/m);
+  assert.ok(md.includes("```\nlet x = 1;\nlet y = 2;\n```"), md);
+  assert.ok(md.includes(`![A picture](${ORIGIN}/pic.png)`), md);
+  assert.ok(md.includes("| Name | Qty |\n| --- | --- |\n| Apple | 3 |\n| Pear | 5 |"), md);
+  for (const bad of ["NAVLINK", "Site header", "HIDDEN-ATTR", "HIDDEN-STYLE", "ASIDE-TEXT", "FOOTER-TEXT", "SCRIPT-BODY", "color:red"])
+    assert.ok(!md.includes(bad), `${bad} must be skipped:\n${md}`);
+  await mdPage.close();
+});
+
+test("markdown falls back to body and caps at 200 KB", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html",
+    body: `<html><body><nav>NAV</nav><h3>Plain</h3>${"<p>" + "x".repeat(1000) + "</p>".repeat(1)}`.repeat(1) + "<p>y</p>".repeat(1) + "</body></html>" }));
+  await p.goto(`${ORIGIN}/plain`);
+  const small = await p.evaluate(() => window.__relay.exec({ id: 91, op: "markdown" }).value);
+  assert.match(small, /^### Plain$/m);
+  assert.ok(!small.includes("NAV"));
+  await p.evaluate(() => { const d = document.createElement("div"); for (let i = 0; i < 6000; i++) { const e = document.createElement("p"); e.textContent = "z".repeat(100); d.appendChild(e); } document.body.appendChild(d); });
+  const big = await p.evaluate(() => window.__relay.exec({ id: 92, op: "markdown" }).value);
+  assert.ok(new TextEncoder().encode(big).length <= 200 * 1024 + 8, "capped");
+  assert.ok(big.length > 150000);
+  await p.close();
+});

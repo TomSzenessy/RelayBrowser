@@ -21,6 +21,7 @@ with the Rust parser.
 | `network` | fetch/XHR completion; PerformanceObserver resources | method, url, status, duration, bodies ≤4 KB (text/JSON only) |
 | `challenge` | a CAPTCHA iframe or one-time-code input appears or disappears | `challenge`: `captcha`, `two_factor`, or `null` |
 | `media` | audible audio/video starts or stops | `playing` |
+| `markdown` | reply to the `markdown` op: Markdown of the main content | `text` (stored in the Hub; `Hub::page_markdown(tab)`, cleared on load) |
 | `hotkey` | `f` pressed with the page focused, outside text fields | `key` (the shell starts link hints) |
 | `result` | reply to a command | `id`, `ok`, `value`, `error` |
 
@@ -34,8 +35,10 @@ skipped. Password input values are never sent.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`. Element ids are
+`hide_hints`, `markdown`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
+
+`markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub. An MCP tool for it is Tier 2.
 
 ## Trust
 
