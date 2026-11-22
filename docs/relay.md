@@ -94,7 +94,8 @@ sections fit a 980×760 window. Section order and visibility come from the
 `start_sections` setting (`recent,frequent,apps,bookmarks`; `none` hides all);
 unknown names are ignored and an empty value falls back to the default order.
 The data is cached in `RelayApp::start_page` and rebuilt only after a visit,
-bookmark change, install/remove, or history clear, never every frame.
+bookmark change, Chrome import, install/remove, or history clear, never every
+frame.
 A brand-new profile with no rows shows the welcome card (Import from Chrome,
 MCP setup) inside the page.
 

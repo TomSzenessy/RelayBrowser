@@ -1376,8 +1376,11 @@ impl RelayApp {
             self.toast("Profile store unavailable");
             return;
         };
-        match store.import(&preview.bookmarks, &preview.history) {
+        let imported = store.import(&preview.bookmarks, &preview.history);
+        drop(store);
+        match imported {
             Ok(c) => {
+                self.refresh_start_page();
                 let mut msg = format!("Imported {} bookmarks, {} history entries", c.bookmarks, c.history);
                 if !preview.extensions.is_empty() {
                     // Installing grants permissions, so it stays an explicit step.
