@@ -13,7 +13,7 @@ use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThr
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURLRequest, NSURL};
 use objc2_web_kit::{
-    WKContentRuleList, WKContentRuleListStore, WKNavigation, WKNavigationAction, WKNavigationDelegate, WKScriptMessage,
+    WKContentRuleList, WKContentRuleListStore, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction, WKNavigationDelegate, WKScriptMessage,
     WKScriptMessageHandler, WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime,
     WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
 };
@@ -298,6 +298,33 @@ impl Engine {
                 t.load_error = None;
             }
         });
+    }
+
+    /// Set a tab's page zoom (1.0 = 100%). No-op for sleeping tabs.
+    pub fn set_zoom(&self, tab: TabId, zoom: f64) {
+        if let Some(t) = self.tabs.get(&tab) {
+            unsafe { t.view.setPageZoom(zoom) };
+        }
+    }
+
+    /// Find `text` in the page, selecting and scrolling to the next match
+    /// (wrapping). `done` receives whether anything matched.
+    pub fn find(&self, tab: TabId, text: &str, backwards: bool, done: impl Fn(bool) + 'static) {
+        let Some(t) = self.tabs.get(&tab) else {
+            done(false);
+            return;
+        };
+        let mtm = MainThreadMarker::from(&*t.view);
+        let config = unsafe { WKFindConfiguration::new(mtm) };
+        unsafe {
+            config.setBackwards(backwards);
+            config.setWraps(true);
+            config.setCaseSensitive(false);
+        }
+        let block = RcBlock::new(move |result: NonNull<WKFindResult>| {
+            done(unsafe { result.as_ref().matchFound() });
+        });
+        unsafe { t.view.findString_withConfiguration_completionHandler(&NSString::from_str(text), Some(&config), &block) };
     }
 
     pub fn eval(&self, tab: TabId, script: &str) {

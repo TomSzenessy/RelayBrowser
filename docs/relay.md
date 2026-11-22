@@ -97,6 +97,17 @@ hidden until the bridge delivers a DOM, while the shell paints the JPEG the tab
 slept on. So the snapshot is what you see during the reload, not a white
 WKWebView. `after_load` restores scroll once the bridge says `hello`.
 
+## Find and zoom
+
+⌘F opens a find bar over the content; each keystroke calls
+`Engine::find` (`WKWebView findString`, wrapping, case-insensitive) and the
+match answer returns as `WebEvent::Found`, so the bar can say "No matches".
+Switching tabs or opening the palette closes it. ⌘= / ⌘- / ⌘0 step through
+browser-style presets (50%–300%) and store the result in the host's
+`SitePrefs.zoom`; every page load applies its host's zoom via
+`Engine::set_zoom` (`pageZoom`), so a site keeps its zoom across tabs and
+relaunches.
+
 ## Pinned tabs
 
 `Hub::set_pinned` keeps pinned tabs as a block at the top of the order. The

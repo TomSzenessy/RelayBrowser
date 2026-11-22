@@ -16,7 +16,7 @@ fn is_http(url: &str) -> bool {
     l.starts_with("http://") || l.starts_with("https://")
 }
 
-fn host_of(url: &str) -> String {
+pub(crate) fn host_of(url: &str) -> String {
     let rest = url.split_once("://").map_or("", |(_, r)| r);
     let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
     let auth = auth.rsplit('@').next().unwrap_or(auth);

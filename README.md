@@ -57,7 +57,8 @@ claude mcp add relay -- "$PWD/target/release/relay" mcp
 `⌘T` new tab, `⌘W` close, `⌘⇧T` reopen, `⌘L` address, `⌘,` Settings, `⌘⌥I`
 Inspector, `⌘\\` split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector,
 `⌘⇧C` copy a clean URL, `⌘⇧M` copy the page as Markdown, `⌘D` bookmark, `⌘⌥P` pin (⌘W then sleeps a
-pinned tab instead of closing it).
+pinned tab instead of closing it), `⌘F` find, `⌘=` / `⌘-` / `⌘0` zoom (remembered
+per site).
 
 Tests:
 

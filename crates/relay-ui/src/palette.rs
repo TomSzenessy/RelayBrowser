@@ -39,10 +39,14 @@ pub enum Command {
     CloseDuplicateTabs,
     ToggleBookmark,
     TogglePin,
+    Find,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 impl Command {
-    pub const ALL: [Command; 18] = [
+    pub const ALL: [Command; 22] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -61,6 +65,10 @@ impl Command {
         Command::CloseDuplicateTabs,
         Command::ToggleBookmark,
         Command::TogglePin,
+        Command::Find,
+        Command::ZoomIn,
+        Command::ZoomOut,
+        Command::ZoomReset,
     ];
 
     pub fn title(self) -> &'static str {
@@ -83,6 +91,10 @@ impl Command {
             Command::CloseDuplicateTabs => "Close Duplicate Tabs",
             Command::ToggleBookmark => "Bookmark This Page",
             Command::TogglePin => "Pin / Unpin Tab",
+            Command::Find => "Find in Page",
+            Command::ZoomIn => "Zoom In",
+            Command::ZoomOut => "Zoom Out",
+            Command::ZoomReset => "Actual Size",
         }
     }
 
@@ -103,6 +115,10 @@ impl Command {
             Command::CopyMarkdown => "⌘⇧M",
             Command::ToggleBookmark => "⌘D",
             Command::TogglePin => "⌘⌥P",
+            Command::Find => "⌘F",
+            Command::ZoomIn => "⌘=",
+            Command::ZoomOut => "⌘-",
+            Command::ZoomReset => "⌘0",
             Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs => "",
         }
     }
@@ -445,8 +461,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 18);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin] {
+        assert_eq!(Command::ALL.len(), 22);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }

@@ -43,6 +43,10 @@ actions!(
         CopyMarkdown,
         ToggleBookmark,
         TogglePin,
+        Find,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
         Quit,
         SelectTab1,
         SelectTab2,
@@ -78,6 +82,10 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-shift-m", CopyMarkdown, None),
         KeyBinding::new("secondary-d", ToggleBookmark, None),
         KeyBinding::new("secondary-alt-p", TogglePin, None),
+        KeyBinding::new("secondary-f", Find, None),
+        KeyBinding::new("secondary-=", ZoomIn, None),
+        KeyBinding::new("secondary--", ZoomOut, None),
+        KeyBinding::new("secondary-0", ZoomReset, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-1", SelectTab1, None),
         KeyBinding::new("secondary-2", SelectTab2, None),
@@ -89,6 +97,13 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-8", SelectTab8, None),
         KeyBinding::new("secondary-9", SelectTab9, None),
     ]
+}
+
+/// The ⌘F bar: what is being searched in which tab, and the last answer.
+struct FindBar {
+    tab: TabId,
+    query: String,
+    found: Option<bool>,
 }
 
 struct Hints {
@@ -121,6 +136,7 @@ pub struct RelayApp {
     split: Option<TabId>,
     closed: Vec<String>,
     hints: Option<Hints>,
+    find: Option<FindBar>,
     toast: Option<(String, Instant)>,
     search: String,
     seen_version: u64,
@@ -179,6 +195,7 @@ impl RelayApp {
             split: None,
             closed: vec![],
             hints: None,
+            find: None,
             toast: None,
             search,
             seen_version: 0,
@@ -288,6 +305,11 @@ impl RelayApp {
                     });
                     self.web.borrow_mut().apply(BrowserRequest::Open { tab, url });
                 }
+                WebEvent::Found { tab, found } => {
+                    if let Some(f) = self.find.as_mut().filter(|f| f.tab == tab) {
+                        f.found = Some(found);
+                    }
+                }
                 WebEvent::Slept(tab) => {
                     if let Some(jpeg) = self.web.borrow().snapshot(tab) {
                         self.snapshots.insert(tab, Arc::new(Image::from_bytes(ImageFormat::Jpeg, jpeg)));
@@ -339,6 +361,7 @@ impl RelayApp {
         }
         for tab in loads {
             self.web.borrow_mut().after_load(tab);
+            self.apply_site_zoom(tab);
         }
         // Keep the sleep snapshot until the reloaded page has a DOM; it is
         // what covers the white WebKit view while the tab warms up.
@@ -424,6 +447,9 @@ impl RelayApp {
     }
 
     fn activate(&mut self, tab: TabId) {
+        if self.find.as_ref().is_some_and(|f| f.tab != tab) {
+            self.find = None;
+        }
         self.hub.update(|h| h.set_active(tab));
         self.web.borrow_mut().wake(tab);
         self.web.borrow().focus_page(tab);
@@ -462,6 +488,55 @@ impl RelayApp {
         self.cycle(1);
         self.sleep_with_scroll(tab, cx, |app, tab| app.active() != Some(tab) && !app.visible_tabs().contains(&tab));
         self.toast("Pinned tab put to sleep");
+    }
+
+    /// The saved zoom for the tab's host (1.0 when none), applied on load.
+    fn apply_site_zoom(&self, tab: TabId) {
+        let Some(host) = self.hub.lock().tab(tab).map(|t| crate::clean_url::host_of(&t.url)).filter(|h| !h.is_empty()) else {
+            return;
+        };
+        let zoom = self.store.as_ref().and_then(|s| s.site_pref(&host).ok()).map_or(1.0, |p| p.zoom);
+        self.web.borrow().set_zoom(tab, zoom);
+    }
+
+    /// ⌘= / ⌘- / ⌘0: step the active page's zoom and remember it per host.
+    fn zoom(&mut self, direction: i8) {
+        let Some(tab) = self.active() else { return };
+        let Some(host) = self.hub.lock().tab(tab).map(|t| crate::clean_url::host_of(&t.url)).filter(|h| !h.is_empty()) else {
+            return;
+        };
+        let mut prefs = self.store.as_ref().and_then(|s| s.site_pref(&host).ok()).unwrap_or_default();
+        prefs.zoom = zoom_step(prefs.zoom, direction);
+        let zoom = prefs.zoom;
+        self.web.borrow().set_zoom(tab, zoom);
+        if let Some(Err(e)) = self.store.as_ref().map(|s| s.set_site_pref(&host, prefs)) {
+            eprintln!("relay: could not save zoom for {host}: {e}");
+        }
+        self.toast(format!("Zoom {}% on {host}", (zoom * 100.0).round()));
+    }
+
+    fn open_find(&mut self) {
+        let Some(tab) = self.active() else { return };
+        self.palette = None;
+        self.end_hints();
+        let query = self.find.take().map(|f| f.query).unwrap_or_default();
+        self.find = Some(FindBar { tab, query, found: None });
+        self.web.borrow().focus_shell();
+    }
+
+    fn close_find(&mut self) {
+        if let Some(f) = self.find.take() {
+            self.web.borrow().focus_page(f.tab);
+        }
+    }
+
+    fn run_find(&mut self, backwards: bool) {
+        let Some(f) = self.find.as_mut() else { return };
+        if f.query.is_empty() {
+            f.found = None;
+            return;
+        }
+        self.web.borrow().find(f.tab, &f.query, backwards);
     }
 
     /// ⌘⌥P: pin or unpin the active tab (pinned tabs sit at the top).
@@ -508,6 +583,7 @@ impl RelayApp {
 
     fn open_palette(&mut self, prefill: Option<String>, new_tab: bool) {
         self.settings_open = false;
+        self.find = None;
         self.confirm_clear_history = false;
         self.palette_new_tab = new_tab;
         self.sources = Sources {
@@ -612,6 +688,10 @@ impl RelayApp {
             Command::CopyMarkdown => self.copy_markdown(cx),
             Command::ToggleBookmark => self.toggle_bookmark(),
             Command::TogglePin => self.toggle_pin(),
+            Command::Find => self.open_find(),
+            Command::ZoomIn => self.zoom(1),
+            Command::ZoomOut => self.zoom(-1),
+            Command::ZoomReset => self.zoom(0),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
         }
     }
@@ -798,6 +878,29 @@ impl RelayApp {
                 cx.stop_propagation();
                 cx.notify();
             }
+            return;
+        }
+        if let Some(f) = self.find.as_mut() {
+            match k.key.as_str() {
+                "escape" => self.close_find(),
+                "enter" => {
+                    let back = k.modifiers.shift;
+                    self.run_find(back);
+                }
+                "backspace" => {
+                    f.query.pop();
+                    self.run_find(false);
+                }
+                _ => match k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                    Some(c) => {
+                        f.query.push_str(c);
+                        self.run_find(false);
+                    }
+                    None => return, // ⌘ shortcuts keep working while the bar is open
+                },
+            }
+            cx.stop_propagation();
+            cx.notify();
             return;
         }
         if self.palette.is_none() && self.active().is_none() {
@@ -1474,6 +1577,37 @@ impl RelayApp {
         }
     }
 
+    fn render_find(&self, f: &FindBar) -> impl IntoElement {
+        let t = self.theme;
+        let (text, color) = if f.query.is_empty() {
+            ("Find in page…".to_string(), t.muted)
+        } else {
+            (f.query.clone(), t.text)
+        };
+        let status = match f.found {
+            Some(false) => "No matches",
+            Some(true) => "↩ next · ⇧↩ previous",
+            None => "esc to close",
+        };
+        div().absolute().top(px(10.)).right(px(16.)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .w(px(340.))
+                .h(px(34.))
+                .px_3()
+                .rounded(px(8.))
+                .bg(t.surface)
+                .border_1()
+                .border_color(if f.found == Some(false) { t.warn } else { t.border })
+                .shadow_lg()
+                .text_size(px(13.))
+                .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(color).child(SharedString::from(text)))
+                .child(div().text_size(px(11.)).text_color(if f.found == Some(false) { t.warn } else { t.muted }).child(status)),
+        )
+    }
+
     fn render_status(&self) -> impl IntoElement {
         let t = self.theme;
         let (url, total, asleep, agents) = {
@@ -1617,6 +1751,22 @@ impl Render for RelayApp {
                 app.run_command(Command::TogglePin, cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|app, _: &Find, _, cx| {
+                app.run_command(Command::Find, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ZoomIn, _, cx| {
+                app.run_command(Command::ZoomIn, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ZoomOut, _, cx| {
+                app.run_command(Command::ZoomOut, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ZoomReset, _, cx| {
+                app.run_command(Command::ZoomReset, cx);
+                cx.notify();
+            }))
             .on_action(cx.listener(|app, _: &Quit, _, cx| {
                 app.save_session();
                 cx.quit()
@@ -1628,6 +1778,9 @@ impl Render for RelayApp {
         }
         select!(SelectTab1 => 0, SelectTab2 => 1, SelectTab3 => 2, SelectTab4 => 3, SelectTab5 => 4, SelectTab6 => 5, SelectTab7 => 6, SelectTab8 => 7, SelectTab9 => 8);
         root = root.child(main).child(self.render_status());
+        if let Some(f) = &self.find {
+            root = root.child(self.render_find(f));
+        }
         if let Some(p) = &self.palette {
             root = root.child(self.render_palette(p, cx));
         }
@@ -1718,6 +1871,18 @@ fn blocklist() -> String {
         s.push_str(&extra);
     }
     s
+}
+
+/// Browser-style zoom presets; `direction` 1 / -1 steps, 0 resets.
+const ZOOM_STEPS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+fn zoom_step(current: f64, direction: i8) -> f64 {
+    let current = if current.is_finite() && current > 0.0 { current } else { 1.0 };
+    match direction {
+        0 => 1.0,
+        d if d > 0 => ZOOM_STEPS.iter().copied().find(|z| *z > current + 1e-6).unwrap_or(ZOOM_STEPS[ZOOM_STEPS.len() - 1]),
+        _ => ZOOM_STEPS.iter().rev().copied().find(|z| *z < current - 1e-6).unwrap_or(ZOOM_STEPS[0]),
+    }
 }
 
 /// "820 B", "14 KB" for toasts.
@@ -1845,6 +2010,18 @@ mod tests {
     }
 
     #[test]
+    fn zoom_steps_through_presets_and_clamps() {
+        assert_eq!(zoom_step(1.0, 1), 1.1);
+        assert_eq!(zoom_step(1.0, -1), 0.9);
+        assert_eq!(zoom_step(1.3, 1), 1.5, "off-preset values move to the next preset");
+        assert_eq!(zoom_step(1.3, -1), 1.25);
+        assert_eq!(zoom_step(3.0, 1), 3.0);
+        assert_eq!(zoom_step(0.5, -1), 0.5);
+        assert_eq!(zoom_step(2.5, 0), 1.0);
+        assert_eq!(zoom_step(f64::NAN, 1), 1.1);
+    }
+
+    #[test]
     fn byte_size_reads_naturally() {
         assert_eq!(byte_size(820), "820 B");
         assert_eq!(byte_size(1024), "1 KB");
@@ -1854,9 +2031,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 29);
+        assert_eq!(bindings.len(), 33);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 29] = [
+        let required: [&'static str; 33] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -1876,6 +2053,10 @@ mod tests {
             CopyMarkdown.name(),
             ToggleBookmark.name(),
             TogglePin.name(),
+            Find.name(),
+            ZoomIn.name(),
+            ZoomOut.name(),
+            ZoomReset.name(),
             Quit.name(),
             SelectTab1.name(),
             SelectTab2.name(),
