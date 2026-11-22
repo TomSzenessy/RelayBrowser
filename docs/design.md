@@ -41,8 +41,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 | muted text | `#9a9ca3` | `#6b6d75` |
 | accent (focus, active tab) | `#5b8cff` | `#2f6bff` |
 | agent tint | `#b07cff` at 18% | `#7a3cff` at 12% |
-| error | `#ff6b6b` | `#d93636` |
-| warn | `#ffb84d` | `#b26b00` |
+| error | `#ff6b6b` | `#c42b2b` |
+| warn | `#ffb84d` | `#9a5c00` |
 
 Type: system UI font at 13 pt for chrome and 12 pt monospace for the Inspector.
 Corner radius is 6 pt and spacing uses a 4 pt grid. Motion is 150 ms, and is

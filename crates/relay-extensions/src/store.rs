@@ -331,8 +331,13 @@ impl Store {
         Ok(n)
     }
 
+    /// Rewrite the file without freed pages, then fold the WAL back in. In WAL
+    /// mode VACUUM writes the rebuilt database into the WAL, so the checkpoint
+    /// must come after it or deleted text stays in the main file.
     fn reclaim_deleted(&self) {
-        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+        if let Err(e) = self.conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);") {
+            eprintln!("relay: could not reclaim deleted profile data: {e}");
+        }
     }
 
     /// Pretty-printed JSON backup of bookmarks, history, settings, and
@@ -539,6 +544,29 @@ mod tests {
         assert_eq!(s.clear_bookmarks().unwrap(), 1);
         assert!(s.bookmarks().unwrap().is_empty());
         assert_eq!(s.clear_bookmarks().unwrap(), 0);
+    }
+
+    #[test]
+    fn clear_history_reclaims_the_file_and_its_wal() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("profile.sqlite");
+        let marker = "secret-visited-page-7f3a9c";
+        let s = Store::open(&db).unwrap();
+        for i in 0..200 {
+            s.record_visit(&format!("https://{marker}.test/{i}"), &format!("{marker} title {i}"), 100 + i).unwrap();
+        }
+        let contains = |path: &std::path::Path| {
+            std::fs::read(path).map(|b| b.windows(marker.len()).any(|w| w == marker.as_bytes())).unwrap_or(false)
+        };
+        let wal = dir.path().join("profile.sqlite-wal");
+        assert!(contains(&db) || contains(&wal), "precondition: the marker reached disk");
+
+        assert_eq!(s.clear_history().unwrap(), 200);
+        assert!(!contains(&db), "deleted history text must not remain in the database file");
+        assert!(!contains(&wal), "the WAL must be checkpointed and truncated");
+        assert_eq!(std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0), 0, "WAL truncated");
+        drop(s);
+        assert!(Store::open(&db).unwrap().search_history("", 10).unwrap().is_empty(), "reopens clean");
     }
 
     #[test]
