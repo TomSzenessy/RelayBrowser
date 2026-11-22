@@ -74,4 +74,4 @@ Use [`legal/data-inventory.md`](./legal/data-inventory.md) for factual inventory
 including prompts/transcripts, issues, CI artifacts, memory, and skills, and
 [`legal/README.md`](./legal/README.md) for the jurisdiction/counsel gate.
 External research and source links live in
-[`research/agentic-repository-baselines.md`](./research/agentic-repository-baselines.md).
+[`research/agentic-repository-baselines.md`](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/agentic-repository-baselines.md).

@@ -2,46 +2,32 @@
 
 <!-- index: operate | Accepted product direction, constraints, and success evidence | Starting a project or making a high-impact scope decision. -->
 
-Status: accepted
-Project: AI_TEMPLATE
+Status: pending
+Project: relay
 Owner: TomSzenessy
-Date: 2026-08-25
+Date: [YYYY-MM-DD]
+
+The `product-kickoff` skill fills this in with the owner. Replace every bracketed
+REQUIRED line, then set `Status: accepted` with the owner and today's date, and
+`[vision].status = "accepted"` in `project.toml`. Checks refuse an accepted
+record that still has a placeholder.
 
 ## Outcome
 
-A portable GitHub repository that helps mostly AI-driven projects discover the
-right structure, choose a fitting stack, execute a bounded build/review loop,
-and stay lean as the product changes.
+[REQUIRED: who it is for, the problem it solves, and what success looks like (one metric)]
 
 ## Users and context
 
-Coding agents and a small human maintainer working across websites, games,
-backends, native apps, media/3D, data, documents, and future project types.
+[REQUIRED: the people who use it, where, and what they use today]
 
-## Constraints and non-goals
+## Platforms and constraints
 
-- Keep a small always-on core; activate project-specific policy and tooling only
-  when the vision requires it.
-- Do not choose a framework, provider, or deployment model without recording the
-  decision and asking the human when the choice is high-impact.
-- Do not claim legal, security, privacy, accessibility, or performance
-  compliance from repository structure alone.
+[REQUIRED: platforms, offline needs, budget, deadline, data and privacy limits]
+
+## Non-goals
+
+[REQUIRED: what this version deliberately does not do]
 
 ## Success evidence
 
-A new project can answer the intake questions, name its first surface, run its
-declared check, produce a real artifact, receive an independent critique, and
-reconcile the result without a large permanent status matrix.
-
-## Open questions
-
-None for the template itself. A copied project must answer its outcome/users,
-constraints/assumptions, and first-surface/stack questions before its status can
-remain `accepted`.
-
-## Intake rule
-
-Before scaffolding, an agent asks the high-impact questions, records the
-answers here and in the issue-backed write-ahead record, and marks this file
-`accepted` only when the human/owner has made the product direction explicit.
-Routine implementation details do not require another interruption.
+[REQUIRED: how we will know it works: tests, observed real artifacts, the metric]

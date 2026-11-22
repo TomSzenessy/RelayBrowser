@@ -1,104 +1,30 @@
-# AI_TEMPLATE
-
+# relay
 <!-- repoctl:description -->
-Self-healing starting point for AI-agent-built projects of any size: docs bound to code, generated host adapters, delegation roles, and deterministic gates for any agent or model.
+Describe this project in `project.toml` `[repository].description`, then run `make sync`.
 <!-- /repoctl:description -->
 
-<!-- repoctl:template-only -->
-A starting point for any project built mostly by AI coding agents: website,
-game, backend, native app, 3D or video pipeline, data product, documents, or
-something new. It works with any agent host (Claude Code, Codex, Copilot,
-Cursor, Gemini) and any model, because the rules that matter are **executed by
-tools**, not remembered by the agent.
-
-This is a technical starting point, not a promise of legal, security, privacy,
-accessibility, or performance compliance. Those claims need project facts,
-runtime evidence, and qualified review.
-
-## Why
-
-Agents are fast at the start of a project and sloppy at the end of a long
-session: docs stop matching the code, replaced code is never deleted,
-navigation goes stale, and the next session starts blind. In a large codebase
-that compounds until every bug fix is archaeology. This template turns the
-upkeep into deterministic checks and hooks, so the repository heals itself and
-any agent can pick it up cold.
-
-<!-- /repoctl:template-only -->
-
-## Start a project
-
+## Quick start
 <!-- repoctl:quickstart -->
 ```bash
-# Click "Use this template" on GitHub (or clone), then in the new repository:
-make init NAME=my-project KIND=web OWNER=your-handle   # identity, owner, pending vision; prunes template-only files
-make start                            # session brief; installs the git commit gate
-make check                            # everything green before the first change
+# This project is initialized. Complete the intake and replace the
+# template-bootstrap surface before treating checks as product evidence.
+make inventory
+make check
 ```
 <!-- /repoctl:quickstart -->
-
-<!-- repoctl:template-only -->
-Then tell your agent what to build. It runs the `product-kickoff` skill first:
-one round of questions with recommendations (users, platforms, stack such as
-Next.js + Tailwind, Expo, Flutter, or SwiftUI, visual style), two or three
-mockup directions to choose from, and the decisions recorded in `VISION.md`,
-`docs/STACK-DECISION.md`, and `docs/design.md` (all created by `product-kickoff`), plus a list of issues, each one
-a slice of the product that runs end to end. The `stack-foundation` skill then
-builds a deployed minimal version that runs (a *walking skeleton*: the thinnest
-thing that works) with strict types, lint, tests, CI, previews, and error
-tracking; UI work follows the `ux-quality` skill and gets screenshot reviews.
-`make init` itself never invents folders or picks a framework for you.
-
-### Already have a codebase?
-
-Bring the kit to it instead of starting from the template. The *kit* is the
-shared tooling every project built this way keeps: the `Makefile` targets, the
-Python in `tools/`, the git hooks, and the files under `.agents/` that say what
-agents may do. `make adopt` copies it in beside your own files.
-
-```bash
-git clone https://github.com/TomSzenessy/AI_TEMPLATE ../agent-kit
-make -f ../agent-kit/Makefile adopt NAME=my-app KIND=web OWNER=your-handle
-```
-
-`make adopt` never overwrites your files: the targets go to `kit.mk` (included
-from your Makefile, with any target you already define renamed `kit-<name>`),
-your README, licence, docs, and workflows stay yours, and the kit's pieces are
-merged in beside them ([`docs/adopt.md`](./docs/adopt.md)).
-
-<!-- /repoctl:template-only -->
-
 <!-- repoctl:project-readme -->
-> **Template mode:** you are reading the template itself, not a project built
-> from it. The first command in "Start a project" above turns this repository
-> into your project, deletes the template-only files, and rewrites this block
-> with your own project's name and kind.
-<!-- /repoctl:project-readme -->
+> Project initialized: **relay** (`desktop`). Keep this identity,
+> launch state, and project-specific quick start current.
 
-<!-- repoctl:template-only -->
-## How it stays healthy
+## About
 
-| What goes wrong in agent-built codebases | What this template does about it |
-|---|---|
-| Docs drift from the code | Docs declare `<!-- covers: -->` paths; stale or dead bindings fail `make check`, and the git commit gate and agent stop hook refuse changes that skip the owning doc. |
-| Replaced code lingers as duplicates | `DEPRECATED(remove-by=YYYY-MM-DD)` markers are reported after their date; a `TODO` comment must name an issue; `make garden` reports duplicated prose and every sign of decay weekly. |
-| Context is lost between sessions | Session hooks (or `make start`) print a brief; a checkpoint is written before the agent host shrinks an old conversation to save space; `make handover` pre-fills the next session's record. |
-| Too much to read, too many places | `AGENTS.md` is a short rulebook loaded into every session (a byte budget keeps it short); the docs index and host files are generated; `make where` finds code, owners, and past failures in one call. |
-| One agent tries to hold everything | Six roles (scout, implementer, critic, researcher, doc-gardener, skill-scout) with a fixed brief and short reports keep the agent in charge free to decide. |
-| Every agent host wants its own files | Skills, roles, rules, and MCP routes (a connection to an outside tool, over the Model Context Protocol) have one real copy in `.agents/`; `make sync` writes each agent tool's own files from it. |
-| The system cannot grow without losing its shape | Each of the eight kinds -- skill, agent role, doc, rule, check, command, MCP route, pack -- is one file added by `make new`, found by `make where` and `make similar`; a pack is a named group of them that stays out of context until it is switched on. |
-| "Done" means "it compiled" | `make risk` says how much review a change needs (see below); an independent critic and the real artifact decide; `make eval` measures whether a fresh agent can still find its way around. |
+FILL-IN: what this project does, for whom, how its success is judged, and how to run it.
 
-The mechanics are in [`docs/self-healing.md`](./docs/self-healing.md) (gates
-and hooks) and in one owner page per concern:
-[`docs/bindings.md`](./docs/bindings.md) (doc-code bindings),
-[`docs/hygiene.md`](./docs/hygiene.md) (markers, orphan files, guardrails),
-[`docs/generated-files.md`](./docs/generated-files.md),
-[`docs/capabilities.md`](./docs/capabilities.md),
-[`docs/kit-update.md`](./docs/kit-update.md), [`docs/evals.md`](./docs/evals.md),
-and [`docs/delegation.md`](./docs/delegation.md).
+## Working on this repository
 
-<!-- /repoctl:template-only -->
+People and agents start with [`AGENTS.md`](./AGENTS.md): `make start`, `make next`, `make done`; the documents
+are indexed in [`docs/README.md`](./docs/README.md). The tooling comes from the kit at https://github.com/TomSzenessy/AI_TEMPLATE;
+`make kit-update` brings its fixes.
 
 ## Everyday commands
 
@@ -178,13 +104,11 @@ PROJECT SETUP AND MAINTENANCE
   make validate BODY=path            Validate a canonical issue body
   make labels                        Create or update the canonical GitHub issue labels
   make github-sync                   Apply project.toml description, topics, and template flag to GitHub
-  make eval AGENT=claude [MODEL=haiku]
-                                     Fresh-agent navigation benchmark (cheap model by default)
-  make trial NAME=<request> [MODEL=sonnet] [BUDGET=25]
-                                     Build trial: an agent builds a product from a request; friction report
   make verify                        Tests, every surface's verification, and doctor (CI runs this)
   make test                          The kit's and every skill's unit tests
   make test-future                   The suite 800 days ahead: catches checks that rot with the calendar
+
+Packs switched off hide: eval, trial (make capabilities shows how to enable them)
 ```
 <!-- /repoctl:commands -->
 
@@ -253,5 +177,5 @@ runtime, provider, and counsel evidence to the launch issue. Start at
 [`docs/production.md`](./docs/production.md).
 
 The research behind these defaults is in the template repository
-([baselines](./docs/research/agentic-repository-baselines.md)); `make init`
+([baselines](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/agentic-repository-baselines.md)); `make init`
 removes it from new projects and points this link at the template.

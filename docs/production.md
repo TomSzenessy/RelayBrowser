@@ -73,7 +73,7 @@ another.
    and follow-up work.
 
 The primary-source rationale for the MCP/resource and evidence boundary is in
-[`research/mcp-production-boundaries-2026-09-25.md`](./research/mcp-production-boundaries-2026-09-25.md).
+[`research/mcp-production-boundaries-2026-09-25.md`](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/mcp-production-boundaries-2026-09-25.md).
 
 ## Measure and learn
 

@@ -2,41 +2,23 @@
 
 <!-- index: operate | Framework/toolchain decision and rationale | Choosing a project stack or replacing an assumed tool. -->
 
-Status: accepted for AI_TEMPLATE (no product framework)
-Project: AI_TEMPLATE
+Status: pending
+Project: relay
+Owner: TomSzenessy
+Date: [YYYY-MM-DD]
+
+Record the stack after the vision is accepted (`product-kickoff`, then
+`stack-foundation`). Confirm current versions from primary sources before
+accepting.
 
 ## Decision
 
-AI_TEMPLATE uses Python 3.11+ standard-library `repoctl` for its governance
-core. It does not select a web, game, native, media, or data framework for a
-future project. A copied project must make its own decision after vision intake.
+[REQUIRED: language, framework, data store, hosting, with pinned versions]
 
-## Decision criteria
+## Why this, and what else was considered
 
-- Fit the declared product outcome and constraints.
-- Smallest dependency and operational surface that can prove the outcome.
-- Ecosystem maturity, security/maintenance signals, and team/agent competence.
-- Real artifact verification and a reversible migration seam.
-- Provider/deployment fit and a clear rollback path.
+[REQUIRED: the alternatives and why they lost for this product]
 
-## Options considered
+## Verification and rollback
 
-Projects decide through the `product-kickoff` skill, which recommends from
-platforms, team, and constraints and verifies current versions before
-scaffolding. For a website, compare the actual needs before choosing among
-static/Astro, React/Next, and other options; do not select from popularity alone. For games,
-native, media, and data, compare the domain toolchain and artifact oracle rather
-than forcing the website matrix.
-
-## Confirmation
-
-Owner: TomSzenessy
-Date: 2026-08-25
-Human confirmation: the template should recommend, then confirm high-impact
-choices.
-
-## Rule
-
-Record one decision per project in the issue-backed WAL and update this file (or
-replace it in the project copy) before scaffolding. A copied project changes the
-status to `pending` until its owner confirms a decision.
+[REQUIRED: the commands that prove it works, and how to back out]

@@ -11,8 +11,8 @@ owner; live work and acceptance live in GitHub Issues, not a Markdown backlog.
 - [`../.agents/`](../.agents/): every capability, one file each.
 - [`handoffs/`](./handoffs/README.md): continuation records, linked from there.
 - Dated research notes beside the baseline:
-  [MCP boundaries](./research/mcp-production-boundaries-2026-09-25.md),
-  [hardening](./research/primary-source-hardening-2026-09-25.md).
+  [MCP boundaries](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/mcp-production-boundaries-2026-09-25.md),
+  [hardening](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/primary-source-hardening-2026-09-25.md).
 
 ## Documents
 
@@ -85,7 +85,6 @@ itself and this table cannot drift. Edit the line in the document, not here.
 | [`adr/0001-issue-backed-write-ahead.md`](./adr/0001-issue-backed-write-ahead.md) | Accepted write-ahead and documentation-boundary decision | You need the rationale for issue-backed continuity. |
 | [`adr/0002-one-capability-model.md`](./adr/0002-one-capability-model.md) | The capability model: kinds, declaration fields, discovery, packs, and what is out of scope | You add, find, or switch off a skill, role, doc, rule, check, command, MCP route, or pack. |
 | [`adr/README.md`](./adr/README.md) | Architecture decision record rules | A hard-to-reverse, surprising trade-off is made. |
-| [`research/agentic-repository-baselines.md`](./research/agentic-repository-baselines.md) | Primary-source research behind the template; dated notes on MCP boundaries and hardening sit beside it | Guidance, legal boundaries, or external references need provenance. |
 <!-- /repoctl:index -->
 
 ## Durable knowledge versus live work

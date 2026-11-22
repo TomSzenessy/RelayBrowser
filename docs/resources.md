@@ -13,7 +13,7 @@ Run `make resources` to validate and display it. The registry contains
 read-only starting points; it never stores credentials or authorizes external
 actions. Agent tool servers are separate capabilities, one file each in
 [`../.agents/mcp/`](../.agents/mcp/). The protocol and Context7 boundary
-sources are recorded in [`research/mcp-production-boundaries-2026-09-25.md`](./research/mcp-production-boundaries-2026-09-25.md).
+sources are recorded in [`research/mcp-production-boundaries-2026-09-25.md`](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/mcp-production-boundaries-2026-09-25.md).
 
 ## MCP routes
 

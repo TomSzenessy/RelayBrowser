@@ -1,7 +1,7 @@
 # Measuring the kit: fresh-agent evals and build trials
 
 <!-- index: extend | Fresh-agent navigation evals and scored build trials | AGENTS.md, the docs, a skill, or a gate changed and needs fresh-agent evidence. -->
-<!-- covers: tools/kit/evals.py tools/kit/trial.py .agents/evals/** .agents/trials/** -->
+<!-- covers: tools/kit/evals.py tools/kit/trial.py .agents/evals/** -->
 
 `.agents/evals/*.toml` holds navigation tasks with an expected-answer regex.
 `make eval AGENT=claude` (or `codex`, `gemini`; `MODEL=` overrides, and Claude

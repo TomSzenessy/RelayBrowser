@@ -2,8 +2,8 @@
 # verification commands, launch state, and reviewed skill provenance.
 # Keep product meaning in code/specs; keep live work in GitHub Issues.
 schema = 1
-name = "AI_TEMPLATE"
-kind = "template"
+name = "relay"
+kind = "desktop"
 phase = "development"
 # The root LICENSE file is authoritative; this SPDX label is metadata, not proof
 # that the text matches it. Replace both deliberately.
@@ -13,27 +13,27 @@ owners = ["TomSzenessy"]
 [repository]
 default_branch = "main"
 # Set github = "owner/name" when the checkout has no trusted GitHub remote.
-github = "TomSzenessy/AI_TEMPLATE"
+github = "TomSzenessy/RelayBrowser"
 # Add project-specific generated/infrastructure paths here when the defaults
 # are not enough. Product surfaces still belong in [[surfaces]].
 infrastructure_paths = []
 # Single source for the README description block and the GitHub repository
 # metadata (`make sync` renders the README; `make github-sync` applies GitHub).
-description = "Self-healing starting point for AI-agent-built projects of any size: docs bound to code, generated host adapters, delegation roles, and deterministic gates for any agent or model."
-topics = ["ai-agents", "agents-md", "claude-code", "codex", "mcp", "template", "self-healing", "developer-tools"]
-is_template = true
+description = ""
+topics = []
+is_template = false
 
 [template]
 # Template-only material that `make init` removes from new projects; relative
 # links to removed files are rewritten to `source` so nothing breaks.
 source = "https://github.com/TomSzenessy/AI_TEMPLATE"
-prune = ["docs/research/**", ".agents/trials/**"]
+prune = []
 # Digests of the template's own intake records: `make init` in a clone already used as a project keeps a record
 # that differs from these (the project wrote it) and resets one that matches (#75). A template test keeps them current.
 records = { "VISION.md" = "sha256:54cd11f15fea92efb8536336450fa30a5073563d72b73c8ead995b61e03a755b", "docs/STACK-DECISION.md" = "sha256:477676bd70f6eb7c05c5449ec13e2889142e127eafc8020daba519f19dfc0722" }
 
 [vision]
-status = "accepted"
+status = "pending"
 record = "VISION.md"
 stack_decision = "docs/STACK-DECISION.md"
 
@@ -66,14 +66,15 @@ hosts = ["claude"]
 # skill_review_days = 365
 # ui_kinds = ["web", "app", "site", "pwa", "mobile", "ios", "android", "desktop", "game"]
 # preview_kinds = ["web", "app", "site", "pwa"]
+project_mode = "new"
 # project_mode = "new"   # "adopt" when the product already existed; `make adopt` writes it
 # playwright_version = "1.63.0"
 # eval_model = "haiku"   # model for `make eval` on Claude (cheap by default)
 
 [packs]
-# Capability packs (.agents/packs/): omitted packs keep their default. The
-# template measures its own changes with fresh agents (make eval, make trial).
-measure = true
+# Capability packs (.agents/packs/, make capabilities): omitted packs keep their default.
+# Example: switch off the product pack for a repository that is not a product.
+# product = false
 
 [capabilities]
 # First-party skills written in this repository (`make new KIND=skill` adds
@@ -124,7 +125,7 @@ make = "3.81"
 group = "verify"
 workflow = ".github/workflows/ci.yml"
 job = "verify"
-digest = "sha256:bef7cdc1424cd14066ba5f4239d9cd1adf14218bb9c7a56cb56f910cea20af87"
+digest = "sha256:7bd1f1a0cdcec2d0e327777be3b195aa12ebae532dc2d979648e5a8007df465c"
 tools = ["python3", "make"]
 commands = [["make", "verify"]]
 
@@ -132,7 +133,7 @@ commands = [["make", "verify"]]
 group = "verify"
 workflow = ".github/workflows/ci.yml"
 job = "test-future"
-digest = "sha256:75b9738d34987de1c73d09f14a86468f7fca510036eb8c217be0010cb1a5f041"
+digest = "sha256:4aa24c0d5b91b75b5f324850af9445da270881e69d30a0fe335c3286d2dda91f"
 tools = ["python3", "make"]
 commands = [["make", "test-future"]]
 
@@ -140,7 +141,7 @@ commands = [["make", "test-future"]]
 group = "garden"
 workflow = ".github/workflows/garden.yml"
 job = "garden"
-digest = "sha256:5f764cfee000316efa36d3529539984c55c2f8a1b3342e2750a2697305e9dd96"
+digest = "sha256:ab61b486ca1af17e9621f653d92d60e104509c96b6e5e795d551f0af96d33e0a"
 tools = ["python3", "make"]
 commands = [["make", "garden"]]
 
@@ -210,17 +211,12 @@ legal_document_paths = []
 # exists, then give it an owner, a quality oracle, and evidence-producing checks.
 
 [[surfaces]]
-id = "template"
+id = "template-bootstrap"
 path = "."
 kind = "template"
-owner = "TomSzenessy"
-status = "active"
-quality_oracle = "Fresh-agent navigation, contract checks, and bounded review packet inspection"
-verification = [["tools/repoctl", "check"]]
-
-# Reviewed capability pack adapted from Jakeschincariol/replica-skill (MIT).
-# `purpose` names the upstream skill each local skill adapts, because adapted
-# skills may be renamed; THIRD_PARTY_NOTICES.md holds the full mapping.
+status = "planned"
+# Replace this bootstrap declaration with the first real product surface.
+verification = []
 [[skills]]
 package = "Jakeschincariol/replica-skill@product-recon"
 pack = "product"

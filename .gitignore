@@ -50,3 +50,6 @@ vendor/
 # Test runner output
 test-results/
 playwright-report/
+
+# Rust build output
+/target/
