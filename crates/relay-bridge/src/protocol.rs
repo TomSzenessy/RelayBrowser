@@ -155,6 +155,10 @@ pub enum Op {
     /// Convert the main content (article/main/body) to Markdown, capped at
     /// 200 KB. The string is both the command result and a `markdown` message.
     Markdown,
+    /// Read the page's web app manifest and its best PNG icon. The reply is
+    /// untrusted data: `relay-ui` validates origin, size, and image format
+    /// before it writes anything to disk.
+    WebApp,
 }
 
 fn yes() -> bool {
@@ -235,6 +239,15 @@ mod tests {
             PageMessage::Markdown { text } => assert_eq!(text, "hi"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn web_app_op_round_trips_and_is_read_only() {
+        let op: Op = serde_json::from_str(r#"{"op":"web_app"}"#).unwrap();
+        assert_eq!(op, Op::WebApp);
+        assert!(!op.mutates());
+        let s = Command { id: 5, op }.to_script();
+        assert!(s.contains(r#""op":"web_app""#), "{s}");
     }
 
     #[test]

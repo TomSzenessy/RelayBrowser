@@ -5,17 +5,20 @@
 
 use crate::inspector::{self, Panel, Tree};
 use crate::palette::{self, Command, Item, Palette, Sources};
+use crate::tabstrip;
 use crate::theme::Theme;
-use crate::web::{WebEvent, WebHost};
+use crate::web::{EditAction, WebEvent, WebHost};
+use crate::webapp;
 use gpui::{
     actions, canvas, div, img, prelude::*, px, Bounds, ClipboardItem, Context, FocusHandle, Image, ImageFormat,
-    KeyBinding, KeyDownEvent, Pixels, SharedString, Window,
+    KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, Pixels, SharedString, Window,
 };
-use relay_bridge::{BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId};
-use relay_extensions::store::{SessionTab, Store};
+use relay_bridge::{BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabState};
+use relay_extensions::store::{SessionTab, Store, WebAppRecord};
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -57,10 +60,26 @@ actions!(
         SelectTab7,
         SelectTab8,
         SelectTab9,
+        ToggleTabStrip,
+        NextTabStripPosition,
+        InstallWebApp,
+        RemoveWebApp,
+        Cut,
+        Copy,
+        Paste,
+        SelectAll,
+        Undo,
+        Redo,
+        Minimize,
+        Help,
     ]
 );
 
 /// Every global shortcut. `secondary` is ⌘ on macOS and Ctrl elsewhere.
+///
+/// These bindings are also what the native menu bar shows as key
+/// equivalents: on macOS the menu receives them before the focused
+/// WKWebView, which is why shortcuts work while a page has focus.
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("secondary-k", OpenPalette, None),
@@ -96,6 +115,125 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-7", SelectTab7, None),
         KeyBinding::new("secondary-8", SelectTab8, None),
         KeyBinding::new("secondary-9", SelectTab9, None),
+        KeyBinding::new("secondary-s", ToggleTabStrip, None),
+        KeyBinding::new("secondary-shift-s", NextTabStripPosition, None),
+        // Standard editing: the menu keeps these working inside WKWebView,
+        // and the handlers below route them into the palette and find bar.
+        KeyBinding::new("secondary-x", Cut, None),
+        KeyBinding::new("secondary-c", Copy, None),
+        KeyBinding::new("secondary-v", Paste, None),
+        KeyBinding::new("secondary-a", SelectAll, None),
+        KeyBinding::new("secondary-z", Undo, None),
+        KeyBinding::new("secondary-shift-z", Redo, None),
+        KeyBinding::new("secondary-m", Minimize, None),
+    ]
+}
+
+/// The native menu bar. On macOS AppKit handles menu key equivalents before
+/// the first responder, so ⌘K/⌘T/⌘W/⌘C work even while WKWebView has focus,
+/// and every command is discoverable without memorising the key map.
+pub fn app_menus() -> Vec<Menu> {
+    app_menus_named(None)
+}
+
+fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
+    fn item(name: &'static str, action: impl gpui::Action) -> MenuItem {
+        MenuItem::action(name, action)
+    }
+    let sep = MenuItem::separator;
+    vec![
+        Menu {
+            name: app_name.map(|s| SharedString::from(s.to_string())).unwrap_or_else(|| "Relay".into()),
+            items: vec![
+                item("Settings…", ToggleSettings),
+                sep(),
+                item("Quit Relay", Quit),
+            ],
+        },
+        Menu {
+            name: "File".into(),
+            items: vec![
+                item("Command Palette…", OpenPalette),
+                item("Open Location…", OpenLocation),
+                sep(),
+                item("New Tab", NewTab),
+                item("Close Tab", CloseTab),
+                item("Reopen Closed Tab", ReopenClosedTab),
+                sep(),
+                item("Install This Site as an App…", InstallWebApp),
+                item("Remove This Site's App", RemoveWebApp),
+            ],
+        },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                item("Undo", Undo),
+                item("Redo", Redo),
+                sep(),
+                item("Cut", Cut),
+                item("Copy", Copy),
+                item("Paste", Paste),
+                item("Select All", SelectAll),
+                sep(),
+                item("Find in Page…", Find),
+            ],
+        },
+        Menu {
+            name: "View".into(),
+            items: vec![
+                item("Fold / Unfold Tab Strip", ToggleTabStrip),
+                item("Move Tab Strip", NextTabStripPosition),
+                sep(),
+                item("Reload Page", Reload),
+                item("Zoom In", ZoomIn),
+                item("Zoom Out", ZoomOut),
+                item("Actual Size", ZoomReset),
+                sep(),
+                item("Toggle Inspector", ToggleInspector),
+                item("WebKit Web Inspector", WebInspector),
+                item("Toggle Split View", ToggleSplit),
+            ],
+        },
+        Menu {
+            name: "History".into(),
+            items: vec![item("Back", Back), item("Forward", Forward)],
+        },
+        Menu {
+            name: "Bookmarks".into(),
+            items: vec![
+                item("Bookmark This Page", ToggleBookmark),
+                item("Pin / Unpin Tab", TogglePin),
+                sep(),
+                item("Copy Clean URL", CopyCleanUrl),
+                item("Copy Page as Markdown", CopyMarkdown),
+            ],
+        },
+        Menu {
+            name: "Tab".into(),
+            items: vec![
+                item("Next Tab", NextTab),
+                item("Previous Tab", PrevTab),
+                item("Link Hints", LinkHints),
+                sep(),
+                item("Select Tab 1", SelectTab1),
+                item("Select Tab 2", SelectTab2),
+                item("Select Tab 3", SelectTab3),
+                item("Select Tab 4", SelectTab4),
+                item("Select Tab 5", SelectTab5),
+                item("Select Tab 6", SelectTab6),
+                item("Select Tab 7", SelectTab7),
+                item("Select Tab 8", SelectTab8),
+                item("Select Tab 9", SelectTab9),
+            ],
+        },
+        Menu {
+            name: "Window".into(),
+            items: vec![item("Minimize", Minimize)],
+        },
+        Menu {
+            name: "Help".into(),
+            items: vec![item("Relay on GitHub", Help)],
+        },
     ]
 }
 
@@ -156,14 +294,29 @@ pub struct RelayApp {
     compat_tabs: std::collections::HashSet<TabId>,
     /// `restore_session` setting: when off, no tabs are written at all.
     session_enabled: bool,
+    /// Folded/edge placement, persisted as `tabs_position` + `tabs_folded`.
+    strip: tabstrip::StripState,
+    /// Which row the pointer is over, so its close button can appear.
+    hovered_tab: Option<TabId>,
+    /// An installed web app window: one page, no browser chrome.
+    app_mode: bool,
+    /// The installed app's display name, for its menu and title.
+    app_name: Option<String>,
+    /// Second click on "Remove This Site's App" within the toast window
+    /// actually deletes the bundle.
+    pending_remove_app: Option<(String, Instant)>,
 }
 
 impl RelayApp {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         hub: SharedHub,
         requests: UnboundedReceiver<BrowserRequest>,
         store: Option<Store>,
         mcp_socket: String,
+        app_mode: bool,
+        app_name: Option<String>,
+        app_icon: Option<std::path::PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -182,6 +335,10 @@ impl RelayApp {
             .unwrap_or_default();
         let sleep_minutes = store.as_ref().and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok()).unwrap_or(15);
         let mcp_enabled = setting_enabled(store.as_ref().and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
+        let strip = tabstrip::StripState::from_settings(
+            store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).as_deref(),
+            store.as_ref().and_then(|s| s.setting("tabs_folded").ok().flatten()).as_deref(),
+        );
         if blocking {
             web.load_content_rules(&rules_json(store.as_ref()));
         }
@@ -225,9 +382,26 @@ impl RelayApp {
             saved_session: vec![],
             session_enabled: false,
             compat_tabs: Default::default(),
+            strip,
+            hovered_tab: None,
+            app_mode,
+            app_name: app_name.clone(),
+            pending_remove_app: None,
         };
-        app.load_installed_extensions();
-        app.restore_session();
+        if app_mode {
+            // A web app window is one page, not the user's last browsing
+            // session; never restore or overwrite that session from here.
+            // Extensions stay with the browser: a second copy of every
+            // background page in each installed app would only cost memory.
+            app.session_enabled = false;
+        } else {
+            app.load_installed_extensions();
+            app.restore_session();
+        }
+        cx.set_menus(app_menus_named(app_name.as_deref()));
+        if let Some(icon) = app_icon {
+            app.web.borrow().set_application_icon(&icon);
+        }
         // Menu, Dock, logout and ⌘Q all end here, not only the ⌘Q action.
         cx.on_app_quit(|app, _| {
             app.save_session();
@@ -321,6 +495,12 @@ impl RelayApp {
                 WebEvent::OpenInNewTab { opener, url } => {
                     if !is_web_url(&url) {
                         continue; // window.open("file:///…") and friends stay closed
+                    }
+                    // A web app window has no tab strip; a popup navigates the
+                    // one page instead of adding chrome the user cannot see.
+                    if self.app_mode {
+                        self.open_url(url, false);
+                        continue;
                     }
                     let owner = self.hub.lock().tab(opener).map(|t| t.owner).unwrap_or(Owner::User);
                     let tab = self.hub.update(|h| {
@@ -469,6 +649,8 @@ impl RelayApp {
 
     fn open_url(&mut self, url: String, new_tab: bool) {
         let active = self.active();
+        // A web app window always reuses its single page.
+        let new_tab = new_tab && !self.app_mode;
         match (new_tab, active) {
             (false, Some(tab)) => {
                 self.web.borrow_mut().apply(BrowserRequest::Navigate { tab, url });
@@ -494,11 +676,19 @@ impl RelayApp {
     }
 
     fn close_active(&mut self, cx: &mut Context<Self>) {
-        let Some(tab) = self.active() else { return };
+        if let Some(tab) = self.active() {
+            self.close_tab(tab, cx);
+        }
+    }
+
+    /// Close one tab from ⌘W, its row's ×, or a middle click. Pinned tabs
+    /// are put to sleep; the last tab in a web app quits the app window.
+    fn close_tab(&mut self, tab: TabId, cx: &mut Context<Self>) {
         if self.hub.lock().tab(tab).is_some_and(|t| t.pinned) {
             self.put_pinned_away(tab, cx);
             return;
         }
+        let last = self.hub.lock().tabs().count() <= 1;
         if let Some(t) = self.hub.update(|h| h.close_tab(tab)) {
             if t.url.starts_with("http") {
                 self.closed.push(t.url);
@@ -513,6 +703,10 @@ impl RelayApp {
         if let Some(next) = self.active() {
             self.activate(next);
         }
+        if self.app_mode && last {
+            self.save_session();
+            cx.quit();
+        }
     }
 
     /// ⌘W on a pinned tab keeps it: switch to a neighbour and sleep it (0 MB).
@@ -524,7 +718,9 @@ impl RelayApp {
         if self.split == Some(tab) {
             self.split = None;
         }
-        self.cycle(1);
+        if self.active() == Some(tab) {
+            self.cycle(1);
+        }
         let asleep = self.hub.lock().tab(tab).is_some_and(|t| t.sleeping);
         if asleep || self.sleep_with_scroll(tab, cx, |app, tab| app.active() != Some(tab) && !app.visible_tabs().contains(&tab)) {
             self.toast("Pinned tab put to sleep");
@@ -633,6 +829,186 @@ impl RelayApp {
             (false, true) => format!("Blocking on for {host}"),
             (false, false) => format!("{host} will be blocked once blocking is turned on in Settings"),
         });
+    }
+
+    /// ⌘S: fold the tab strip to a rail (or unfold it). The rail stays
+    /// clickable so the strip is never lost.
+    fn toggle_tab_strip(&mut self, cx: &mut Context<Self>) {
+        self.strip = self.strip.toggled();
+        self.persist_strip();
+        cx.notify();
+    }
+
+    /// ⇧⌘S: left → top → right, like Search.
+    fn rotate_tab_strip(&mut self, cx: &mut Context<Self>) {
+        self.strip = self.strip.rotated();
+        self.persist_strip();
+        self.toast(format!("Tab strip: {}", self.strip.placement.label()));
+        cx.notify();
+    }
+
+    fn persist_strip(&self) {
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("tabs_position", self.strip.position_setting());
+            let _ = store.set_setting("tabs_folded", self.strip.folded_setting());
+        }
+    }
+
+    /// Ask the page for its manifest, then write a small `.app` bundle.
+    fn install_web_app(&mut self, cx: &mut Context<Self>) {
+        if !cfg!(target_os = "macos") {
+            self.toast("Installing web apps is available in the macOS build");
+            return;
+        }
+        if self.app_mode {
+            self.toast("Install apps from the browser window, not an app window");
+            return;
+        }
+        let Some(tab) = self.active() else {
+            self.toast("Open a web page first");
+            return;
+        };
+        let Some(page_url) = self.hub.lock().tab(tab).filter(|t| is_http_url(&t.url)).map(|t| t.url.clone()) else {
+            self.toast("Only http(s) pages can be installed as apps");
+            return;
+        };
+        let (script, rx) = match self.hub.begin_command(tab, Op::WebApp) {
+            Ok(v) => v,
+            Err(e) => {
+                self.toast(format!("Could not read the page: {e}"));
+                return;
+            }
+        };
+        self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
+        self.toast("Reading the web app manifest…");
+        cx.spawn(async move |this, cx| {
+            let reply = futures_timeout(rx, Duration::from_secs(8), cx).await;
+            let _ = this.update(cx, |app, cx| {
+                app.finish_install(reply, page_url);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn finish_install(&mut self, reply: Option<serde_json::Value>, page_url: String) {
+        let Some(value) = reply else {
+            self.toast("This page did not answer the app check");
+            return;
+        };
+        let manifest = match webapp::manifest_from_result(&value, &page_url) {
+            Ok(m) => m,
+            Err(reason) => {
+                self.toast(reason);
+                return;
+            }
+        };
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                self.toast(format!("Could not find the Relay binary: {e}"));
+                return;
+            }
+        };
+        let apps = webapp::default_apps_dir();
+        match webapp::install(&apps, &manifest, &exe) {
+            Ok(app) => {
+                if let Some(store) = &self.store {
+                    let record = WebAppRecord {
+                        id: app.bundle_id,
+                        name: manifest.name.clone(),
+                        start_url: app.start_url,
+                        bundle_path: app.path.display().to_string(),
+                        installed_at: now_unix(),
+                    };
+                    if let Err(e) = store.upsert_web_app(&record) {
+                        eprintln!("relay: installed the app but could not record it: {e}");
+                    }
+                }
+                self.toast(format!("Installed “{}” in ~/Applications", app.name));
+            }
+            Err(e) => self.toast(format!("Could not install the app: {e}")),
+        }
+    }
+
+    /// Two clicks within six seconds remove a Relay-created bundle; the
+    /// bundle's marker is checked again before anything is deleted.
+    fn remove_web_app(&mut self, cx: &mut Context<Self>) {
+        if self.app_mode {
+            self.toast("Remove apps from the browser window");
+            return;
+        }
+        let Some(page_url) = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())) else {
+            self.toast("Open the installed app's site first");
+            return;
+        };
+        let Some(record) = self.store.as_ref().and_then(|s| s.web_apps().ok()).and_then(|apps| {
+            apps.into_iter().find(|r| webapp::same_origin(&r.start_url, &page_url))
+        }) else {
+            self.toast("This site is not installed as an app");
+            return;
+        };
+        let now = Instant::now();
+        let confirmed = matches!(&self.pending_remove_app, Some((url, at)) if url == &page_url && now.duration_since(*at) < Duration::from_secs(6));
+        if !confirmed {
+            self.pending_remove_app = Some((page_url, now));
+            self.toast(format!("Click again to remove “{}”", record.name));
+            return;
+        }
+        self.pending_remove_app = None;
+        match webapp::remove_bundle(Path::new(&record.bundle_path), &record.start_url) {
+            Ok(()) => {
+                if let Some(store) = &self.store {
+                    let _ = store.remove_web_app(&record.start_url);
+                }
+                self.toast(format!("Removed “{}”", record.name));
+            }
+            Err(e) => self.toast(format!("Could not remove the app: {e}")),
+        }
+        cx.notify();
+    }
+
+    /// Router for the Edit menu / ⌘X⌘C⌘V⌘A: palette and find bar take text,
+    /// the page keeps its native editing behaviour.
+    fn apply_edit(&mut self, action: EditAction, cx: &mut Context<Self>) {
+        // With an overlay focused, the page is not the editing target. Paste
+        // is the only command the overlay implements; the rest are no-ops so
+        // ⌘Z cannot silently change the page behind the palette.
+        if self.palette.is_some() || self.find.is_some() {
+            if action != EditAction::Paste {
+                return;
+            }
+            let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()).and_then(|t| t.lines().next().map(str::to_string)) else {
+                return;
+            };
+            if let Some(p) = self.palette.as_mut() {
+                p.query.push_str(&text);
+                p.refresh(&self.sources, &self.search);
+                cx.notify();
+                return;
+            }
+            if let Some(f) = self.find.as_mut() {
+                f.query.push_str(&text);
+                self.run_find(false);
+                cx.notify();
+            }
+            return;
+        }
+        self.web.borrow().edit(action);
+    }
+
+    fn open_help(&mut self) {
+        let url = "https://github.com/TomSzenessy/RelayBrowser#readme".to_string();
+        if self.app_mode {
+            // A web app window is not a browser: hand the docs to the user's
+            // default browser instead of replacing the app with GitHub.
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+            }
+            return;
+        }
+        self.open_url(url, true);
     }
 
     fn open_find(&mut self) {
@@ -768,7 +1144,14 @@ impl RelayApp {
     fn run_command(&mut self, c: Command, cx: &mut Context<Self>) {
         let active = self.active();
         match c {
-            Command::NewTab => self.open_palette(None, true),
+            Command::NewTab => {
+                if self.app_mode {
+                    // A web app has one page; ⌘T is "go somewhere" here.
+                    self.open_palette(None, false);
+                } else {
+                    self.open_palette(None, true);
+                }
+            }
             Command::CloseTab => self.close_active(cx),
             Command::ReopenClosedTab => {
                 if let Some(url) = self.closed.pop() {
@@ -815,6 +1198,10 @@ impl RelayApp {
             Command::ToggleSiteBlocking => self.toggle_site_blocking(),
             Command::ToggleCompatMode => self.toggle_compat_mode(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
+            Command::ToggleTabStrip => self.toggle_tab_strip(cx),
+            Command::NextTabPlacement => self.rotate_tab_strip(cx),
+            Command::InstallWebApp => self.install_web_app(cx),
+            Command::RemoveWebApp => self.remove_web_app(cx),
         }
     }
 
@@ -1058,12 +1445,6 @@ impl RelayApp {
                 }
                 p.refresh(&self.sources, &self.search);
             }
-            "v" if k.modifiers.secondary() => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                    p.query.push_str(text.lines().next().unwrap_or_default());
-                    p.refresh(&self.sources, &self.search);
-                }
-            }
             _ => {
                 if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
                     p.query.push_str(c);
@@ -1080,85 +1461,240 @@ impl RelayApp {
 
     // -------------------------------------------------------- rendering
 
-    fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The tab strip: vertical on the left or right, horizontal across the
+    /// top, or folded to a rail. Every row carries its own close button.
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
-        let h = self.hub.lock();
-        let active = h.active();
-        let row = |tab: &relay_bridge::TabState, cx: &mut Context<Self>| {
-            let id = tab.id;
-            let is_active = Some(id) == active;
-            let title: SharedString = if tab.title.is_empty() { palette::short_url(&tab.url).into() } else { tab.title.clone().into() };
-            let agent = tab.owner == Owner::Agent;
-            let mut r = div()
-                .id(("tab", id as usize))
-                .flex()
-                .items_center()
-                .gap_2()
-                .h(px(28.))
-                .px_2()
-                .rounded(px(6.))
-                .text_size(px(13.))
-                .cursor_pointer()
-                .text_color(if tab.sleeping { t.muted } else { t.text })
-                .hover(|s| s.bg(t.hover))
-                .on_click(cx.listener(move |app, _, _, cx| {
-                    app.activate(id);
-                    cx.notify();
-                }))
-                .child(div().size(px(8.)).rounded_full().bg(if agent { t.agent } else if is_active { t.accent } else { t.border }))
-                .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title));
-            if agent {
-                r = r.bg(t.agent_bg);
-            }
-            if is_active {
-                r = r.bg(t.active);
-            }
-            if tab.challenge.is_some() {
-                r = r.child(div().text_color(t.warn).child("⚠"));
-            }
-            if tab.playing_audio {
-                r = r.child(div().text_color(t.muted).text_size(px(11.)).child("♪"));
-            }
-            if tab.pinned {
-                r = r.child(div().text_color(t.muted).text_size(px(11.)).child("pin"));
-            }
-            if tab.sleeping {
-                r = r.child(div().text_color(t.muted).text_size(px(11.)).child("zz"));
-            }
-            r
+        let strip = self.strip;
+        if strip.folded {
+            return self.render_folded_strip(cx);
+        }
+        let (active, user, agents) = {
+            let h = self.hub.lock();
+            let active = h.active();
+            let user: Vec<TabState> = h.tabs().filter(|x| x.owner == Owner::User).cloned().collect();
+            let agents: Vec<TabState> = h.tabs().filter(|x| x.owner == Owner::Agent).cloned().collect();
+            (active, user, agents)
         };
-        let mut col = div().flex().flex_col().gap_0p5().p_2().w(px(220.)).h_full().bg(t.surface).border_r_1().border_color(t.border);
-        col = col.child(div().px_2().pb_2().text_size(px(11.)).text_color(t.muted).child("TABS"));
-        let user: Vec<_> = h.tabs().filter(|x| x.owner == Owner::User).cloned().collect();
-        let agents: Vec<_> = h.tabs().filter(|x| x.owner == Owner::Agent).cloned().collect();
-        drop(h);
-        for tab in &user {
-            col = col.child(row(tab, cx));
-        }
-        if !agents.is_empty() {
-            col = col.child(div().mt_3().px_2().pb_1().text_size(px(11.)).text_color(t.agent).child("AGENT"));
-            for tab in &agents {
-                col = col.child(row(tab, cx));
+        let vertical = strip.placement.is_vertical();
+        let mut bar = div().flex();
+        if vertical {
+            bar = bar
+                .flex_col()
+                .gap_0p5()
+                .p_2()
+                .w(px(strip.width()))
+                .h_full()
+                .bg(t.surface)
+                .border_color(t.border);
+            bar = if strip.placement == tabstrip::Placement::Left { bar.border_r_1() } else { bar.border_l_1() };
+            bar = bar.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_2()
+                    .pb_2()
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("TABS"))
+                    .child(self.fold_button(if strip.placement == tabstrip::Placement::Left { "«" } else { "»" }, cx)),
+            );
+            for tab in &user {
+                bar = bar.child(self.tab_row(tab, active, true, cx));
             }
-        }
-        col.child(div().flex_1()).child(
-            div()
-                .id("new-tab")
+            if !agents.is_empty() {
+                bar = bar.child(div().mt_3().px_2().pb_1().text_size(px(11.)).text_color(t.agent).child("AGENT"));
+                for tab in &agents {
+                    bar = bar.child(self.tab_row(tab, active, true, cx));
+                }
+            }
+            bar.child(div().flex_1()).child(self.new_tab_button(true, cx)).into_any_element()
+        } else {
+            bar = bar
+                .flex_row()
+                .items_center()
+                .gap_1()
                 .px_2()
-                .h(px(28.))
+                .h(px(strip.height()))
+                .w_full()
+                .bg(t.surface)
+                .border_b_1()
+                .border_color(t.border)
+                .child(div().text_size(px(11.)).text_color(t.muted).child("TABS"));
+            for tab in &user {
+                bar = bar.child(self.tab_row(tab, active, false, cx));
+            }
+            if !agents.is_empty() {
+                bar = bar.child(div().px_1().text_size(px(10.)).text_color(t.agent).child("AGENT"));
+                for tab in &agents {
+                    bar = bar.child(self.tab_row(tab, active, false, cx));
+                }
+            }
+            bar.child(self.new_tab_button(false, cx))
+                .child(div().flex_1())
+                .child(self.fold_button("⌃", cx))
+                .into_any_element()
+        }
+    }
+
+    fn tab_row(&self, tab: &TabState, active: Option<TabId>, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let id = tab.id;
+        let is_active = active == Some(id);
+        let agent = tab.owner == Owner::Agent;
+        let title: SharedString = if tab.title.is_empty() { palette::short_url(&tab.url).into() } else { tab.title.clone().into() };
+        let show_close = is_active || self.hovered_tab == Some(id);
+        let mut row = div()
+            .id(("tab", id as usize))
+            .flex()
+            .items_center()
+            .gap_1()
+            .h(px(28.))
+            .px_2()
+            .rounded(px(6.))
+            .text_size(px(13.))
+            .cursor_pointer()
+            .text_color(if tab.sleeping { t.muted } else { t.text })
+            .hover(|s| s.bg(t.hover))
+            .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
+                let next = hovered.then_some(id);
+                if app.hovered_tab != next {
+                    app.hovered_tab = next;
+                    cx.notify();
+                }
+            }))
+            .on_click(cx.listener(move |app, _, _, cx| {
+                app.activate(id);
+                cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Middle, cx.listener(move |app, _, _, cx| {
+                app.close_tab(id, cx);
+                cx.notify();
+            }))
+            .child(div().size(px(8.)).rounded_full().bg(if agent { t.agent } else if is_active { t.accent } else { t.border }));
+        let title_el = if vertical {
+            div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
+        } else {
+            div().max_w(px(170.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
+        };
+        row = row.child(title_el);
+        if agent {
+            row = row.bg(t.agent_bg);
+        }
+        if is_active {
+            row = row.bg(t.active);
+        }
+        if tab.challenge.is_some() {
+            row = row.child(div().text_color(t.warn).child("⚠"));
+        }
+        if tab.playing_audio {
+            row = row.child(div().text_color(t.muted).text_size(px(11.)).child("♪"));
+        }
+        if tab.pinned {
+            row = row.child(div().text_color(t.muted).text_size(px(11.)).child("pin"));
+        }
+        if tab.sleeping {
+            row = row.child(div().text_color(t.muted).text_size(px(11.)).child("zz"));
+        }
+        row.child(
+            div()
+                .id(("close-tab", id as usize))
+                .w(px(18.))
+                .h(px(18.))
                 .flex()
                 .items_center()
-                .rounded(px(6.))
-                .text_size(px(12.))
+                .justify_center()
+                .rounded(px(4.))
+                .text_size(px(14.))
+                .line_height(px(14.))
                 .text_color(t.muted)
                 .cursor_pointer()
-                .hover(|s| s.bg(t.hover))
-                .on_click(cx.listener(|app, _, _, cx| {
-                    app.open_palette(None, true);
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .when(!show_close, |d| d.invisible())
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    cx.stop_propagation();
+                    app.close_tab(id, cx);
                     cx.notify();
                 }))
-                .child("+ New tab   ⌘T"),
+                .child("×"),
         )
+        .into_any_element()
+    }
+
+    fn new_tab_button(&self, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let button = div()
+            .id("new-tab")
+            .flex()
+            .items_center()
+            .rounded(px(6.))
+            .text_size(px(12.))
+            .text_color(t.muted)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.open_palette(None, true);
+                cx.notify();
+            }));
+        if vertical {
+            button.px_2().h(px(28.)).child("+ New tab   ⌘T").into_any_element()
+        } else {
+            button.w(px(26.)).h(px(26.)).justify_center().child("+").into_any_element()
+        }
+    }
+
+    fn fold_button(&self, label: &'static str, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        div()
+            .id("fold-tab-strip")
+            .w(px(20.))
+            .h(px(20.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.))
+            .text_size(px(12.))
+            .text_color(t.muted)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover).text_color(t.text))
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.toggle_tab_strip(cx);
+            }))
+            .child(label)
+            .into_any_element()
+    }
+
+    /// The folded strip is a thin rail: visible, clickable, and never in the
+    /// way. Clicking anywhere on it brings the tabs back.
+    fn render_folded_strip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let strip = self.strip;
+        let (arrow, vertical) = match strip.placement {
+            tabstrip::Placement::Left => ("›", true),
+            tabstrip::Placement::Right => ("‹", true),
+            tabstrip::Placement::Top => ("⌄", false),
+        };
+        let rail = div()
+            .id("unfold-tab-strip")
+            .bg(t.surface)
+            .border_color(t.border)
+            .cursor_pointer()
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.toggle_tab_strip(cx);
+            }))
+            .child(div().text_size(px(11.)).text_color(t.muted).child(arrow));
+        if vertical {
+            let rail = rail.w(px(strip.width())).h_full();
+            match strip.placement {
+                tabstrip::Placement::Left => rail.border_r_1(),
+                _ => rail.border_l_1(),
+            }
+            .into_any_element()
+        } else {
+            rail.w_full().h(px(strip.height())).border_b_1().into_any_element()
+        }
     }
 
     fn render_pane(&self, tab: TabId, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1632,6 +2168,21 @@ impl RelayApp {
                 cx.notify();
             }))
             .into_any_element();
+        let strip_position = pill("settings-tabs-position", self.strip.placement.label().into(), false)
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.rotate_tab_strip(cx);
+            }))
+            .into_any_element();
+        let strip_folded = pill(
+            "settings-tabs-folded",
+            if self.strip.folded { "Folded" } else { "Open" }.into(),
+            false,
+        )
+        .on_click(cx.listener(|app, _, _, cx| {
+            app.toggle_tab_strip(cx);
+        }))
+        .into_any_element();
+        let strip_control = div().flex().items_center().gap_1().child(strip_position).child(strip_folded).into_any_element();
         let clear_btn = pill("settings-clear-history", clear_label, self.confirm_clear_history)
             .on_click(cx.listener(|app, _, _, cx| {
                 if !app.confirm_clear_history {
@@ -1681,6 +2232,7 @@ impl RelayApp {
                 .child(row("Search engine", None, search_btn))
                 .child(row("Ad & tracker blocking", None, blocking_btn))
                 .child(row("Tab sleep timeout", None, sleep_btn))
+                .child(row("Tab strip", Some("⌘S folds · ⇧⌘S moves"), strip_control))
                 .child(row("Local MCP server", Some("(restart to apply)"), mcp_btn))
                 .child(
                     div()
@@ -1696,12 +2248,17 @@ impl RelayApp {
     }
 
     /// What the window title should say: the active page, or Relay itself.
+    /// A web app window is just its page; the bundle already carries its name.
     fn document_title(&self) -> String {
         let h = self.hub.lock();
         match h.active().and_then(|a| h.tab(a)) {
-            Some(t) if !t.title.is_empty() => format!("{} — Relay", t.title),
-            Some(t) => format!("{} — Relay", palette::short_url(&t.url)),
-            None => "Relay".to_string(),
+            Some(t) if !t.title.is_empty() => {
+                if self.app_mode { t.title.clone() } else { format!("{} — Relay", t.title) }
+            }
+            Some(t) => {
+                if self.app_mode { palette::short_url(&t.url) } else { format!("{} — Relay", palette::short_url(&t.url)) }
+            }
+            None => self.app_name.clone().unwrap_or_else(|| "Relay".to_string()),
         }
     }
 
@@ -1794,10 +2351,26 @@ impl Render for RelayApp {
             self.placements.borrow_mut().clear();
         }
         let t = self.theme;
-        let mut main = div().flex_1().flex().overflow_hidden().child(self.render_tab_bar(cx));
-        main = main.child(if overlay_open { div().flex_1().h_full().bg(t.page).into_any_element() } else { self.render_content(cx).into_any_element() });
+        let content = if overlay_open {
+            div().flex_1().h_full().bg(t.page).into_any_element()
+        } else {
+            self.render_content(cx).into_any_element()
+        };
+        // A web app window starts chromeless; a popup tab brings the strip
+        // back rather than hiding a tab the user cannot reach.
+        let show_strip = !self.app_mode || self.hub.lock().tabs().count() > 1;
+        let mut main = div().flex_1().overflow_hidden();
+        if show_strip {
+            main = match self.strip.placement {
+                tabstrip::Placement::Top => main.flex().flex_col().child(self.render_tab_bar(cx)).child(content),
+                tabstrip::Placement::Left => main.flex().child(self.render_tab_bar(cx)).child(content),
+                tabstrip::Placement::Right => main.flex().child(content).child(self.render_tab_bar(cx)),
+            };
+        } else {
+            main = main.child(content);
+        }
         if self.inspector_open {
-            main = main.child(self.render_inspector(cx));
+            main = main.flex().child(self.render_inspector(cx));
         }
         let mut root = div()
             .key_context("Relay")
@@ -1898,6 +2471,32 @@ impl Render for RelayApp {
             .on_action(cx.listener(|app, _: &Quit, _, cx| {
                 app.save_session();
                 cx.quit()
+            }))
+            .on_action(cx.listener(|app, _: &ToggleTabStrip, _, cx| {
+                app.toggle_tab_strip(cx);
+            }))
+            .on_action(cx.listener(|app, _: &NextTabStripPosition, _, cx| {
+                app.rotate_tab_strip(cx);
+            }))
+            .on_action(cx.listener(|app, _: &InstallWebApp, _, cx| {
+                app.install_web_app(cx);
+            }))
+            .on_action(cx.listener(|app, _: &RemoveWebApp, _, cx| {
+                app.remove_web_app(cx);
+            }))
+            .on_action(cx.listener(|app, _: &Cut, _, cx| app.apply_edit(EditAction::Cut, cx)))
+            .on_action(cx.listener(|app, _: &Copy, _, cx| app.apply_edit(EditAction::Copy, cx)))
+            .on_action(cx.listener(|app, _: &Paste, _, cx| app.apply_edit(EditAction::Paste, cx)))
+            .on_action(cx.listener(|app, _: &SelectAll, _, cx| app.apply_edit(EditAction::SelectAll, cx)))
+            .on_action(cx.listener(|app, _: &Undo, _, cx| app.apply_edit(EditAction::Undo, cx)))
+            .on_action(cx.listener(|app, _: &Redo, _, cx| app.apply_edit(EditAction::Redo, cx)))
+            .on_action(cx.listener(|app, _: &Minimize, _, cx| {
+                app.web.borrow().minimize();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &Help, _, cx| {
+                app.open_help();
+                cx.notify();
             }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
@@ -1905,7 +2504,10 @@ impl Render for RelayApp {
             };
         }
         select!(SelectTab1 => 0, SelectTab2 => 1, SelectTab3 => 2, SelectTab4 => 3, SelectTab5 => 4, SelectTab6 => 5, SelectTab7 => 6, SelectTab8 => 7, SelectTab9 => 8);
-        root = root.child(main).child(self.render_status());
+        root = root.child(main);
+        if !self.app_mode || self.toast.is_some() {
+            root = root.child(self.render_status());
+        }
         if let Some(f) = &self.find {
             root = root.child(self.render_find(f));
         }
@@ -2222,9 +2824,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 33);
+        assert_eq!(bindings.len(), 42);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 33] = [
+        let required: [&'static str; 42] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -2258,9 +2860,65 @@ mod tests {
             SelectTab7.name(),
             SelectTab8.name(),
             SelectTab9.name(),
+            ToggleTabStrip.name(),
+            NextTabStripPosition.name(),
+            Cut.name(),
+            Copy.name(),
+            Paste.name(),
+            SelectAll.name(),
+            Undo.name(),
+            Redo.name(),
+            Minimize.name(),
         ];
         for name in required {
             assert!(bound.contains(name), "missing key binding for {name}");
         }
+    }
+
+    #[test]
+    fn the_menu_bar_is_complete_and_has_no_duplicate_actions() {
+        let menus = app_menus();
+        let names: Vec<&'static str> = menus
+            .iter()
+            .flat_map(|m| m.items.iter())
+            .filter_map(|i| match i {
+                MenuItem::Action { action, .. } => Some(action.name()),
+                _ => None,
+            })
+            .collect();
+        for required in [
+            NewTab.name(),
+            CloseTab.name(),
+            ToggleTabStrip.name(),
+            NextTabStripPosition.name(),
+            InstallWebApp.name(),
+            RemoveWebApp.name(),
+            Cut.name(),
+            Copy.name(),
+            Paste.name(),
+            SelectAll.name(),
+            Undo.name(),
+            Redo.name(),
+            Find.name(),
+            Minimize.name(),
+            Quit.name(),
+        ] {
+            assert!(names.contains(&required), "the menu bar is missing {required}");
+        }
+        for binding in key_bindings() {
+            assert!(
+                names.contains(&binding.action().name()),
+                "{} has a key binding but no menu item, so it will not fire while WKWebView has focus",
+                binding.action().name()
+            );
+        }
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "a menu action appears twice: {names:?}");
+        assert!(menus.iter().any(|m| m.name == "File"), "File menu");
+        assert!(menus.iter().any(|m| m.name == "Edit"), "Edit menu");
+        assert_eq!(app_menus_named(Some("Relay Shop"))[0].name, "Relay Shop");
+        assert_eq!(app_menus()[0].name, "Relay");
     }
 }

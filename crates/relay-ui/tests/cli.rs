@@ -39,7 +39,7 @@ fn help_lists_doctor_and_version_is_clean() {
     let help = relay(dir.path(), &["--help"]);
     assert!(help.status.success());
     let help_text = String::from_utf8_lossy(&help.stdout);
-    for expected in ["relay config", "relay export", "relay clear-data", "relay doctor"] {
+    for expected in ["relay config", "relay export", "relay clear-data", "relay doctor", "relay --app URL"] {
         assert!(help_text.contains(expected), "missing {expected:?} in:\n{help_text}");
     }
 
@@ -207,4 +207,24 @@ fn config_bangs_validates_and_round_trips() {
     assert!(String::from_utf8_lossy(&bad.stderr).contains("invalid bangs entry"));
     let still = relay(dir.path(), &["config", "get", "bangs"]);
     assert!(String::from_utf8_lossy(&still.stdout).starts_with("gh="), "a rejected value leaves the old one");
+}
+
+#[test]
+fn app_mode_requires_an_http_url() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [&["--app", "file:///etc/passwd"][..], &["--app", "javascript:alert(1)"][..], &["--app"][..]] {
+        let out = relay(dir.path(), args);
+        assert!(!out.status.success(), "{args:?} must be refused");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("--app needs"), "missing reason for {args:?}:\n{stderr}");
+    }
+    for args in [
+        &["--app", "https://example.com", "--bogus"][..],
+        &["--app", "https://example.com", "--app-name"][..],
+        &["--app", "https://example.com", "--app-icon"][..],
+    ] {
+        let out = relay(dir.path(), args);
+        assert!(!out.status.success(), "{args:?} must be refused");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("--app"));
+    }
 }

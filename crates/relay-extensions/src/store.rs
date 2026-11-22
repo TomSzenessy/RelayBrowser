@@ -43,6 +43,18 @@ pub struct SessionTab {
     pub position: i64,
 }
 
+/// A web app installed from a page: where its `.app` bundle lives and which
+/// site it starts. The bundle itself carries a marker so Relay never deletes
+/// a folder it did not create.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WebAppRecord {
+    pub id: String,
+    pub name: String,
+    pub start_url: String,
+    pub bundle_path: String,
+    pub installed_at: i64,
+}
+
 /// Per-site preferences; the default value is never stored.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SitePrefs {
@@ -111,7 +123,10 @@ impl Store {
              CREATE TABLE IF NOT EXISTS site_prefs(
                  host TEXT PRIMARY KEY, zoom REAL NOT NULL DEFAULT 1.0,
                  compat_mode INTEGER NOT NULL DEFAULT 0, blocking_off INTEGER NOT NULL DEFAULT 0,
-                 hidden_selectors TEXT NOT NULL DEFAULT '[]');",
+                 hidden_selectors TEXT NOT NULL DEFAULT '[]');
+             CREATE TABLE IF NOT EXISTS web_apps(
+                 id TEXT PRIMARY KEY, name TEXT NOT NULL, start_url TEXT NOT NULL UNIQUE,
+                 bundle_path TEXT NOT NULL, installed_at INTEGER NOT NULL DEFAULT 0);",
         )?;
         let v: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get::<_, String>(0))
@@ -379,6 +394,7 @@ impl Store {
             extensions,
             session_tab_count: self.load_session()?.len(),
             site_prefs,
+            web_apps: self.web_apps()?,
         };
         Ok(serde_json::to_string_pretty(&export)?)
     }
@@ -398,6 +414,43 @@ impl Store {
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// Record a web app installed from a page. `start_url` is unique, so
+    /// reinstalling replaces the previous bundle path instead of duplicating.
+    pub fn upsert_web_app(&self, app: &WebAppRecord) -> Result<(), Error> {
+        self.conn.execute(
+            "INSERT INTO web_apps(id, name, start_url, bundle_path, installed_at) VALUES(?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(start_url) DO UPDATE SET id=?1, name=?2, bundle_path=?4, installed_at=?5",
+            params![app.id, app.name, app.start_url, app.bundle_path, app.installed_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn web_apps(&self) -> Result<Vec<WebAppRecord>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, start_url, bundle_path, installed_at FROM web_apps ORDER BY name, start_url",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(WebAppRecord { id: r.get(0)?, name: r.get(1)?, start_url: r.get(2)?, bundle_path: r.get(3)?, installed_at: r.get(4)? })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn web_app_for_url(&self, start_url: &str) -> Result<Option<WebAppRecord>, Error> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, name, start_url, bundle_path, installed_at FROM web_apps WHERE start_url=?1",
+                [start_url],
+                |r| Ok(WebAppRecord { id: r.get(0)?, name: r.get(1)?, start_url: r.get(2)?, bundle_path: r.get(3)?, installed_at: r.get(4)? }),
+            )
+            .optional()?)
+    }
+
+    /// Forget an installed app; the caller removes the bundle first.
+    pub fn remove_web_app(&self, start_url: &str) -> Result<bool, Error> {
+        Ok(self.conn.execute("DELETE FROM web_apps WHERE start_url=?1", [start_url])? > 0)
+    }
 }
 
 #[derive(Serialize)]
@@ -409,6 +462,7 @@ struct ProfileExport {
     extensions: Vec<ExportExtension>,
     session_tab_count: usize,
     site_prefs: BTreeMap<String, SitePrefs>,
+    web_apps: Vec<WebAppRecord>,
 }
 
 fn read_prefs(r: &rusqlite::Row<'_>) -> SitePrefs {
@@ -634,5 +688,33 @@ mod tests {
         assert!(!s.remove_bookmark("https://a.test/").unwrap());
         s.toggle_bookmark("https://a.test/", "A").unwrap();
         assert!(s.remove_bookmark("https://a.test/").unwrap());
+    }
+
+    #[test]
+    fn installed_web_apps_replace_by_start_url() {
+        let s = Store::in_memory().unwrap();
+        let rec = WebAppRecord {
+            id: "app.relay.webapp.shop.1".into(),
+            name: "Shop".into(),
+            start_url: "https://shop.test/app".into(),
+            bundle_path: "/Users/me/Applications/Shop.app".into(),
+            installed_at: 10,
+        };
+        assert_eq!(s.web_app_for_url(&rec.start_url).unwrap(), None);
+        s.upsert_web_app(&rec).unwrap();
+        assert_eq!(s.web_app_for_url(&rec.start_url).unwrap(), Some(rec.clone()));
+        assert_eq!(s.web_apps().unwrap(), vec![rec.clone()]);
+
+        let moved = WebAppRecord { name: "New Shop".into(), bundle_path: "/tmp/New Shop.app".into(), installed_at: 20, ..rec.clone() };
+        s.upsert_web_app(&moved).unwrap();
+        assert_eq!(s.web_apps().unwrap(), vec![moved.clone()], "one row per start URL");
+        assert_eq!(s.web_apps().unwrap()[0].installed_at, 20);
+
+        let v: serde_json::Value = serde_json::from_str(&s.export_json().unwrap()).unwrap();
+        assert_eq!(v["web_apps"][0]["name"], "New Shop");
+
+        assert!(s.remove_web_app(&rec.start_url).unwrap());
+        assert!(!s.remove_web_app(&rec.start_url).unwrap());
+        assert!(s.web_apps().unwrap().is_empty());
     }
 }

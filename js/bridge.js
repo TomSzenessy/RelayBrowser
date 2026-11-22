@@ -501,18 +501,132 @@
     },
     page_info: function () {
       return { url: location.href, title: document.title, scroll_x: window.scrollX, scroll_y: window.scrollY };
-    }
+    },
+    web_app: webApp
   };
+
+  var maxIconBytes = 2 * 1024 * 1024;
+  function absoluteUrl(value, base) {
+    if (value === undefined || value === null || value === "") return null;
+    try {
+      var u = new URL(String(value), base || location.href);
+      return /^https?:$/i.test(u.protocol) ? u.href : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function manifestText(value, max) {
+    return typeof value === "string" ? value.slice(0, max) : "";
+  }
+  function fetchWithTimeout(url, ms) {
+    var ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, ms) : null;
+    function done() { if (timer) clearTimeout(timer); }
+    return fetch(url, { credentials: "same-origin", redirect: "follow", signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) {
+        done();
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r;
+      }, function (e) {
+        done();
+        throw e;
+      });
+  }
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      if (blob.size > maxIconBytes) return reject(new Error("icon is too large"));
+      if (blob.type && blob.type !== "image/png") return reject(new Error("icon is not a PNG"));
+      var reader = new FileReader();
+      reader.onload = function () {
+        var url = String(reader.result || "");
+        if (url.indexOf("data:image/png;base64,") === 0) resolve(url);
+        else reject(new Error("icon is not a PNG"));
+      };
+      reader.onerror = function () { reject(reader.error || new Error("could not read the icon")); };
+      reader.readAsDataURL(blob);
+    });
+  }
+  function iconArea(icon) {
+    var sizes = String(icon && icon.sizes || "").toLowerCase();
+    if (sizes === "any") return 0;
+    var m = /(\d+)x(\d+)/.exec(sizes);
+    return m ? Number(m[1]) * Number(m[2]) : 0;
+  }
+  function pickIcon(manifest, manifestUrl) {
+    var icons = Array.isArray(manifest.icons) ? manifest.icons : [];
+    var usable = [];
+    for (var i = 0; i < icons.length; i++) {
+      var icon = icons[i];
+      if (!icon || typeof icon.src !== "string" || !icon.src) continue;
+      var type = manifestText(icon.type, 80).toLowerCase();
+      if (type && type !== "image/png") continue;
+      var src = /^data:/i.test(icon.src) ? icon.src : absoluteUrl(icon.src, manifestUrl);
+      if (!src) continue;
+      if (/^data:/i.test(src) && src.indexOf("data:image/png;base64,") !== 0) continue;
+      usable.push({ src: src, area: iconArea(icon) });
+    }
+    usable.sort(function (a, b) { return b.area - a.area; });
+    if (!usable.length) return Promise.resolve(null);
+    var best = usable[0].src;
+    if (/^data:/i.test(best)) return Promise.resolve(best);
+    return fetchWithTimeout(best, 5000)
+      .then(function (r) { return r.blob(); })
+      .then(blobToDataUrl)
+      .catch(function () { return null; });
+  }
+  function webApp() {
+    var link = document.querySelector('link[rel~="manifest"]');
+    var href = link && link.getAttribute("href");
+    if (!href) return { available: false, reason: "This page does not declare a web app manifest." };
+    var manifestUrl = absoluteUrl(href);
+    if (!manifestUrl) return { available: false, reason: "The page's web app manifest is not an http(s) URL." };
+    return fetchWithTimeout(manifestUrl, 6000)
+      .then(function (r) { return r.json(); })
+      .then(function (m) {
+        if (!m || typeof m !== "object" || Array.isArray(m)) throw new Error("the manifest is not an object");
+        var start = absoluteUrl(m.start_url || ".", manifestUrl) || location.href;
+        return pickIcon(m, manifestUrl).then(function (icon) {
+          return {
+            available: true,
+            page_url: location.href,
+            name: manifestText(m.name, 200) || manifestText(m.short_name, 80) || document.title.slice(0, 200),
+            short_name: manifestText(m.short_name, 80),
+            start_url: start,
+            scope: absoluteUrl(m.scope, manifestUrl) || "",
+            display: manifestText(m.display, 40) || "standalone",
+            theme_color: manifestText(m.theme_color, 40),
+            background_color: manifestText(m.background_color, 40),
+            manifest_url: manifestUrl,
+            icon: icon
+          };
+        });
+      })
+      .catch(function (e) {
+        return { available: false, reason: "Could not read the web app manifest: " + String(e && e.message || e) };
+      });
+  }
 
   function exec(cmd) {
     var reply = { kind: "result", id: cmd.id, ok: true, value: null, error: null };
+    function fail(e) {
+      reply.ok = false;
+      reply.error = String(e && e.message || e);
+      post(reply);
+    }
     try {
       var fn = ops[cmd.op];
       if (!fn) throw new Error("unknown op " + cmd.op);
-      reply.value = fn(cmd);
+      var value = fn(cmd);
+      if (value && typeof value.then === "function") {
+        // Async ops (web_app reads a manifest and an icon) post their own
+        // result when they settle; the synchronous reply is a placeholder.
+        value.then(function (v) { reply.value = v; post(reply); }, fail);
+        return reply;
+      }
+      reply.value = value;
     } catch (e) {
-      reply.ok = false;
-      reply.error = String(e && e.message || e);
+      fail(e);
+      return reply;
     }
     post(reply);
     return reply;

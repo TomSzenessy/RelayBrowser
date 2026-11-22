@@ -10,32 +10,43 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 
 ```
 ┌──────────┬────────────────────────────────────────┬──────────────┐
-│ Tabs     │                                        │ Inspector    │
-│ (220 pt) │          WKWebView (active tab)        │ (⌘⌥I, 380pt) │
-│ ● docs   │                                        │ Elements     │
-│ ○ gh     │      split: ⌘\ adds a second pane      │ Network      │
-│ ── Agent │                                        │ Console      │
-│ ◆ shop   │                                        │ Cookies      │
+│ TABS  «  │                                        │ Inspector    │
+│ ● docs  ×│          WKWebView (active tab)        │ (⌘⌥I, 380pt) │
+│ ○ gh    ×│                                        │ Elements     │
+│ ── Agent │      split: ⌘\ adds a second pane      │ Network      │
+│ ◆ shop  ×│                                        │ Console      │
 ├──────────┴────────────────────────────────────────┴──────────────┤
 │ status: url · blocked count · agent connected                    │
 └──────────────────────────────────────────────────────────────────┘
         ⌘K palette floats centred over everything (560 pt wide)
 ```
 
-- **Tab bar:** a vertical list of title rows with favicon letter dots. The
-  user's tabs come first, then an "Agent" group header with tinted rows for
-  agent-owned tabs. Asleep tabs are dimmed. A tab waiting for a human shows ⚠.
+- **Tab strip:** a vertical list of title rows with status dots, or the same
+  rows in a horizontal strip across the top (`⇧⌘S`). The active tab and the
+  row under the pointer show `×` (a middle click closes too). The user's tabs
+  come first, then an "Agent" group header with tinted rows for agent-owned
+  tabs. Asleep tabs are dimmed. A tab waiting for a human shows ⚠. `⌘S` folds
+  the strip to a thin, clickable rail (14 pt at the side, 10 pt at the top)
+  that brings it back; the edge and folded state persist in `tabs_position`
+  and `tabs_folded`.
 - **Palette:** one input with ranked rows (open tabs, history, bookmarks,
   commands). The first row is always "Open <typed URL>" or "Search <query>".
 - **Inspector:** a tab strip of four panels over monospace rows. Hovering an
   Elements row highlights the node in the page.
+- **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
+  Bookmarks, Tab, Window, Help) carry every shortcut. AppKit checks menu key
+  equivalents before the first responder, so they work while WKWebView has
+  focus; `Edit` forwards `⌘X`/`⌘C`/`⌘V`/`⌘A` to the page.
+- **Web app window:** an installed site runs `relay --app <url>`: one page,
+  no tab strip or status bar (a status line appears only for a toast), no
+  session restore, and no MCP socket.
 
 ## Tokens
 
 | Role | Dark | Light |
 |---|---|---|
 | background | `#1b1c1f` | `#f6f6f7` |
-| surface (sidebar, panes) | `#232428` | `#ffffff` |
+| surface (tab strip, panes) | `#232428` | `#ffffff` |
 | border | `#34363b` | `#e2e2e6` |
 | text | `#e6e6e9` | `#1c1c1f` |
 | muted text | `#9a9ca3` | `#6b6d75` |
@@ -68,7 +79,11 @@ none under Reduce Motion.
 | ⌘D | bookmark the page, or remove its bookmark |
 | ⌘F | find in page (↩ next, ⇧↩ previous, Esc closes) |
 | ⌘= / ⌘- / ⌘0 | zoom in / out / actual size, remembered per site |
-| (tab bar) | `♪` playing audio, `pin` pinned, `zz` asleep |
+| ⌘S | fold / unfold the tab strip |
+| ⇧⌘S | move the tab strip left → top → right |
+| ⌘X / ⌘C / ⌘V / ⌘A, ⇧⌘Z | the page's cut / copy / paste / select all, undo / redo |
+| ⌘M | minimize the window |
+| (tab bar) | `×` closes (hover/active), middle click closes, `♪` playing audio, `pin` pinned, `zz` asleep |
 | ⌘⌥P | pin / unpin the tab; pinned tabs sit at the top, show `pin`, never auto-sleep, and ⌘W sleeps them instead of closing |
 | Esc | close palette / settings / hints |
 
@@ -76,9 +91,13 @@ On Linux development builds, ⌘ is Ctrl (GPUI's `secondary` modifier).
 
 ## Focus
 
-When a page has focus, WebKit receives the keystrokes. ⌘ shortcuts still
-reach GPUI first, as key equivalents. The palette and link hints move focus
-to the shell while they are open (`Engine::focus_shell`) and hand it back to
+When a page has focus, WebKit receives the keystrokes. Relay's menu bar
+receives its key equivalents first (AppKit consults the main menu before the
+responder chain), which is why the global shortcuts work without stealing
+plain typing from the page. A unit test fails if a bound action has no menu
+item, because such a shortcut would only work while the GPUI view, not the
+page, had focus. The palette and link hints move focus to the shell
+while they are open (`Engine::focus_shell`) and hand it back to
 the page when they close. The bridge forwards `f` as a `hotkey` message, so
 hints start without leaving the page. As in Vimium, a bare `f` outside text
 fields is taken by Relay on every site, so site shortcuts bound to `f` (such
@@ -92,3 +111,13 @@ built yet.
 - Load failure: an in-pane error with Retry.
 - Asleep: the snapshot, dimmed.
 - Inspector with no DOM yet: "Waiting for page…".
+- Closed tab: the `×` appears on hover and on the active row; closing a pinned
+  tab sleeps it instead, and a middle click does the same.
+- Folded strip: a 14 pt side rail or 10 pt top rail with a chevron; clicking
+  it restores the strip.
+- Web app install: the palette reports "Reading the web app manifest…", then
+  "Installed … in ~/Applications", or a specific reason (no manifest,
+  cross-origin start, non-PNG icon, disk error). Removal says "Click again to
+  remove …" before deleting anything.
+- App window: no tab strip or status bar with one page; a popup link
+  navigates that page rather than revealing hidden chrome.

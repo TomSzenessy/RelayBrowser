@@ -9,8 +9,8 @@ use crate::sleep::{restore_scroll_script, SleptTab};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
+use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::{NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURLRequest, NSURL};
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction, WKNavigationDelegate, WKScriptMessage,
@@ -121,6 +121,17 @@ pub struct WebTab {
     pub view: Retained<WKWebView>,
     handler: Retained<BridgeHandler>,
     ucc: Retained<WKUserContentController>,
+}
+
+/// The editing commands that arrive from Relay's native Edit menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCommand {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
 }
 
 pub struct Engine {
@@ -403,6 +414,44 @@ impl Engine {
         if let Some(w) = shell.window() {
             w.makeFirstResponder(Some(shell));
         }
+    }
+
+    /// Send a standard editing selector through the responder chain. The
+    /// menu key equivalent reaches Relay first; this hands the command back
+    /// to WKWebView (or whatever is first responder) so page editing works.
+    pub fn edit(&self, command: EditCommand) {
+        let action = match command {
+            EditCommand::Undo => sel!(undo:),
+            EditCommand::Redo => sel!(redo:),
+            EditCommand::Cut => sel!(cut:),
+            EditCommand::Copy => sel!(copy:),
+            EditCommand::Paste => sel!(paste:),
+            EditCommand::SelectAll => sel!(selectAll:),
+        };
+        let app = NSApplication::sharedApplication(self.mtm);
+        unsafe {
+            app.sendAction_to_from(action, None, None);
+        }
+    }
+
+    pub fn minimize(&self) {
+        let app = NSApplication::sharedApplication(self.mtm);
+        if let Some(window) = app.keyWindow() {
+            window.performMiniaturize(None);
+        }
+    }
+
+    /// An installed web app runs the shared Relay binary so it keeps the
+    /// browser's cookies and WebKit store; only its Dock icon differs, so
+    /// set that from the bundle's generated `.icns` at launch.
+    pub fn set_application_icon(&self, path: &std::path::Path) -> bool {
+        let path = NSString::from_str(&path.to_string_lossy());
+        let Some(image) = NSImage::initWithContentsOfFile(NSImage::alloc(), &path) else {
+            return false;
+        };
+        let app = NSApplication::sharedApplication(self.mtm);
+        unsafe { app.setApplicationIconImage(Some(&image)) };
+        true
     }
 
     pub fn close(&mut self, tab: TabId) {

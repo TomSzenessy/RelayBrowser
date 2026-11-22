@@ -6,8 +6,10 @@ mod calc;
 mod clean_url;
 mod inspector;
 mod palette;
+mod tabstrip;
 mod theme;
 mod web;
+mod webapp;
 
 use anyhow::{bail, Context as _};
 use gpui::{px, size, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
@@ -19,6 +21,7 @@ const HELP: &str = "relay — keyboard-first WebKit browser with a built-in MCP 
 
 USAGE:
   relay [URL]                       open the browser (optionally at URL)
+  relay --app URL                   open URL as a single-page web app window (used by installed apps)
   relay mcp                         stdio MCP server for agents (connects to the running browser)
   relay config [list | get KEY | set KEY VALUE]
                                     inspect or update profile settings
@@ -56,12 +59,49 @@ fn main() -> anyhow::Result<()> {
         Some("install-extension") => install_extension(args.get(1).map(String::as_str)),
         Some("compile-rules") => compile_rules(args.get(1).map(String::as_str)),
         Some("doctor") => doctor(),
+        Some("--app") => launch_app(&args[1..]),
+        Some(other) if other.starts_with("--app=") => {
+            let url = &other["--app=".len()..];
+            if !is_web_url(url) {
+                bail!("--app needs an http(s) URL, got {url:?}");
+            }
+            run_browser(Some(url.to_string()), true, None, None);
+            Ok(())
+        }
         Some(other) if other.starts_with('-') => bail!("unknown option {other}\n\n{HELP}"),
         url => {
-            run_browser(url.map(str::to_string));
+            run_browser(url.map(str::to_string), false, None, None);
             Ok(())
         }
     }
+}
+
+/// `relay --app URL [--app-name NAME] [--app-icon PATH]`, the shape an
+/// installed bundle's launcher uses. The identity flags only affect the
+/// window/menu name and the Dock icon; the process stays Relay, so the app
+/// shares the browser's cookies, WebKit store, and updates.
+fn launch_app(args: &[String]) -> anyhow::Result<()> {
+    let url = args.first().context("--app needs a URL")?;
+    if !is_web_url(url) {
+        bail!("--app needs an http(s) URL, got {url:?}");
+    }
+    let mut name = None;
+    let mut icon = None;
+    let mut rest = args[1..].iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--app-name" => name = Some(rest.next().context("--app-name needs a name")?.clone()),
+            "--app-icon" => icon = Some(std::path::PathBuf::from(rest.next().context("--app-icon needs a path")?)),
+            other => bail!("unknown --app option {other}"),
+        }
+    }
+    run_browser(Some(url.clone()), true, name, icon);
+    Ok(())
+}
+
+/// The only URLs an installed app window may start on.
+fn is_web_url(url: &str) -> bool {
+    (url.starts_with("http://") || url.starts_with("https://")) && !url.chars().any(char::is_whitespace)
 }
 
 fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
@@ -409,7 +449,7 @@ fn compile_rules(file: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_browser(initial_url: Option<String>) {
+fn run_browser(initial_url: Option<String>, app_mode: bool, app_name: Option<String>, app_icon: Option<std::path::PathBuf>) {
     let hub = SharedHub::new();
     let (browser, requests) = ChannelBrowser::new();
     let shell_requests = browser.clone();
@@ -423,7 +463,9 @@ fn run_browser(initial_url: Option<String>) {
         }
     };
     let cfg = load_config(store.as_ref());
-    let socket_label = if cfg.mcp {
+    // An installed web app is a single page: it must not compete for the
+    // browser's MCP socket or expose an agent surface of its own.
+    let socket_label = if cfg.mcp && !app_mode {
         // MCP server: background tokio runtime, same hub.
         let hub = hub.clone();
         let socket_for_thread = socket.clone();
@@ -444,17 +486,22 @@ fn run_browser(initial_url: Option<String>) {
     };
     let initial_search = cfg.search;
 
+    let window_title = app_name.clone().unwrap_or_else(|| "Relay".to_string());
     Application::new().run(move |cx| {
         cx.bind_keys(app::key_bindings());
-        let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
+        let bounds = if app_mode {
+            Bounds::centered(None, size(px(980.), px(760.)), cx)
+        } else {
+            Bounds::centered(None, size(px(1280.), px(820.)), cx)
+        };
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions { title: Some("Relay".into()), ..Default::default() }),
+            titlebar: Some(TitlebarOptions { title: Some(window_title.clone().into()), ..Default::default() }),
             ..Default::default()
         };
         let hub_for_window = hub.clone();
         let window = cx.open_window(options, move |window, cx| {
-            cx.new(|cx| app::RelayApp::new(hub_for_window, requests, store, socket_label, window, cx))
+            cx.new(|cx| app::RelayApp::new(hub_for_window, requests, store, socket_label, app_mode, app_name, app_icon, window, cx))
         });
         if let Err(e) = window {
             eprintln!("relay: could not open a window: {e:#}");

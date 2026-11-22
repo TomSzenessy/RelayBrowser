@@ -254,3 +254,63 @@ test("markdown falls back to body and caps at 200 KB", async () => {
   assert.ok(big.length > 150000);
   await p.close();
 });
+
+const APP_PAGE = `<!doctype html><html><head><title>Shop</title>
+  <link rel="manifest" href="/app/manifest.json">
+</head><body><h1>Shop</h1></body></html>`;
+
+test("web_app reads a manifest asynchronously and returns a PNG icon", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU2l4wAAAABJRU5ErkJggg==",
+    "base64");
+  await p.route(`${ORIGIN}/**`, async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/app/") return route.fulfill({ contentType: "text/html", body: APP_PAGE });
+    if (url.pathname === "/app/manifest.json")
+      return route.fulfill({ contentType: "application/manifest+json",
+        body: JSON.stringify({
+          name: "Relay Shop",
+          short_name: "Shop",
+          start_url: "/app/start",
+          display: "standalone",
+          theme_color: "#101010",
+          icons: [
+            { src: "/icon-32.png", sizes: "32x32", type: "image/png" },
+            { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+          ],
+        }) });
+    if (url.pathname === "/icon-512.png") return route.fulfill({ contentType: "image/png", body: png });
+    return route.fulfill({ status: 404, body: "" });
+  });
+  await p.goto(`${ORIGIN}/app/`);
+  const placeholder = await p.evaluate(() => window.__relay.exec({ id: 120, op: "web_app" }));
+  assert.equal(placeholder.value, null, "an async op replies when it settles");
+  let result;
+  for (let i = 0; i < 100 && !result; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    all.push(...msgs);
+    result = msgs.find(m => m.kind === "result" && m.id === 120);
+    if (!result) await p.waitForTimeout(25);
+  }
+  assert.ok(result, "the async result arrived");
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.value.available, true, result.value.reason);
+  assert.equal(result.value.name, "Relay Shop");
+  assert.equal(result.value.start_url, `${ORIGIN}/app/start`);
+  assert.equal(result.value.display, "standalone");
+  assert.match(result.value.icon, /^data:image\/png;base64,/);
+  await p.close();
+});
+
+test("web_app explains a page without a manifest", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: "<html><body>plain</body></html>" }));
+  await p.goto(`${ORIGIN}/plain-app`);
+  const r = await p.evaluate(() => window.__relay.exec({ id: 121, op: "web_app" }).value);
+  assert.equal(r.available, false);
+  assert.match(r.reason, /does not declare/);
+  await p.close();
+});
