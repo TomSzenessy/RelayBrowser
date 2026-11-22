@@ -19,7 +19,7 @@ concurrency:
 jobs:
   garden:
     name: rot report
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, arm64]
     permissions:
       contents: read
     timeout-minutes: 20

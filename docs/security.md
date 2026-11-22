@@ -141,6 +141,11 @@ known slow German legal site with a documented manual-review exception; a 403,
   history.
 - Treat lockfile changes, install hooks, generated binaries, and workflow edits
   as security-sensitive changes.
+- Relay's workflows run on the owner's self-hosted runner
+  (`runs-on: [self-hosted, linux, arm64]`), so a workflow job runs code on that
+  machine. Keep "Require approval for all outside collaborators" on for fork
+  pull requests (Settings → Actions → General), never expose secrets to
+  `pull_request` jobs, and keep the runner user without sudo or deploy rights.
 - Keep `repoctl check` in CI and make the aggregate verification command cover
   every active surface. A green job for one language is not repository proof.
 - Keep general verification credential-free: the verification runner scrubs

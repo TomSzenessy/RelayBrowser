@@ -21,7 +21,7 @@ jobs:
   secrets:
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository)
     name: maintained secret scan
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, arm64]
     permissions:
       contents: read
       pull-requests: read  # gitleaks-action lists PR commits on same-repo PRs
@@ -40,7 +40,7 @@ jobs:
   links:
     if: github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     name: maintained Markdown link scan
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, arm64]
     permissions:
       contents: read
     timeout-minutes: 10

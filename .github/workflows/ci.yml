@@ -22,7 +22,7 @@ jobs:
     # A draft PR is still being edited: it must not spend CI minutes.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: repository verification (python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, arm64]
     permissions:
       contents: read
       actions: read  # gh run list/view for tree-hash reuse
@@ -63,7 +63,7 @@ jobs:
   test-future:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: tests 800 days ahead (no calendar rot)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, arm64]
     permissions:
       contents: read
       actions: read  # gh run list/view for tree-hash reuse
