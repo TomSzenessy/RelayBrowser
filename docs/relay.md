@@ -97,6 +97,26 @@ hidden until the bridge delivers a DOM, while the shell paints the JPEG the tab
 slept on. So the snapshot is what you see during the reload, not a white
 WKWebView. `after_load` restores scroll once the bridge says `hello`.
 
+## Palette smart input
+
+[`bangs.rs`](../crates/relay-ui/src/bangs.rs), [`calc.rs`](../crates/relay-ui/src/calc.rs)
+and [`clean_url.rs`](../crates/relay-ui/src/clean_url.rs) are pure string
+modules the palette calls before its normal URL/search item:
+
+- **Offline !bangs**: `!gh rust lang` or `rust lang !gh` (also `rs`, `crates`,
+  `docs`, `mdn`, `yt`, `so`, `npm`, `w`, `k`, `g`, `ddg`, `maps`) becomes
+  `Item::Bang` at the top; an empty query opens the site homepage; unknown
+  bangs fall through to the normal search. `Palette::custom_bangs`
+  (`trigger`, template with `%s`) overrides built-ins. No network lookup.
+- **Calculator**: `+ - * / % ^`, parentheses, unary minus, decimals, optional
+  leading `=`. Bare numbers, versions/IPs, dates, division by zero and
+  non-finite results return nothing; nesting is capped at 64. The result is
+  `Item::Calc` and Enter copies it.
+- **Clean URL**: `clean_url::clean` strips `utm_*` and click ids (`si` only on
+  YouTube/Spotify) and unwraps google `/url?q=` and facebook `l.php?u=`
+  redirects. Backs the `Copy Clean URL` command (⌘⇧C); `Copy Page as
+  Markdown` (⌘⇧M) and `Close Duplicate Tabs` are listed but run in `app.rs`.
+
 ## Checking Relay off-Mac
 
 Six layers, cheapest first:

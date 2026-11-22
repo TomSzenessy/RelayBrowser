@@ -476,7 +476,13 @@ impl RelayApp {
     fn run_item(&mut self, item: Item, cx: &mut Context<Self>) {
         let new_tab = self.palette_new_tab || self.active().is_none();
         match item {
-            Item::Open(url) | Item::Search { url, .. } | Item::History { url, .. } | Item::Bookmark { url, .. } => self.open_url(url, new_tab),
+            Item::Open(url) | Item::Search { url, .. } | Item::Bang { url, .. } | Item::History { url, .. } | Item::Bookmark { url, .. } => {
+                self.open_url(url, new_tab);
+            }
+            Item::Calc(result) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(result.clone()));
+                self.toast(format!("Copied: {result}"));
+            }
             Item::Tab { id, .. } => self.activate(id),
             Item::Command(c) => self.run_command(c, cx),
         }
@@ -512,6 +518,54 @@ impl RelayApp {
                 cx.write_to_clipboard(ClipboardItem::new_string(mcp_setup_command()));
                 self.toast("Copied: claude mcp add relay -- relay mcp");
             }
+            Command::CopyCleanUrl => {
+                let url = active.and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())).unwrap_or_default();
+                if url.is_empty() {
+                    self.toast("No active URL to copy");
+                } else {
+                    let cleaned = crate::clean_url::clean(&url);
+                    cx.write_to_clipboard(ClipboardItem::new_string(cleaned));
+                    self.toast("Copied clean URL");
+                }
+            }
+            Command::CopyMarkdown => {
+                // TODO(#39): wire Op::Markdown through the async bridge op runner in the Tier 1 UI pass.
+                self.toast("Copy page as Markdown is pending UI wiring (#39)");
+            }
+            Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
+        }
+    }
+
+    fn close_duplicate_tabs(&mut self) {
+        let active = self.active();
+        let to_close: Vec<TabId> = {
+            let h = self.hub.lock();
+            let mut seen = std::collections::HashSet::new();
+            let mut dups = Vec::new();
+            for &id in h.tab_ids() {
+                let Some(tab) = h.tab(id) else { continue };
+                if tab.url.is_empty() {
+                    continue;
+                }
+                if !seen.insert(tab.url.clone()) && tab.owner == Owner::User && Some(id) != active {
+                    dups.push(id);
+                }
+            }
+            dups
+        };
+        let count = to_close.len();
+        for id in to_close {
+            if self.split == Some(id) {
+                self.split = None;
+            }
+            self.snapshots.remove(&id);
+            self.web.borrow_mut().apply(BrowserRequest::Close(id));
+            self.hub.update(|h| h.close_tab(id));
+        }
+        if count == 0 {
+            self.toast("No duplicate tabs");
+        } else {
+            self.toast(format!("Closed {count} duplicate tab{}", if count == 1 { "" } else { "s" }));
         }
     }
 

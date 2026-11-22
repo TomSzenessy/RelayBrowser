@@ -66,7 +66,7 @@ behavior—test an authenticated production-like browser.
 Relay is a local-only desktop browser. It operates no cloud sync service,
 telemetry pipeline, crash-upload endpoint, or analytics SDK.
 
-- **Local profile storage:** History, bookmarks, settings, and installed
+- **Local profile storage:** History, bookmarks, settings, saved session tabs (http/https URL, title, pinned, scroll offset; max 200; replaced on every save; erased by `relay clear-data`), per-site preferences (zoom, compat, blocking, hidden selectors), and installed
   extension metadata live in `$RELAY_HOME/profile.sqlite` (default
   `~/Library/Application Support/Relay` on macOS). The profile directory uses
   mode `0700` and `profile.sqlite` (along with its SQLite `-wal`/`-shm`

@@ -284,6 +284,106 @@
     document.addEventListener(ev, mediaState, true);
   });
 
+  // ----------------------------------------------------------- Markdown
+  var MD_CAP = 200 * 1024;
+  var MD_SKIP = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, HEAD: 1, NAV: 1, ASIDE: 1, FOOTER: 1,
+    IFRAME: 1, SVG: 1, CANVAS: 1, OBJECT: 1, EMBED: 1, SELECT: 1, BUTTON: 1, INPUT: 1, TEXTAREA: 1, META: 1, LINK: 1 };
+  var MD_BLOCK = { P: 1, DIV: 1, SECTION: 1, MAIN: 1, ARTICLE: 1, HEADER: 1, FIGURE: 1, FIGCAPTION: 1,
+    DETAILS: 1, SUMMARY: 1, ADDRESS: 1, DL: 1, DT: 1, DD: 1, FORM: 1, FIELDSET: 1, CENTER: 1 };
+
+  function mdHidden(el) {
+    if (el.hidden || el.getAttribute("aria-hidden") === "true") return true;
+    if (el.hasAttribute("data-relay-overlay") || el.hasAttribute("data-relay-hints")) return true;
+    var cs = getComputedStyle(el);
+    return cs.display === "none" || cs.visibility === "hidden";
+  }
+  function mdInline(el) { return mdChildren(el).replace(/\s*\n\s*/g, " ").replace(/ {2,}/g, " ").trim(); }
+  function mdCell(el) { return mdInline(el).replace(/\|/g, "\\|"); }
+  function mdTable(el) {
+    var rows = [];
+    el.querySelectorAll("tr").forEach(function (tr) {
+      if (tr.closest("table") !== el) return;
+      var cells = [];
+      for (var c = tr.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.tagName === "TH" || c.tagName === "TD") cells.push(mdCell(c));
+      }
+      if (cells.length) rows.push(cells);
+    });
+    if (!rows.length) return "";
+    var width = Math.max.apply(null, rows.map(function (r) { return r.length; }));
+    var lines = rows.map(function (r) {
+      while (r.length < width) r.push("");
+      return "| " + r.join(" | ") + " |";
+    });
+    var sep = "|" + new Array(width + 1).join(" --- |");
+    lines.splice(1, 0, sep);
+    return lines.join("\n");
+  }
+  function mdList(el, ordered) {
+    var out = [], n = 0;
+    for (var li = el.firstElementChild; li; li = li.nextElementSibling) {
+      if (li.tagName !== "LI" || mdHidden(li)) continue;
+      n++;
+      var body = mdChildren(li).trim().replace(/\n{2,}/g, "\n").replace(/\n/g, "\n  ");
+      out.push((ordered ? n + ". " : "- ") + body);
+    }
+    return out.join("\n");
+  }
+  function mdPre(el) {
+    var code = el.querySelector("code");
+    var text = (code || el).textContent.replace(/\n+$/, "");
+    var m = /(?:^|\s)language-([\w+#-]+)/.exec((code && code.className) || el.className || "");
+    var fence = "```";
+    while (text.indexOf(fence) !== -1) fence += "`";
+    return fence + (m ? m[1] : "") + "\n" + text + "\n" + fence;
+  }
+  function mdNode(n) {
+    if (n.nodeType === 3) return n.nodeValue.replace(/\s+/g, " ");
+    if (n.nodeType !== 1) return "";
+    var tag = n.tagName;
+    if (MD_SKIP[tag] || mdHidden(n)) return "";
+    var inner;
+    switch (tag) {
+      case "H1": case "H2": case "H3": case "H4": case "H5": case "H6":
+        inner = mdInline(n);
+        return inner ? "\n\n" + new Array(Number(tag[1]) + 1).join("#") + " " + inner + "\n\n" : "";
+      case "BR": return "  \n";
+      case "HR": return "\n\n---\n\n";
+      case "STRONG": case "B": inner = mdChildren(n); return inner.trim() ? "**" + inner.trim() + "**" : inner;
+      case "EM": case "I": inner = mdChildren(n); return inner.trim() ? "*" + inner.trim() + "*" : inner;
+      case "CODE": inner = n.textContent.replace(/\s+/g, " ").trim(); return inner ? "`" + inner + "`" : "";
+      case "PRE": return "\n\n" + mdPre(n) + "\n\n";
+      case "A":
+        inner = mdInline(n);
+        if (!inner) return "";
+        return n.href && !/^javascript:/i.test(n.href) ? "[" + inner + "](" + n.href + ")" : inner;
+      case "IMG": return n.getAttribute("alt") && n.src ? "![" + n.getAttribute("alt") + "](" + n.src + ")" : "";
+      case "UL": case "OL": inner = mdList(n, tag === "OL"); return inner ? "\n\n" + inner + "\n\n" : "";
+      case "BLOCKQUOTE":
+        inner = mdChildren(n).trim();
+        return inner ? "\n\n" + inner.split("\n").map(function (l) { return l ? "> " + l : ">"; }).join("\n") + "\n\n" : "";
+      case "TABLE": inner = mdTable(n); return inner ? "\n\n" + inner + "\n\n" : "";
+      case "P": inner = mdChildren(n).trim(); return inner ? "\n\n" + inner + "\n\n" : "";
+      default:
+        inner = mdChildren(n);
+        return MD_BLOCK[tag] ? "\n\n" + inner + "\n\n" : inner;
+    }
+  }
+  function mdChildren(el) {
+    var s = "";
+    for (var c = el.firstChild; c; c = c.nextSibling) s += mdNode(c);
+    return s;
+  }
+  function toMarkdown() {
+    var root = document.querySelector("article") || document.querySelector("main") || document.body;
+    var md = mdChildren(root).replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (md) md += "\n";
+    var enc = new TextEncoder();
+    if (md.length > MD_CAP) md = md.slice(0, MD_CAP);
+    while (enc.encode(md).length > MD_CAP) md = md.slice(0, Math.floor(md.length * 0.95));
+    return md;
+  }
+
   // ------------------------------------------------------------ Actions
   var overlay = null;
   function highlight(el) {
@@ -393,6 +493,11 @@
       var old = document.querySelector("[data-relay-hints]");
       if (old) old.remove();
       return true;
+    },
+    markdown: function () {
+      var text = toMarkdown();
+      post({ kind: "markdown", text: text });
+      return text;
     },
     page_info: function () {
       return { url: location.href, title: document.title, scroll_x: window.scrollX, scroll_y: window.scrollY };

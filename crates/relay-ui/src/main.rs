@@ -1,6 +1,9 @@
 //! `relay` — the browser, plus the subcommands agents and setup use.
 
 mod app;
+mod bangs;
+mod calc;
+mod clean_url;
 mod inspector;
 mod palette;
 mod theme;

@@ -34,10 +34,13 @@ pub enum Command {
     Settings,
     ImportChrome,
     CopyMcpSetup,
+    CopyCleanUrl,
+    CopyMarkdown,
+    CloseDuplicateTabs,
 }
 
 impl Command {
-    pub const ALL: [Command; 13] = [
+    pub const ALL: [Command; 16] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -51,6 +54,9 @@ impl Command {
         Command::Settings,
         Command::ImportChrome,
         Command::CopyMcpSetup,
+        Command::CopyCleanUrl,
+        Command::CopyMarkdown,
+        Command::CloseDuplicateTabs,
     ];
 
     pub fn title(self) -> &'static str {
@@ -68,6 +74,9 @@ impl Command {
             Command::Settings => "Settings",
             Command::ImportChrome => "Import from Chrome",
             Command::CopyMcpSetup => "Copy MCP Setup Command",
+            Command::CopyCleanUrl => "Copy Clean URL",
+            Command::CopyMarkdown => "Copy Page as Markdown",
+            Command::CloseDuplicateTabs => "Close Duplicate Tabs",
         }
     }
 
@@ -84,7 +93,9 @@ impl Command {
             Command::ToggleSplit => "⌘\\",
             Command::LinkHints => "⌘J",
             Command::Settings => "⌘,",
-            Command::ImportChrome | Command::CopyMcpSetup => "",
+            Command::CopyCleanUrl => "⌘⇧C",
+            Command::CopyMarkdown => "⌘⇧M",
+            Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs => "",
         }
     }
 }
@@ -92,6 +103,10 @@ impl Command {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Open(String),
+    /// An offline `!bang` hit: opens `url`, shown as `label` (`Bang: host/path`).
+    Bang { label: String, url: String },
+    /// An inline calculator result; Enter copies it.
+    Calc(String),
     Search { query: String, url: String },
     Tab { id: TabId, title: String, url: String },
     History { title: String, url: String },
@@ -103,6 +118,8 @@ impl Item {
     pub fn title(&self) -> String {
         match self {
             Item::Open(u) => format!("Open {u}"),
+            Item::Bang { label, .. } => label.clone(),
+            Item::Calc(r) => format!("= {r}"),
             Item::Search { query, .. } => format!("Search “{query}”"),
             Item::Tab { title, url, .. } | Item::History { title, url } | Item::Bookmark { title, url } => {
                 if title.is_empty() { url.clone() } else { title.clone() }
@@ -113,7 +130,8 @@ impl Item {
 
     pub fn detail(&self) -> String {
         match self {
-            Item::Open(_) | Item::Search { .. } => String::new(),
+            Item::Open(_) | Item::Bang { .. } | Item::Search { .. } => String::new(),
+            Item::Calc(_) => "Enter to copy".to_string(),
             Item::Tab { url, .. } => format!("Tab · {}", short_url(url)),
             Item::History { url, .. } => format!("History · {}", short_url(url)),
             Item::Bookmark { url, .. } => format!("Bookmark · {}", short_url(url)),
@@ -227,6 +245,8 @@ pub struct Palette {
     pub query: String,
     pub selected: usize,
     pub items: Vec<Item>,
+    /// User-defined `(trigger, template-with-%s)` bangs; override built-ins.
+    pub custom_bangs: Vec<(String, String)>,
 }
 
 impl Palette {
@@ -257,11 +277,18 @@ impl Palette {
                 scored.push((s + 250, Item::Command(c)));
             }
         }
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.sort_by_key(|s| std::cmp::Reverse(s.0));
         let mut seen = std::collections::HashSet::new();
         let mut items: Vec<Item> = vec![];
-        if !q.is_empty() {
-            items.push(resolve(q, search_template));
+        if let Some(url) = crate::bangs::resolve(q, &self.custom_bangs) {
+            items.push(Item::Bang { label: format!("Bang: {}", short_url(&url)), url });
+        } else {
+            if let Some(result) = crate::calc::eval(q) {
+                items.push(Item::Calc(result));
+            }
+            if !q.is_empty() {
+                items.push(resolve(q, search_template));
+            }
         }
         for (_, item) in scored {
             let key = match &item {
@@ -369,5 +396,57 @@ mod tests {
         }
         assert_eq!(search_label(DEFAULT_SEARCH), "DuckDuckGo");
         assert_eq!(search_label("https://example.com/search?q=%s"), "Custom");
+    }
+
+    fn top(query: &str, custom: Vec<(String, String)>) -> Item {
+        let mut p = Palette { query: query.into(), custom_bangs: custom, ..Default::default() };
+        p.refresh(&Sources::default(), DEFAULT_SEARCH);
+        p.items[0].clone()
+    }
+
+    #[test]
+    fn bang_is_top_item_labelled() {
+        let item = top("!gh rust lang", vec![]);
+        assert_eq!(item, Item::Bang { label: "Bang: github.com/search?q=rust+lang".into(), url: "https://github.com/search?q=rust+lang".into() });
+        assert_eq!(item.title(), "Bang: github.com/search?q=rust+lang");
+        assert!(matches!(top("cats !yt", vec![]), Item::Bang { .. }));
+        let custom = vec![("gh".to_string(), "https://example.com/%s".to_string())];
+        assert_eq!(top("!gh x", custom), Item::Bang { label: "Bang: example.com/x".into(), url: "https://example.com/x".into() });
+    }
+
+    #[test]
+    fn calc_is_top_item_and_search_follows() {
+        let mut p = Palette { query: "2+3*4".into(), ..Default::default() };
+        p.refresh(&Sources::default(), DEFAULT_SEARCH);
+        assert_eq!(p.items[0], Item::Calc("14".into()));
+        assert_eq!(p.items[0].title(), "= 14");
+        assert!(matches!(p.items[1], Item::Search { .. }));
+    }
+
+    #[test]
+    fn ordinary_input_behaves_as_before() {
+        assert_eq!(top("docs.rs", vec![]), Item::Open("https://docs.rs".into()));
+        assert_eq!(top("https://x.com/a!b", vec![]), Item::Open("https://x.com/a!b".into()));
+        assert!(matches!(top("hello!", vec![]), Item::Search { .. }));
+        assert!(matches!(top("rust gpui tutorial", vec![]), Item::Search { .. }));
+        assert!(matches!(top("!nope x", vec![]), Item::Search { .. }));
+        for s in ["192.168.1.1", "1.2.3", "v1.2", "2.5", "2024-01-05", "5"] {
+            assert!(!matches!(top(s, vec![]), Item::Calc(_) | Item::Bang { .. }), "{s}");
+        }
+    }
+
+    #[test]
+    fn new_commands_are_registered() {
+        assert_eq!(Command::ALL.len(), 16);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs] {
+            assert!(Command::ALL.contains(&c));
+            assert!(!c.title().is_empty());
+        }
+        assert_eq!(Command::CopyCleanUrl.keys(), "⌘⇧C");
+        assert_eq!(Command::CopyMarkdown.keys(), "⌘⇧M");
+        assert_eq!(Command::CloseDuplicateTabs.keys(), "");
+        let mut p = Palette { query: "duplicate".into(), ..Default::default() };
+        p.refresh(&Sources::default(), DEFAULT_SEARCH);
+        assert!(p.items.contains(&Item::Command(Command::CloseDuplicateTabs)));
     }
 }

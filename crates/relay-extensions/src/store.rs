@@ -29,6 +29,51 @@ pub struct ImportCounts {
     pub history: usize,
 }
 
+/// Maximum tabs kept in the saved session.
+pub const MAX_SESSION_TABS: usize = 200;
+
+/// One tab of the saved session (only http/https URLs are persisted).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SessionTab {
+    pub url: String,
+    pub title: String,
+    pub pinned: bool,
+    pub scroll_y: f64,
+    pub active: bool,
+    pub position: i64,
+}
+
+/// Per-site preferences; the default value is never stored.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SitePrefs {
+    pub zoom: f64,
+    pub compat_mode: bool,
+    pub blocking_off: bool,
+    pub hidden_selectors: Vec<String>,
+}
+
+impl Default for SitePrefs {
+    fn default() -> Self {
+        Self { zoom: 1.0, compat_mode: false, blocking_off: false, hidden_selectors: vec![] }
+    }
+}
+
+impl SitePrefs {
+    fn normalized(&self) -> Self {
+        let zoom = if self.zoom.is_finite() { self.zoom.clamp(0.3, 5.0) } else { 1.0 };
+        Self { zoom, ..self.clone() }
+    }
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Lowercase and strip a leading `www.`.
+fn norm_host(host: &str) -> String {
+    let h = host.trim().to_lowercase();
+    h.strip_prefix("www.").map(str::to_string).unwrap_or(h)
+}
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self, Error> {
         if let Some(dir) = path.parent() {
@@ -58,7 +103,15 @@ impl Store {
              CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS extensions(
                  id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL,
-                 enabled INTEGER NOT NULL DEFAULT 1, path TEXT NOT NULL);",
+                 enabled INTEGER NOT NULL DEFAULT 1, path TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS session_tabs(
+                 position INTEGER PRIMARY KEY, url TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+                 pinned INTEGER NOT NULL DEFAULT 0, scroll_y REAL NOT NULL DEFAULT 0,
+                 active INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS site_prefs(
+                 host TEXT PRIMARY KEY, zoom REAL NOT NULL DEFAULT 1.0,
+                 compat_mode INTEGER NOT NULL DEFAULT 0, blocking_off INTEGER NOT NULL DEFAULT 0,
+                 hidden_selectors TEXT NOT NULL DEFAULT '[]');",
         )?;
         let v: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get::<_, String>(0))
@@ -123,6 +176,109 @@ impl Store {
                 folder: if folder.is_empty() { vec![] } else { folder.split('/').map(str::to_string).collect() },
             })
         })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn is_bookmarked(&self, url: &str) -> Result<bool, Error> {
+        Ok(self.conn.query_row("SELECT EXISTS(SELECT 1 FROM bookmarks WHERE url=?1)", [url], |r| r.get::<_, i64>(0))? != 0)
+    }
+
+    /// Remove the url from every folder; true if anything was removed.
+    pub fn remove_bookmark(&self, url: &str) -> Result<bool, Error> {
+        Ok(self.conn.execute("DELETE FROM bookmarks WHERE url=?1", [url])? > 0)
+    }
+
+    /// Add or remove; returns the new bookmarked state.
+    pub fn toggle_bookmark(&self, url: &str, title: &str) -> Result<bool, Error> {
+        if self.remove_bookmark(url)? {
+            return Ok(false);
+        }
+        self.add_bookmark(&Bookmark { url: url.into(), title: title.into(), folder: vec![] })?;
+        Ok(true)
+    }
+
+    /// Atomically replace the saved session. Non-http(s) URLs are dropped and
+    /// at most [`MAX_SESSION_TABS`] tabs are kept; positions are renumbered.
+    pub fn save_session(&self, tabs: &[SessionTab]) -> Result<(), Error> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM session_tabs", [])?;
+        let kept = tabs.iter().filter(|t| t.url.starts_with("http://") || t.url.starts_with("https://"));
+        for (i, t) in kept.take(MAX_SESSION_TABS).enumerate() {
+            let scroll = if t.scroll_y.is_finite() { t.scroll_y.max(0.0) } else { 0.0 };
+            tx.execute(
+                "INSERT INTO session_tabs(position, url, title, pinned, scroll_y, active) VALUES(?1,?2,?3,?4,?5,?6)",
+                params![i as i64, t.url, t.title, t.pinned as i64, scroll, t.active as i64],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn load_session(&self) -> Result<Vec<SessionTab>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT url, title, pinned, scroll_y, active, position FROM session_tabs ORDER BY position",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(SessionTab {
+                url: r.get(0)?,
+                title: r.get(1)?,
+                pinned: r.get::<_, i64>(2)? != 0,
+                scroll_y: r.get(3)?,
+                active: r.get::<_, i64>(4)? != 0,
+                position: r.get(5)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Returns the number of saved tabs removed. Call from `relay clear-data`.
+    pub fn clear_session(&self) -> Result<usize, Error> {
+        let n = self.conn.execute("DELETE FROM session_tabs", [])?;
+        self.reclaim_deleted();
+        Ok(n)
+    }
+
+    /// Prefs for a host; defaults when none are stored.
+    pub fn site_pref(&self, host: &str) -> Result<SitePrefs, Error> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT zoom, compat_mode, blocking_off, hidden_selectors FROM site_prefs WHERE host=?1",
+                [norm_host(host)],
+                |r| Ok(read_prefs(r)),
+            )
+            .optional()?;
+        Ok(row.unwrap_or_default())
+    }
+
+    /// Store prefs (zoom clamped to 0.3..=5.0); default prefs delete the row.
+    pub fn set_site_pref(&self, host: &str, prefs: SitePrefs) -> Result<(), Error> {
+        let host = norm_host(host);
+        if host.is_empty() {
+            return Err(Error::Invalid("empty host".into()));
+        }
+        let p = prefs.normalized();
+        if p.is_default() {
+            self.conn.execute("DELETE FROM site_prefs WHERE host=?1", [&host])?;
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO site_prefs(host, zoom, compat_mode, blocking_off, hidden_selectors) VALUES(?1,?2,?3,?4,?5)
+             ON CONFLICT(host) DO UPDATE SET zoom=?2, compat_mode=?3, blocking_off=?4, hidden_selectors=?5",
+            params![host, p.zoom, p.compat_mode as i64, p.blocking_off as i64, serde_json::to_string(&p.hidden_selectors)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn reset_site_pref(&self, host: &str) -> Result<bool, Error> {
+        Ok(self.conn.execute("DELETE FROM site_prefs WHERE host=?1", [norm_host(host)])? > 0)
+    }
+
+    pub fn all_site_prefs(&self) -> Result<Vec<(String, SitePrefs)>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT zoom, compat_mode, blocking_off, hidden_selectors, host FROM site_prefs ORDER BY host",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(4)?, read_prefs(r))))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -214,12 +370,15 @@ impl Store {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
+        let site_prefs: BTreeMap<String, SitePrefs> = self.all_site_prefs()?.into_iter().collect();
         let export = ProfileExport {
             schema_version: SCHEMA_VERSION,
             bookmarks,
             history,
             settings,
             extensions,
+            session_tab_count: self.load_session()?.len(),
+            site_prefs,
         };
         Ok(serde_json::to_string_pretty(&export)?)
     }
@@ -248,6 +407,18 @@ struct ProfileExport {
     history: Vec<ExportVisit>,
     settings: BTreeMap<String, String>,
     extensions: Vec<ExportExtension>,
+    session_tab_count: usize,
+    site_prefs: BTreeMap<String, SitePrefs>,
+}
+
+fn read_prefs(r: &rusqlite::Row<'_>) -> SitePrefs {
+    let hidden: String = r.get(3).unwrap_or_default();
+    SitePrefs {
+        zoom: r.get(0).unwrap_or(1.0),
+        compat_mode: r.get::<_, i64>(1).unwrap_or(0) != 0,
+        blocking_off: r.get::<_, i64>(2).unwrap_or(0) != 0,
+        hidden_selectors: serde_json::from_str(&hidden).unwrap_or_default(),
+    }
 }
 
 #[derive(Serialize)]
@@ -400,5 +571,68 @@ mod tests {
         assert_eq!(v["extensions"][0]["enabled"], true);
         assert!(v.get("passwords").is_none());
         assert!(!json.contains("password"));
+        assert_eq!(v["session_tab_count"], 0);
+        assert_eq!(v["site_prefs"], serde_json::json!({}));
+    }
+
+    fn tab(url: &str, active: bool) -> SessionTab {
+        SessionTab { url: url.into(), title: "T".into(), pinned: false, scroll_y: 12.5, active, position: 0 }
+    }
+
+    #[test]
+    fn session_round_trip_filters_caps_and_replaces() {
+        let s = Store::in_memory().unwrap();
+        assert!(s.load_session().unwrap().is_empty());
+        let mut pinned = tab("https://b.test/", false);
+        pinned.pinned = true;
+        s.save_session(&[tab("https://a.test/", true), tab("about:blank", false), tab("file:///etc/passwd", false), pinned]).unwrap();
+        let got = s.load_session().unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!((got[0].url.as_str(), got[0].active, got[0].position, got[0].scroll_y), ("https://a.test/", true, 0, 12.5));
+        assert_eq!((got[1].url.as_str(), got[1].pinned, got[1].position), ("https://b.test/", true, 1));
+        s.save_session(&[tab("http://c.test/", true)]).unwrap();
+        assert_eq!(s.load_session().unwrap().len(), 1);
+        let many: Vec<_> = (0..300).map(|i| tab(&format!("https://x.test/{i}"), false)).collect();
+        s.save_session(&many).unwrap();
+        assert_eq!(s.load_session().unwrap().len(), MAX_SESSION_TABS);
+        // clear_history leaves the session alone; clear_session is separate.
+        s.clear_history().unwrap();
+        assert_eq!(s.load_session().unwrap().len(), MAX_SESSION_TABS);
+        assert_eq!(s.clear_session().unwrap(), MAX_SESSION_TABS);
+        assert!(s.load_session().unwrap().is_empty());
+        s.save_session(&[]).unwrap();
+    }
+
+    #[test]
+    fn site_prefs_defaults_normalize_clamp_reset() {
+        let s = Store::in_memory().unwrap();
+        assert_eq!(s.site_pref("a.test").unwrap(), SitePrefs::default());
+        s.set_site_pref("WWW.Example.com", SitePrefs { zoom: 9.0, compat_mode: true, blocking_off: false, hidden_selectors: vec![".ad".into()] }).unwrap();
+        let p = s.site_pref("example.com").unwrap();
+        assert_eq!((p.zoom, p.compat_mode, p.hidden_selectors.clone()), (5.0, true, vec![".ad".to_string()]));
+        s.set_site_pref("example.com", SitePrefs { zoom: 0.01, ..p }).unwrap();
+        assert_eq!(s.site_pref("www.example.com").unwrap().zoom, 0.3);
+        assert_eq!(s.all_site_prefs().unwrap().len(), 1);
+        assert_eq!(s.all_site_prefs().unwrap()[0].0, "example.com");
+        let v: serde_json::Value = serde_json::from_str(&s.export_json().unwrap()).unwrap();
+        assert_eq!(v["site_prefs"]["example.com"]["compat_mode"], true);
+        // Writing defaults stores no row.
+        s.set_site_pref("example.com", SitePrefs::default()).unwrap();
+        assert!(s.all_site_prefs().unwrap().is_empty());
+        s.set_site_pref("b.test", SitePrefs { blocking_off: true, ..Default::default() }).unwrap();
+        assert!(s.reset_site_pref("b.test").unwrap());
+        assert!(!s.reset_site_pref("b.test").unwrap());
+    }
+
+    #[test]
+    fn bookmark_toggle() {
+        let s = Store::in_memory().unwrap();
+        assert!(!s.is_bookmarked("https://a.test/").unwrap());
+        assert!(s.toggle_bookmark("https://a.test/", "A").unwrap());
+        assert!(s.is_bookmarked("https://a.test/").unwrap());
+        assert!(!s.toggle_bookmark("https://a.test/", "A").unwrap());
+        assert!(!s.remove_bookmark("https://a.test/").unwrap());
+        s.toggle_bookmark("https://a.test/", "A").unwrap();
+        assert!(s.remove_bookmark("https://a.test/").unwrap());
     }
 }
