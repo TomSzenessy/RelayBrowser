@@ -1,9 +1,9 @@
-# Handoff — Relay Tier 1 shell wiring (local, unpushed)
+# Handoff — Relay Tier 1 shell wiring (PR #40, draft)
 
 <!-- index: operate | Handover record scaffold (local HANDOVER.md or committed handoff) | A fresh actor needs a focused continuation record. -->
 
 - **Created (UTC):** `2026-11-22T18:00:00Z`
-- **Next actor/session focus:** push `feat/tier1-daily-driver`, get Linux + macOS-15 CI green, observe the new shortcuts on a Mac, then finish the rest of Tier 1 (#39).
+- **Next actor/session focus:** observe Tier 1 on a Mac from the PR's `Relay-macOS` artifact, mark draft PR #40 ready (that starts the Linux CI jobs, which skip drafts), merge, then #36 residuals and Tier 2.
 - **Sharing boundary:** public repository (`github.com/TomSzenessy/RelayBrowser`).
 
 ## Objective
@@ -38,6 +38,13 @@ WebKit engine on top of the store/bridge checkpoint `95bffa3`.
 | Local CI | **measured**: rust verify + test-future + garden pass; `npm test` failed only because host Node is v12 (no `node --test`); no JS changed | `make ci-local` with python3 → 3.12 |
 | Independent critic | **ship-with-residuals** on `8a1a6ee` (first pass found 2 blockers, fixed) | critic role |
 | macOS runtime | **not observed** — the macOS-only `imp` in `crates/relay-ui/src/web.rs` is not compiled on Linux | — |
+
+## Update 2026-11-22 ~19:00 UTC
+
+- Pushed; draft PR #40 (`Fixes #39`). All Tier 1 items are now on the branch: in addition to the list above, custom bangs (`relay config set bangs`), cookie-banner hiding (`CMP_FILTERS`), per-site blocking and compat-mode palette toggles, and a tab-bar audio marker.
+- macOS-15 CI (manual dispatch; draft PR runs skip by design) passed on `b14aa7d` (run 45055235796) and `5a94fca` (run 45055894618): relay-ui compiled, 54 unit + 7 CLI + all crate tests, WebKit smoke sleep/wake live DOM, 5.8 MB DMG. A run on `23fb71d` was queued at handover.
+- Second critic: `blocker` (reload before recompiled rules applied; unresolvable bang triggers) fixed in `23fb71d`, then `ship-with-residuals`. Residuals documented in `docs/relay.md`: compat misses cross-host redirects and loads twice; failed rule recompile only logs.
+- Linux CI (`ci.yml`) has not run on this branch yet because the PR is a draft.
 
 ## Exact next action
 
