@@ -15,7 +15,19 @@ fn doctor_prints_versions_paths_profile_and_mcp_state() {
     let out = relay(dir.path(), &["doctor"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = String::from_utf8_lossy(&out.stdout);
-    for expected in ["relay ", "engine:", "home:", "mcp socket:", "profile:", "bridge:", "agents: claude mcp add relay"] {
+    for expected in [
+        "relay ",
+        "engine:",
+        "home:",
+        "mcp socket:",
+        "profile:",
+        "search: default (DuckDuckGo)",
+        "blocking: on",
+        "sleep: 15 min",
+        "mcp: on",
+        "bridge:",
+        "agents: claude mcp add relay",
+    ] {
         assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
     }
     assert!(text.contains("absent"), "a fresh RELAY_HOME has no socket:\n{text}");
@@ -26,9 +38,118 @@ fn help_lists_doctor_and_version_is_clean() {
     let dir = tempfile::tempdir().unwrap();
     let help = relay(dir.path(), &["--help"]);
     assert!(help.status.success());
-    assert!(String::from_utf8_lossy(&help.stdout).contains("relay doctor"));
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    for expected in ["relay config", "relay export", "relay clear-data", "relay doctor"] {
+        assert!(help_text.contains(expected), "missing {expected:?} in:\n{help_text}");
+    }
 
     let version = relay(dir.path(), &["--version"]);
     assert!(version.status.success());
     assert_eq!(String::from_utf8_lossy(&version.stdout).trim(), format!("relay {}", env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
+fn config_list_get_set_and_rejects_unknown_key() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let list = relay(dir.path(), &["config", "list"]);
+    assert!(list.status.success(), "{}", String::from_utf8_lossy(&list.stderr));
+    let list_text = String::from_utf8_lossy(&list.stdout);
+    assert!(list_text.contains("DuckDuckGo"), "default search should be DuckDuckGo:\n{list_text}");
+    assert!(list_text.contains("blocking = on"), ":\n{list_text}");
+    assert!(list_text.contains("sleep_minutes = 15"), ":\n{list_text}");
+    assert!(list_text.contains("mcp = on"), ":\n{list_text}");
+
+    for args in [
+        &["config", "set", "search", "kagi"][..],
+        &["config", "set", "blocking", "off"][..],
+        &["config", "set", "sleep_minutes", "0"][..],
+        &["config", "set", "mcp", "off"][..],
+    ] {
+        let out = relay(dir.path(), args);
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    let checks = [
+        ("search", "https://kagi.com/search?q=%s"),
+        ("blocking", "off"),
+        ("sleep_minutes", "0"),
+        ("mcp", "off"),
+    ];
+    for (key, expected) in checks {
+        let out = relay(dir.path(), &["config", "get", key]);
+        assert!(out.status.success(), "get {key}: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expected);
+    }
+
+    let doc = relay(dir.path(), &["doctor"]);
+    assert!(doc.status.success(), "{}", String::from_utf8_lossy(&doc.stderr));
+    let doc_text = String::from_utf8_lossy(&doc.stdout);
+    for expected in ["https://kagi.com/search?q=%s (Kagi)", "blocking: off", "sleep: off", "mcp: off"] {
+        assert!(doc_text.contains(expected), "missing {expected:?} in doctor:\n{doc_text}");
+    }
+
+    for bad in [
+        &["config", "set", "bogus", "foo"][..],
+        &["config", "get", "bogus"][..],
+        &["config", "set", "blocking", "maybe"][..],
+        &["config", "set", "sleep_minutes", "-1"][..],
+        &["config", "set", "sleep_minutes", "99999"][..],
+        &["config", "set", "search", "not-a-url"][..],
+    ] {
+        let out = relay(dir.path(), bad);
+        assert!(!out.status.success(), "expected failure for {bad:?}, got stdout: {}", String::from_utf8_lossy(&out.stdout));
+    }
+}
+
+#[test]
+fn export_outputs_valid_json_and_writes_private_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let set = relay(dir.path(), &["config", "set", "search", "brave"]);
+    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+
+    let stdout_out = relay(dir.path(), &["export"]);
+    assert!(stdout_out.status.success(), "{}", String::from_utf8_lossy(&stdout_out.stderr));
+    let raw = String::from_utf8_lossy(&stdout_out.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&raw).expect("valid export JSON");
+    assert_eq!(parsed["settings"]["search"], "https://search.brave.com/search?q=%s");
+    assert!(parsed["bookmarks"].is_array());
+    assert!(parsed["history"].is_array());
+    assert!(parsed.get("passwords").is_none());
+    assert!(!raw.to_ascii_lowercase().contains("password"));
+
+    let export_path = dir.path().join("backup.json");
+    let file_out = relay(dir.path(), &["export", export_path.to_str().unwrap()]);
+    assert!(file_out.status.success(), "{}", String::from_utf8_lossy(&file_out.stderr));
+    let file_text = std::fs::read_to_string(&export_path).expect("read exported file");
+    let file_parsed: serde_json::Value = serde_json::from_str(&file_text).expect("valid exported file JSON");
+    assert_eq!(file_parsed["settings"]["search"], "https://search.brave.com/search?q=%s");
+    assert!(file_parsed["bookmarks"].is_array());
+    assert!(file_parsed["history"].is_array());
+    assert!(file_parsed.get("passwords").is_none());
+    assert!(!file_text.to_ascii_lowercase().contains("password"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&export_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "export file must be 0600, got {mode:#o}");
+    }
+}
+
+#[test]
+fn clear_data_requires_yes_confirmation() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let denied = relay(dir.path(), &["clear-data", "--history"]);
+    assert!(!denied.status.success(), "clear-data without --yes must fail");
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("--yes"));
+
+    let ok_hist = relay(dir.path(), &["clear-data", "--history", "--yes"]);
+    assert!(ok_hist.status.success(), "{}", String::from_utf8_lossy(&ok_hist.stderr));
+    assert!(String::from_utf8_lossy(&ok_hist.stdout).contains("Cleared 0 history entries"));
+
+    let ok_bm = relay(dir.path(), &["clear-data", "--bookmarks", "--yes"]);
+    assert!(ok_bm.status.success(), "{}", String::from_utf8_lossy(&ok_bm.stderr));
+    assert!(String::from_utf8_lossy(&ok_bm.stdout).contains("Cleared 0 bookmarks"));
 }

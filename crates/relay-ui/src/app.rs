@@ -37,6 +37,7 @@ actions!(
         ToggleInspector,
         WebInspector,
         ToggleSplit,
+        ToggleSettings,
         LinkHints,
         Quit,
         SelectTab1,
@@ -67,6 +68,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-alt-i", ToggleInspector, None),
         KeyBinding::new("secondary-alt-u", WebInspector, None),
         KeyBinding::new("secondary-\\", ToggleSplit, None),
+        KeyBinding::new("secondary-,", ToggleSettings, None),
         KeyBinding::new("secondary-j", LinkHints, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-1", SelectTab1, None),
@@ -97,11 +99,17 @@ pub struct RelayApp {
     palette: Option<Palette>,
     /// ⌘T opens the palette for a new tab; ⌘K/⌘L target the current tab.
     palette_new_tab: bool,
+    settings_open: bool,
+    blocking: bool,
+    sleep_minutes: u64,
+    mcp_enabled: bool,
+    confirm_clear_history: bool,
     sources: Sources,
     inspector_open: bool,
     panel: Panel,
     tree: Tree,
     console_min: ConsoleLevel,
+    network_failed_only: bool,
     split: Option<TabId>,
     closed: Vec<String>,
     hints: Option<Hints>,
@@ -128,10 +136,14 @@ impl RelayApp {
         cx: &mut Context<Self>,
     ) -> Self {
         let web = WebHost::new(hub.clone(), window);
-        let rules = relay_webkit::content_rules::compile(&blocklist());
-        web.load_content_rules(&rules.to_json());
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
-        let sleep_minutes = store.as_ref().and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok());
+        let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
+        let sleep_minutes = store.as_ref().and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok()).unwrap_or(15);
+        let mcp_enabled = setting_enabled(store.as_ref().and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
+        if blocking {
+            let rules = relay_webkit::content_rules::compile(&blocklist());
+            web.load_content_rules(&rules.to_json());
+        }
         let focus = cx.focus_handle();
         window.focus(&focus);
         let mut app = Self {
@@ -143,11 +155,17 @@ impl RelayApp {
             theme: Theme::for_appearance(window.appearance()),
             palette: None,
             palette_new_tab: false,
+            settings_open: false,
+            blocking,
+            sleep_minutes,
+            mcp_enabled,
+            confirm_clear_history: false,
             sources: Sources::default(),
             inspector_open: false,
             panel: Panel::Elements,
             tree: Tree::default(),
             console_min: ConsoleLevel::Log,
+            network_failed_only: false,
             split: None,
             closed: vec![],
             hints: None,
@@ -155,7 +173,7 @@ impl RelayApp {
             search,
             seen_version: 0,
             recorded: HashMap::new(),
-            sleep_policy: SleepPolicy { idle_after: Duration::from_secs(sleep_minutes.unwrap_or(15) * 60), keep_awake_min: 1 },
+            sleep_policy: SleepPolicy { idle_after: Duration::from_secs(sleep_minutes.saturating_mul(60)), keep_awake_min: 1 },
             last_sleep_check: Instant::now(),
             placements: Rc::default(),
             snapshots: HashMap::new(),
@@ -289,6 +307,9 @@ impl RelayApp {
     }
 
     fn sleep_idle_tabs(&mut self, cx: &mut Context<Self>) {
+        if self.sleep_minutes == 0 {
+            return;
+        }
         let visible: Vec<TabId> = self.visible_tabs();
         let due = {
             let h = self.hub.lock();
@@ -304,6 +325,9 @@ impl RelayApp {
                     .map(|v| (v["scroll_x"].as_f64().unwrap_or(0.0), v["scroll_y"].as_f64().unwrap_or(0.0)))
                     .unwrap_or((0.0, 0.0));
                 let _ = this.update(cx, |app, cx| {
+                    if app.sleep_minutes == 0 {
+                        return;
+                    }
                     // The user (or an agent) may have used the tab meanwhile.
                     let still_due = {
                         let h = app.hub.lock();
@@ -402,6 +426,8 @@ impl RelayApp {
     }
 
     fn open_palette(&mut self, prefill: Option<String>, new_tab: bool) {
+        self.settings_open = false;
+        self.confirm_clear_history = false;
         self.palette_new_tab = new_tab;
         self.sources = Sources {
             tabs: self.hub.lock().tabs().map(|t| (t.id, t.title.clone(), t.url.clone())).collect(),
@@ -423,6 +449,25 @@ impl RelayApp {
 
     fn close_palette(&mut self) {
         self.palette = None;
+        if let Some(t) = self.active() {
+            self.web.borrow().focus_page(t);
+        }
+    }
+
+    fn toggle_settings(&mut self) {
+        if self.settings_open {
+            self.close_settings();
+        } else {
+            self.palette = None;
+            self.confirm_clear_history = false;
+            self.settings_open = true;
+            self.web.borrow().focus_shell();
+        }
+    }
+
+    fn close_settings(&mut self) {
+        self.settings_open = false;
+        self.confirm_clear_history = false;
         if let Some(t) = self.active() {
             self.web.borrow().focus_page(t);
         }
@@ -461,6 +506,7 @@ impl RelayApp {
             Command::WebInspector => active.into_iter().for_each(|t| self.web.borrow_mut().apply(BrowserRequest::OpenWebInspector(t))),
             Command::ToggleSplit => self.toggle_split(),
             Command::LinkHints => self.start_hints(),
+            Command::Settings => self.toggle_settings(),
             Command::ImportChrome => self.import_chrome(cx),
             Command::CopyMcpSetup => {
                 cx.write_to_clipboard(ClipboardItem::new_string(mcp_setup_command()));
@@ -562,6 +608,26 @@ impl RelayApp {
             }
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        if self.settings_open {
+            if k.key.as_str() == "escape" {
+                self.close_settings();
+                cx.stop_propagation();
+                cx.notify();
+            }
+            return;
+        }
+        if self.palette.is_none() && self.active().is_none() {
+            if let Some(c) = k
+                .key_char
+                .as_deref()
+                .filter(|c| !c.is_empty() && c.chars().all(|ch| !ch.is_control()) && !k.modifiers.secondary() && !k.modifiers.control)
+            {
+                self.open_palette(Some(c.to_string()), true);
+                cx.stop_propagation();
+                cx.notify();
+            }
             return;
         }
         let Some(p) = self.palette.as_mut() else { return };
@@ -723,7 +789,7 @@ impl RelayApp {
                     .child(div().max_w(px(520.)).text_size(px(12.)).text_color(t.muted).child(SharedString::from(error)))
                     .child(
                         div()
-                            .id("retry-page")
+                            .id(("retry-page", tab as usize))
                             .px_3()
                             .py_1p5()
                             .rounded(px(6.))
@@ -844,6 +910,51 @@ impl RelayApp {
                     .child(p.title()),
             );
         }
+        tabs = tabs.child(div().flex_1());
+        if self.panel == Panel::Network {
+            let failed_only = self.network_failed_only;
+            tabs = tabs.child(
+                div()
+                    .id("network-filter")
+                    .px_2()
+                    .py_0p5()
+                    .rounded(px(4.))
+                    .text_size(px(11.))
+                    .cursor_pointer()
+                    .text_color(if failed_only { t.error } else { t.muted })
+                    .when(failed_only, |d| d.bg(t.active))
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.network_failed_only = !app.network_failed_only;
+                        cx.notify();
+                    }))
+                    .child(if failed_only { "Failed" } else { "All" }),
+            );
+        } else if self.panel == Panel::Console {
+            let level = self.console_min;
+            let active_filter = level != ConsoleLevel::Log;
+            tabs = tabs.child(
+                div()
+                    .id("console-filter")
+                    .px_2()
+                    .py_0p5()
+                    .rounded(px(4.))
+                    .text_size(px(11.))
+                    .cursor_pointer()
+                    .text_color(match level {
+                        ConsoleLevel::Error => t.error,
+                        ConsoleLevel::Warn => t.warn,
+                        _ => t.muted,
+                    })
+                    .when(active_filter, |d| d.bg(t.active))
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.console_min = next_console_min(app.console_min);
+                        cx.notify();
+                    }))
+                    .child(console_filter_label(level)),
+            );
+        }
         let body = self.render_panel_body(cx);
         div()
             .w(px(380.))
@@ -896,9 +1007,14 @@ impl RelayApp {
                 }
             }
             Panel::Network => {
-                let rows = inspector::network_rows(tab, "");
+                let rows = if self.network_failed_only {
+                    inspector::network_rows_filtered(tab, "", true)
+                } else {
+                    inspector::network_rows(tab, "")
+                };
                 if rows.is_empty() {
-                    return div().p_2().text_color(t.muted).child("No requests yet").into_any_element();
+                    let empty = if self.network_failed_only { "No failed requests" } else { "No requests yet" };
+                    return div().p_2().text_color(t.muted).child(empty).into_any_element();
                 }
                 for r in rows.into_iter().take(500) {
                     col = col.child(
@@ -1027,6 +1143,142 @@ impl RelayApp {
         )
     }
 
+    fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let pill = |id: &'static str, label: SharedString, danger: bool| {
+            div()
+                .id(id)
+                .px_3()
+                .py_1()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(if danger { t.error } else { t.border })
+                .bg(t.background)
+                .text_size(px(12.))
+                .text_color(if danger { t.error } else { t.text })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child(label)
+        };
+        let row = |title: &'static str, subtitle: Option<&'static str>, control: gpui::AnyElement| {
+            let mut left = div().flex().flex_col().gap_0p5().child(div().text_size(px(13.)).text_color(t.text).child(title));
+            if let Some(sub) = subtitle {
+                left = left.child(div().text_size(px(11.)).text_color(t.muted).child(sub));
+            }
+            div().flex().items_center().justify_between().px_4().py_2p5().border_b_1().border_color(t.border).child(left).child(control)
+        };
+        let sleep_label: SharedString = if self.sleep_minutes == 0 { "Off".into() } else { format!("{} min", self.sleep_minutes).into() };
+        let clear_label: SharedString = if self.confirm_clear_history { "Confirm clear history".into() } else { "Clear history".into() };
+        let search_btn = pill("settings-search", palette::search_label(&self.search).into(), false)
+            .on_click(cx.listener(|app, _, _, cx| {
+                let idx = palette::SEARCH_PRESETS
+                    .iter()
+                    .position(|(_, url)| *url == app.search)
+                    .map(|i| (i + 1) % palette::SEARCH_PRESETS.len())
+                    .unwrap_or(0);
+                app.search = palette::SEARCH_PRESETS[idx].1.to_string();
+                if let Some(store) = &app.store {
+                    let _ = store.set_setting("search", &app.search);
+                }
+                cx.notify();
+            }))
+            .into_any_element();
+        let blocking_btn = pill("settings-blocking", if self.blocking { "On" } else { "Off" }.into(), false)
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.blocking = !app.blocking;
+                if let Some(store) = &app.store {
+                    let _ = store.set_setting("blocking", if app.blocking { "on" } else { "off" });
+                }
+                if app.blocking {
+                    let rules = relay_webkit::content_rules::compile(&blocklist());
+                    app.web.borrow().load_content_rules(&rules.to_json());
+                } else {
+                    app.web.borrow().clear_content_rules();
+                }
+                cx.notify();
+            }))
+            .into_any_element();
+        let sleep_btn = pill("settings-sleep", sleep_label, false)
+            .on_click(cx.listener(|app, _, _, cx| {
+                const PRESETS: [u64; 5] = [5, 15, 30, 60, 0];
+                let idx = PRESETS.iter().position(|&m| m == app.sleep_minutes).map(|i| (i + 1) % PRESETS.len()).unwrap_or(0);
+                app.sleep_minutes = PRESETS[idx];
+                app.sleep_policy.idle_after = Duration::from_secs(app.sleep_minutes * 60);
+                if let Some(store) = &app.store {
+                    let _ = store.set_setting("sleep_minutes", &app.sleep_minutes.to_string());
+                }
+                cx.notify();
+            }))
+            .into_any_element();
+        let mcp_btn = pill("settings-mcp", if self.mcp_enabled { "On" } else { "Off" }.into(), false)
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.mcp_enabled = !app.mcp_enabled;
+                if let Some(store) = &app.store {
+                    let _ = store.set_setting("mcp", if app.mcp_enabled { "on" } else { "off" });
+                }
+                cx.notify();
+            }))
+            .into_any_element();
+        let clear_btn = pill("settings-clear-history", clear_label, self.confirm_clear_history)
+            .on_click(cx.listener(|app, _, _, cx| {
+                if !app.confirm_clear_history {
+                    app.confirm_clear_history = true;
+                } else {
+                    app.confirm_clear_history = false;
+                    match app.store.as_ref().map(|s| s.clear_history()) {
+                        Some(Ok(n)) => app.toast(format!("Cleared {n} history entries")),
+                        Some(Err(e)) => app.toast(format!("Clear history failed: {e}")),
+                        None => app.toast("Profile store unavailable"),
+                    }
+                }
+                cx.notify();
+            }))
+            .into_any_element();
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
+            div()
+                .id("settings")
+                .w(px(520.))
+                .flex()
+                .flex_col()
+                .rounded(px(10.))
+                .bg(t.surface)
+                .border_1()
+                .border_color(t.border)
+                .shadow_lg()
+                .overflow_hidden()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.close_settings();
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(44.))
+                        .px_4()
+                        .border_b_1()
+                        .border_color(t.border)
+                        .child(div().text_size(px(15.)).text_color(t.text).child("Settings"))
+                        .child(div().text_size(px(12.)).text_color(t.muted).child("Esc")),
+                )
+                .child(row("Search engine", None, search_btn))
+                .child(row("Ad & tracker blocking", None, blocking_btn))
+                .child(row("Tab sleep timeout", None, sleep_btn))
+                .child(row("Local MCP server", Some("(restart to apply)"), mcp_btn))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px_4()
+                        .py_2p5()
+                        .child(div().text_size(px(13.)).text_color(t.text).child("Browsing history"))
+                        .child(clear_btn),
+                ),
+        )
+    }
+
     /// What the window title should say: the active page, or Relay itself.
     fn document_title(&self) -> String {
         let h = self.hub.lock();
@@ -1051,7 +1303,11 @@ impl RelayApp {
         if agents > 0 {
             right.push_str(&format!(" · {agents} agent"));
         }
-        right.push_str(" · agents: relay mcp");
+        if self.mcp_enabled {
+            right.push_str(" · agents: relay mcp");
+        } else {
+            right.push_str(" · mcp: off");
+        }
         div()
             .h(px(24.))
             .flex()
@@ -1084,15 +1340,15 @@ impl Render for RelayApp {
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
-        if self.palette.is_some() {
-            // Keep native views from covering the palette overlay.
+        let overlay_open = self.palette.is_some() || self.settings_open;
+        if overlay_open {
+            // Keep native views from covering the palette or settings overlay.
             self.web.borrow().layout(&[]);
             self.placements.borrow_mut().clear();
         }
         let t = self.theme;
         let mut main = div().flex_1().flex().overflow_hidden().child(self.render_tab_bar(cx));
-        let palette_open = self.palette.is_some();
-        main = main.child(if palette_open { div().flex_1().h_full().bg(t.page).into_any_element() } else { self.render_content(cx).into_any_element() });
+        main = main.child(if overlay_open { div().flex_1().h_full().bg(t.page).into_any_element() } else { self.render_content(cx).into_any_element() });
         if self.inspector_open {
             main = main.child(self.render_inspector(cx));
         }
@@ -1120,9 +1376,18 @@ impl Render for RelayApp {
                 app.open_palette(url, false);
                 cx.notify();
             }))
-            .on_action(cx.listener(|app, _: &NewTab, _, cx| app.run_command(Command::NewTab, cx)))
-            .on_action(cx.listener(|app, _: &CloseTab, _, cx| app.run_command(Command::CloseTab, cx)))
-            .on_action(cx.listener(|app, _: &ReopenClosedTab, _, cx| app.run_command(Command::ReopenClosedTab, cx)))
+            .on_action(cx.listener(|app, _: &NewTab, _, cx| {
+                app.run_command(Command::NewTab, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &CloseTab, _, cx| {
+                app.run_command(Command::CloseTab, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ReopenClosedTab, _, cx| {
+                app.run_command(Command::ReopenClosedTab, cx);
+                cx.notify();
+            }))
             .on_action(cx.listener(|app, _: &Reload, _, cx| app.run_command(Command::Reload, cx)))
             .on_action(cx.listener(|app, _: &Back, _, cx| app.run_command(Command::Back, cx)))
             .on_action(cx.listener(|app, _: &Forward, _, cx| app.run_command(Command::Forward, cx)))
@@ -1143,6 +1408,10 @@ impl Render for RelayApp {
                 app.run_command(Command::ToggleSplit, cx);
                 cx.notify()
             }))
+            .on_action(cx.listener(|app, _: &ToggleSettings, _, cx| {
+                app.toggle_settings();
+                cx.notify();
+            }))
             .on_action(cx.listener(|app, _: &LinkHints, _, cx| {
                 app.run_command(Command::LinkHints, cx);
                 cx.notify()
@@ -1158,7 +1427,32 @@ impl Render for RelayApp {
         if let Some(p) = &self.palette {
             root = root.child(self.render_palette(p, cx));
         }
+        if self.settings_open {
+            root = root.child(self.render_settings(cx));
+        }
         root
+    }
+}
+
+pub(crate) fn setting_enabled(value: Option<&str>) -> bool {
+    !matches!(value.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("off" | "false" | "0"))
+}
+
+fn next_console_min(level: ConsoleLevel) -> ConsoleLevel {
+    match level {
+        ConsoleLevel::Log | ConsoleLevel::Info => ConsoleLevel::Warn,
+        ConsoleLevel::Warn => ConsoleLevel::Error,
+        ConsoleLevel::Error => ConsoleLevel::Debug,
+        ConsoleLevel::Debug => ConsoleLevel::Log,
+    }
+}
+
+fn console_filter_label(level: ConsoleLevel) -> &'static str {
+    match level {
+        ConsoleLevel::Log | ConsoleLevel::Info => "Log+",
+        ConsoleLevel::Warn => "Warn+",
+        ConsoleLevel::Error => "Errors",
+        ConsoleLevel::Debug => "All",
     }
 }
 
@@ -1221,4 +1515,48 @@ where
         std::task::Poll::Pending
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::Action;
+    use std::collections::HashSet;
+
+    #[test]
+    fn key_bindings_cover_documented_shortcuts() {
+        let bindings = key_bindings();
+        assert_eq!(bindings.len(), 25);
+        let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
+        let required: [&'static str; 25] = [
+            OpenPalette.name(),
+            OpenLocation.name(),
+            NewTab.name(),
+            CloseTab.name(),
+            ReopenClosedTab.name(),
+            Reload.name(),
+            Back.name(),
+            Forward.name(),
+            NextTab.name(),
+            PrevTab.name(),
+            ToggleInspector.name(),
+            WebInspector.name(),
+            ToggleSplit.name(),
+            ToggleSettings.name(),
+            LinkHints.name(),
+            Quit.name(),
+            SelectTab1.name(),
+            SelectTab2.name(),
+            SelectTab3.name(),
+            SelectTab4.name(),
+            SelectTab5.name(),
+            SelectTab6.name(),
+            SelectTab7.name(),
+            SelectTab8.name(),
+            SelectTab9.name(),
+        ];
+        for name in required {
+            assert!(bound.contains(name), "missing key binding for {name}");
+        }
+    }
 }

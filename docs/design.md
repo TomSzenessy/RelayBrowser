@@ -60,9 +60,10 @@ none under Reduce Motion.
 | ⌘[ / ⌘] / ⌘R | back / forward / reload |
 | ⌘⌥I | toggle the native Inspector |
 | ⌘⌥U | WebKit Web Inspector (fallback) |
+| ⌘, | toggle Settings (search engine, blocking, sleep timeout, MCP, clear data) |
 | ⌘\ | split / unsplit the content area |
 | ⌘J, or f with the page focused (not in a text field) | link hints |
-| Esc | close palette / hints |
+| Esc | close palette / settings / hints |
 
 On Linux development builds, ⌘ is Ctrl (GPUI's `secondary` modifier).
 

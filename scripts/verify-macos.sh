@@ -47,6 +47,7 @@ cargo run --locked -p relay-webkit --example smoke
 
 say "bridge suite in Playwright WebKit"
 if command -v npm >/dev/null; then
+  cargo build -q --locked -p relay-bridge --example validate
   (cd js && npm ci --ignore-scripts --no-audit --no-fund && npx playwright install webkit && npm test)
 else
   echo "SKIP: npm not installed; the macOS CI job runs this suite"

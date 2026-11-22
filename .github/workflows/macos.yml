@@ -1,34 +1,59 @@
 name: macos
 
-# Real Apple Silicon evidence: every crate compiles, links and runs its tests
-# against the system WebKit; the WebKit smoke example loads a page through the
-# actual engine and bridge; the release binary is packaged as Relay.app.
+# Real Apple Silicon evidence on macos-15: every crate compiles, links and runs
+# its tests against the system WebKit; the WebKit smoke example loads a page
+# through the actual engine and bridge; the release binary is packaged as
+# Relay.app + Relay-macOS.dmg, verified with `relay doctor`, uploaded as a
+# workflow artifact, and published to GitHub Releases on main pushes and
+# published releases.
 # GitHub-hosted macOS runners are free for public repositories.
 
-# Manual: this account's GitHub-hosted macOS requests stay queued (the
-# macos-14 arm64 configuration is rejected, macos-13 never receives a runner).
-# Dispatch it from a Mac or after a macOS self-hosted runner is attached.
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'js/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/bundle-macos.sh'
+      - 'scripts/verify-macos.sh'
+      - 'scripts/publish-macos-release.sh'
+      - 'assets/**'
+      - '.github/workflows/macos.yml'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'crates/**'
+      - 'js/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/bundle-macos.sh'
+      - 'scripts/verify-macos.sh'
+      - 'scripts/publish-macos-release.sh'
+      - 'assets/**'
+      - '.github/workflows/macos.yml'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       runner:
-        description: "Runner label: macos-13, macos-14, macos-15, or a self-hosted macOS label"
+        description: "Runner label: macos-15, macos-14, or a self-hosted macOS label"
         required: false
         type: string
-        default: macos-13
+        default: macos-15
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: macos-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   macos:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: build, test and smoke (Apple Silicon)
-    runs-on: ${{ inputs.runner || 'macos-13' }}
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -50,35 +75,55 @@ jobs:
           rustup default 1.100.0
           cargo --version
 
+      - name: Cache Cargo registry and incremental build artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: macos-15-rust-1.100
+          cache-on-failure: true
+
       - name: Test every crate against the system WebKit
         run: cargo test --workspace --locked
 
       - name: Smoke-test the engine in a real WKWebView
         run: cargo run --locked -p relay-webkit --example smoke
 
+      - name: Cache Playwright WebKit browser
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-webkit-macos-${{ hashFiles('js/package-lock.json') }}
+
       - name: Bridge tests in Playwright's WebKit
         run: |
+          cargo build -q --locked -p relay-bridge --example validate
           cd js
           npm ci --ignore-scripts --no-audit --no-fund
           npx playwright install webkit
           npm test
 
-      - name: Build and package Relay.app
+      - name: Build and package Relay.app and Relay-macOS.dmg
         run: |
           cargo build --release --locked -p relay-ui
           bash scripts/bundle-macos.sh
+
+      - name: Verify Relay.app binary
+        run: |
+          ls -lh dist/Relay.app/Contents/MacOS/relay dist/Relay-macOS.dmg
+          dist/Relay.app/Contents/MacOS/relay doctor
 
       - name: Zip the app for the artifact
         run: |
           mkdir -p dist
           ditto -c -k --keepParent dist/Relay.app dist/Relay-macOS.zip
-          shasum -a 256 dist/Relay-macOS.zip | tee dist/Relay-macOS.zip.sha256
+          (cd dist && shasum -a 256 Relay-macOS.zip | tee Relay-macOS.zip.sha256)
 
-      - name: Upload Relay.app
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Upload Relay.app and DMG artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Relay-macOS
           path: |
+            dist/Relay-macOS.dmg
+            dist/Relay-macOS.dmg.sha256
             dist/Relay-macOS.zip
             dist/Relay-macOS.zip.sha256
           if-no-files-found: error
@@ -86,7 +131,7 @@ jobs:
 
       - name: Upload crash and diagnostic logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-diagnostics
           path: |
@@ -94,3 +139,28 @@ jobs:
             ~/Library/Application Support/Relay/**
           if-no-files-found: ignore
           retention-days: 7
+
+  publish-release:
+    needs: macos
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'release'
+    name: publish macOS DMG release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download macOS build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Relay-macOS
+          path: dist
+
+      - name: Publish DMG and checksums to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-macos-release.sh dist

@@ -69,3 +69,54 @@ impl Theme {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn linearize(c: f32) -> f64 {
+        let c = c.clamp(0.0, 1.0) as f64;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn relative_luminance(c: Hsla) -> f64 {
+        let rgb = c.to_rgb();
+        0.2126 * linearize(rgb.r) + 0.7152 * linearize(rgb.g) + 0.0722 * linearize(rgb.b)
+    }
+
+    fn contrast_ratio(a: Hsla, b: Hsla) -> f64 {
+        let (l1, l2) = (relative_luminance(a), relative_luminance(b));
+        let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    fn assert_wcag_aa(name: &str, t: Theme) {
+        for (pair, fg, bg, min) in [
+            ("text/background", t.text, t.background, 4.5),
+            ("text/surface", t.text, t.surface, 4.5),
+            ("text/page", t.text, t.page, 4.5),
+            ("muted/background", t.muted, t.background, 4.5),
+            ("muted/surface", t.muted, t.surface, 4.5),
+            ("code/surface", t.code, t.surface, 4.5),
+            ("accent/surface", t.accent, t.surface, 3.0),
+            ("error/surface", t.error, t.surface, 3.0),
+            ("warn/surface", t.warn, t.surface, 3.0),
+        ] {
+            let ratio = contrast_ratio(fg, bg);
+            assert!(
+                ratio >= min,
+                "{name} {pair} contrast {ratio:.2}:1 is below WCAG AA {min:.1}:1"
+            );
+        }
+    }
+
+    #[test]
+    fn dark_and_light_meet_wcag_aa_contrast() {
+        assert_wcag_aa("dark", Theme::dark());
+        assert_wcag_aa("light", Theme::light());
+    }
+}

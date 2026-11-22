@@ -104,6 +104,9 @@ impl BridgeHandler {
     /// A failed main-frame load: WebKit renders its own blank error page, so
     /// the shell hides the view and shows a readable error with Retry.
     fn note_error(&self, error: &NSError) {
+        if error.code() == -999 && error.domain().to_string() == "NSURLErrorDomain" {
+            return;
+        }
         let message = error.localizedDescription().to_string();
         let tab = self.ivars().tab;
         self.ivars().hub.update(|h| {
@@ -125,6 +128,7 @@ pub struct Engine {
     hub: SharedHub,
     events: Rc<dyn Fn(EngineEvent)>,
     rules: Rc<RefCell<Option<Retained<WKContentRuleList>>>>,
+    blocking_enabled: Rc<std::cell::Cell<bool>>,
     /// Every live tab's controller, shared with the async rule compile so
     /// tabs opened before compilation finishes still get blocking.
     uccs: Rc<RefCell<Vec<Retained<WKUserContentController>>>>,
@@ -145,6 +149,7 @@ impl Engine {
             hub,
             events: Rc::new(events),
             rules: Rc::new(RefCell::new(None)),
+            blocking_enabled: Rc::new(std::cell::Cell::new(false)),
             uccs: Rc::default(),
             extensions: None,
             tabs: HashMap::new(),
@@ -166,10 +171,15 @@ impl Engine {
     /// Compile WebKit content-blocker JSON once (cached by WebKit across launches)
     /// and apply it to every tab.
     pub fn load_content_rules(&self, json: &str) {
+        self.blocking_enabled.set(true);
         let Some(store) = (unsafe { WKContentRuleListStore::defaultStore(self.mtm) }) else { return };
         let slot = self.rules.clone();
+        let enabled = self.blocking_enabled.clone();
         let uccs = self.uccs.clone();
         let done = RcBlock::new(move |list: *mut WKContentRuleList, err: *mut NSError| {
+            if !enabled.get() {
+                return;
+            }
             if let Some(list) = unsafe { Retained::retain(list) } {
                 for ucc in uccs.borrow().iter() {
                     unsafe {
@@ -188,6 +198,16 @@ impl Engine {
                 Some(&NSString::from_str(json)),
                 Some(&done),
             );
+        }
+    }
+
+    /// Remove any active content rule lists from every live tab and stop
+    /// applying them to future tabs.
+    pub fn clear_content_rules(&self) {
+        self.blocking_enabled.set(false);
+        *self.rules.borrow_mut() = None;
+        for ucc in self.uccs.borrow().iter() {
+            unsafe { ucc.removeAllContentRuleLists() };
         }
     }
 
@@ -366,17 +386,23 @@ impl Engine {
         // Record the tab now so a wake before the snapshot lands still works;
         // the callback only attaches the image (if the tab is still asleep).
         slept.borrow_mut().insert(tab, SleptTab { url: url.clone(), scroll_x: scroll.0, scroll_y: scroll.1, snapshot_jpeg: None });
-        let keep = RcBlock::new(move |img: *mut NSImage, _err: *mut NSError| {
+        let tab_holder = Rc::new(RefCell::new(Some(t)));
+        let holder_for_block = tab_holder.clone();
+        let keep = RcBlock::new(move |img: *mut NSImage, err: *mut NSError| {
+            if let Some(e) = unsafe { err.as_ref() } {
+                eprintln!("relay: tab {tab} snapshot failed: {}", e.localizedDescription());
+            }
             let jpeg = unsafe { img.as_ref() }.and_then(jpeg_from_image);
             if let Some(entry) = slept.borrow_mut().get_mut(&tab) {
                 entry.snapshot_jpeg = jpeg;
                 events(EngineEvent::Slept(tab));
             }
+            if let Some(tab) = holder_for_block.borrow_mut().take() {
+                teardown(&tab);
+            }
         });
-        unsafe { t.view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
-        // WebKit retains the view for the in-flight snapshot, so detaching now
-        // is safe; the WKWebView is freed once the snapshot completes.
-        teardown(&t);
+        let view = tab_holder.borrow().as_ref().unwrap().view.clone();
+        unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
     }
 
     pub fn slept(&self, tab: TabId) -> Option<SleptTab> {

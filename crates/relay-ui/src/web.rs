@@ -48,7 +48,7 @@ mod imp {
             if objc2::available!(macos = 15.4) {
                 engine.set_extension_controller(unsafe { objc2_web_kit::WKWebExtensionController::new(mtm) });
             }
-            let shell = window.window_handle().ok().and_then(|h| match h.as_raw() {
+            let shell = HasWindowHandle::window_handle(window).ok().and_then(|h| match h.as_raw() {
                 // SAFETY: AppKit handles carry a valid NSView for the window's lifetime.
                 RawWindowHandle::AppKit(a) => unsafe { Retained::retain(a.ns_view.as_ptr().cast::<NSView>()) },
                 _ => None,
@@ -62,6 +62,10 @@ mod imp {
 
         pub fn load_content_rules(&self, json: &str) {
             self.engine.load_content_rules(json);
+        }
+
+        pub fn clear_content_rules(&self) {
+            self.engine.clear_content_rules();
         }
 
         pub fn apply(&mut self, req: BrowserRequest) {
@@ -132,6 +136,8 @@ mod imp {
         pub fn load_extension(&self, dir: &std::path::Path, id: &str, done: impl Fn(Result<String, String>) + 'static) {
             if let Some(c) = self.engine.extension_controller() {
                 relay_extensions::mac::load_extension(self.mtm, c, dir, id, done);
+            } else {
+                done(Err("extensions require macOS 15.4+".into()));
             }
         }
     }
@@ -152,6 +158,7 @@ mod imp {
             false
         }
         pub fn load_content_rules(&self, _json: &str) {}
+        pub fn clear_content_rules(&self) {}
         pub fn apply(&mut self, _req: BrowserRequest) {}
         pub fn wake(&mut self, _tab: TabId) {}
         pub fn after_load(&mut self, _tab: TabId) {}

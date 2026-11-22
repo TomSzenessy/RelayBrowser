@@ -20,13 +20,17 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 mod mac {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSApplication;
-    use objc2_foundation::{NSDate, NSRunLoop};
+    use objc2::{MainThreadMarker, MainThreadOnly};
+    use objc2_app_kit::{NSApplication, NSBackingStoreType, NSWindow, NSWindowStyleMask};
+    use objc2_foundation::{NSDate, NSPoint, NSRect, NSRunLoop, NSSize};
     use relay_bridge::{DomNode, Op, Owner, SharedHub, TabId};
     use relay_webkit::mac::Engine;
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use std::time::{Duration, Instant};
     use tokio::sync::oneshot::error::TryRecvError;
 
@@ -42,12 +46,20 @@ mod mac {
   </script>
 </body></html>"#;
 
-    fn serve() -> (String, std::thread::JoinHandle<()>) {
+    fn serve() -> (String, Arc<AtomicBool>, SocketAddr, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
         let handle = std::thread::spawn(move || {
-            for _ in 0..16 {
+            loop {
+                if stop_flag.load(Ordering::Relaxed) {
+                    return;
+                }
                 let Ok((mut stream, _)) = listener.accept() else { return };
+                if stop_flag.load(Ordering::Relaxed) {
+                    return;
+                }
                 let mut buf = [0u8; 4096];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let request = String::from_utf8_lossy(&buf[..n]);
@@ -68,7 +80,7 @@ mod mac {
                 let _ = stream.flush();
             }
         });
-        (format!("http://{addr}/"), handle)
+        (format!("http://{addr}/"), stop, addr, handle)
     }
 
     fn pump(seconds: f64) {
@@ -124,11 +136,27 @@ mod mac {
         app.setActivationPolicy(objc2_app_kit::NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
 
-        let (url, server) = serve();
+        // Host the WebView in an offscreen borderless window so
+        // takeSnapshotWithConfiguration has a real backing store on headless macOS 15.
+        let win = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                NSWindow::alloc(mtm),
+                NSRect::new(NSPoint::new(-2000.0, -2000.0), NSSize::new(800.0, 600.0)),
+                NSWindowStyleMask::Borderless,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        win.orderBack(None);
+
+        let (url, stop, addr, server) = serve();
         let hub = SharedHub::new();
         let tab = hub.update(|h| h.create_tab(&url, Owner::User));
         let mut engine = Engine::new(mtm, hub.clone(), |e| eprintln!("smoke: engine event {e:?}"));
         engine.create(tab, &url);
+        if let Some(view) = engine.view(tab) {
+            win.contentView().unwrap().addSubview(view);
+        }
 
         assert!(
             until(|| hub.lock().tab(tab).is_some_and(|t| t.dom.root().is_some()), 20.0),
@@ -181,14 +209,19 @@ mod mac {
         let info = op(&engine, &hub, tab, Op::PageInfo);
         assert_eq!(info["title"], "Relay smoke");
 
-        // A refused connection is surfaced as a readable load error (the shell
-        // hides WebKit's blank error page and shows Retry).
-        let dead = "http://127.0.0.1:1/";
-        let failed_tab = hub.update(|h| h.create_tab(dead, Owner::User));
-        engine.create(failed_tab, dead);
+        // A refused connection on an ephemeral closed port (avoiding port 1,
+        // which WebKit blocks on the Fetch bad-port list before navigation)
+        // must surface as a readable load error.
+        let dead_port = TcpListener::bind("127.0.0.1:0").expect("bind dead port").local_addr().expect("dead addr").port();
+        let dead = format!("http://127.0.0.1:{dead_port}/");
+        let failed_tab = hub.update(|h| h.create_tab(&dead, Owner::User));
+        engine.create(failed_tab, &dead);
+        if let Some(view) = engine.view(failed_tab) {
+            win.contentView().unwrap().addSubview(view);
+        }
         assert!(
             until(|| hub.lock().tab(failed_tab).is_some_and(|t| t.load_error.is_some()), 15.0),
-            "a refused navigation did not set load_error"
+            "a refused navigation to {dead} did not set load_error"
         );
         println!("smoke: load error = {:?}", hub.lock().tab(failed_tab).unwrap().load_error);
 
@@ -201,6 +234,9 @@ mod mac {
             "sleep did not capture a JPEG snapshot"
         );
         engine.wake(tab);
+        if let Some(view) = engine.view(tab) {
+            win.contentView().unwrap().addSubview(view);
+        }
         assert!(!hub.lock().tab(tab).unwrap().sleeping, "wake left the tab asleep");
         assert!(
             until(|| hub.lock().tab(tab).is_some_and(|t| t.dom.root().is_some()), 20.0),
@@ -208,7 +244,10 @@ mod mac {
         );
         engine.after_load(tab);
         println!("smoke: sleep/wake returned a live DOM");
+        stop.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect(addr);
         server.join().ok();
+        let _ = &win;
         println!("SMOKE OK: hello, DOM, console, fetch(500), click, and page info all verified in WKWebView");
         std::process::exit(0);
     }
