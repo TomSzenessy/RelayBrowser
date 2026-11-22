@@ -140,8 +140,11 @@ modules the palette calls before its normal URL/search item:
 - **Offline !bangs**: `!gh rust lang` or `rust lang !gh` (also `rs`, `crates`,
   `docs`, `mdn`, `yt`, `so`, `npm`, `w`, `k`, `g`, `ddg`, `maps`) becomes
   `Item::Bang` at the top; an empty query opens the site homepage; unknown
-  bangs fall through to the normal search. `Palette::custom_bangs`
-  (`trigger`, template with `%s`) overrides built-ins. No network lookup.
+  bangs fall through to the normal search. Custom bangs come from the
+  `bangs` setting (`relay config set bangs "gh=https://example.com/s?q=%s
+  w=https://wiki.test/?q=%s"`): space-separated `trigger=template` pairs,
+  http(s) templates only, validated by `bangs::parse_custom`; they override
+  built-ins and load at launch. No network lookup.
 - **Calculator**: `+ - * / % ^`, parentheses, unary minus, decimals, optional
   leading `=`. Bare numbers, versions/IPs, dates, division by zero and
   non-finite results return nothing; nesting is capped at 64. The result is

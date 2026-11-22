@@ -139,6 +139,8 @@ pub struct RelayApp {
     find: Option<FindBar>,
     toast: Option<(String, Instant)>,
     search: String,
+    /// `bangs` setting, parsed; invalid settings are ignored with a log line.
+    custom_bangs: Vec<(String, String)>,
     seen_version: u64,
     recorded: HashMap<TabId, (u64, String)>,
     sleep_policy: SleepPolicy,
@@ -166,6 +168,16 @@ impl RelayApp {
         let web = WebHost::new(hub.clone(), window);
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
+        let custom_bangs = store
+            .as_ref()
+            .and_then(|s| s.setting("bangs").ok().flatten())
+            .map(|raw| {
+                crate::bangs::parse_custom(&raw).unwrap_or_else(|bad| {
+                    eprintln!("relay: ignoring the bangs setting, invalid entry {bad:?}");
+                    vec![]
+                })
+            })
+            .unwrap_or_default();
         let sleep_minutes = store.as_ref().and_then(|s| s.setting("sleep_minutes").ok().flatten()).and_then(|m| m.parse::<u64>().ok()).unwrap_or(15);
         let mcp_enabled = setting_enabled(store.as_ref().and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
         if blocking {
@@ -200,6 +212,7 @@ impl RelayApp {
             find: None,
             toast: None,
             search,
+            custom_bangs,
             seen_version: 0,
             recorded: HashMap::new(),
             sleep_policy: SleepPolicy { idle_after: Duration::from_secs(sleep_minutes.saturating_mul(60)), keep_awake_min: 1 },
@@ -620,7 +633,7 @@ impl RelayApp {
                 .collect(),
             bookmarks: self.store.as_ref().and_then(|s| s.bookmarks().ok()).unwrap_or_default().into_iter().map(|b| (b.title, b.url)).collect(),
         };
-        let mut p = Palette { query: prefill.unwrap_or_default(), ..Default::default() };
+        let mut p = Palette { query: prefill.unwrap_or_default(), custom_bangs: self.custom_bangs.clone(), ..Default::default() };
         p.refresh(&self.sources, &self.search);
         self.palette = Some(p);
         self.web.borrow().focus_shell();

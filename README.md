@@ -82,7 +82,7 @@ include its output in a bug report. `relay config`, `relay export [FILE]`, and
 `relay clear-data --history --yes` manage local settings, backups, and erasure.
 Open tabs come back asleep on relaunch (`relay config set restore_session off`
 to disable); clearing history also erases the saved session, and `--session`
-clears only that.
+clears only that. Custom `!bangs`: `relay config set bangs "gh=https://example.com/s?q=%s"`.
 
 ## Working on this repository
 

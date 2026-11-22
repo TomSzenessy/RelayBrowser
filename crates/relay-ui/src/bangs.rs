@@ -48,6 +48,27 @@ fn origin(template: &str) -> String {
     }
 }
 
+/// Parse the `bangs` setting: whitespace-separated `trigger=template` pairs,
+/// e.g. `gh=https://example.com/s?q=%s w=https://wiki.test/?q=%s`. Triggers
+/// are letters, digits, `-` or `_` (a leading `!` is allowed); templates must
+/// be http(s) URLs. Returns the pairs, or the first invalid entry.
+pub fn parse_custom(setting: &str) -> Result<Vec<(String, String)>, String> {
+    let mut out: Vec<(String, String)> = vec![];
+    for entry in setting.split_whitespace() {
+        let (trigger, template) = entry.split_once('=').ok_or_else(|| entry.to_string())?;
+        let trigger = trigger.trim_start_matches('!').to_ascii_lowercase();
+        let trigger_ok = !trigger.is_empty() && trigger.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        let lower = template.to_ascii_lowercase();
+        let template_ok = (lower.starts_with("https://") || lower.starts_with("http://")) && template.len() > "https://".len();
+        if !trigger_ok || !template_ok {
+            return Err(entry.to_string());
+        }
+        out.retain(|(t, _)| *t != trigger); // the last definition wins
+        out.push((trigger, template.to_string()));
+    }
+    Ok(out)
+}
+
 fn lookup(trigger: &str, query: &str, custom: &[(String, String)]) -> Option<String> {
     let trig = trigger.to_ascii_lowercase();
     let custom_hit = custom.iter().find(|(t, _)| t.trim().trim_start_matches('!').eq_ignore_ascii_case(&trig));
@@ -163,6 +184,18 @@ mod tests {
         assert_eq!(resolve("!wiki", &custom).as_deref(), Some("https://wiki.test"));
         assert_eq!(resolve("!gh", &custom).as_deref(), Some("https://example.com"));
         assert_eq!(resolve("!yt cats", &custom).as_deref(), Some("https://www.youtube.com/results?search_query=cats"));
+    }
+
+    #[test]
+    fn custom_setting_parses_pairs_and_rejects_bad_entries() {
+        let parsed = parse_custom("  !GH=https://example.com/s?q=%s\nwiki=https://wiki.test/?q=%s gh=https://b.test/%s ").unwrap();
+        assert_eq!(parsed, vec![("wiki".into(), "https://wiki.test/?q=%s".into()), ("gh".into(), "https://b.test/%s".into())]);
+        assert_eq!(parse_custom("").unwrap(), vec![]);
+        assert_eq!(parse_custom("x=javascript:alert(1)"), Err("x=javascript:alert(1)".into()));
+        assert_eq!(parse_custom("noequals"), Err("noequals".into()));
+        assert_eq!(parse_custom("b@d=https://a.test/%s"), Err("b@d=https://a.test/%s".into()));
+        assert_eq!(parse_custom("=https://a.test/%s"), Err("=https://a.test/%s".into()));
+        assert_eq!(parse_custom("x=https://"), Err("x=https://".into()));
     }
 
     #[test]

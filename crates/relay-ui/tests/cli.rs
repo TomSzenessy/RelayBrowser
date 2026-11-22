@@ -191,3 +191,20 @@ fn clear_data_removes_the_saved_session() {
     assert!(String::from_utf8_lossy(&hist.stdout).contains("Cleared 3 saved session tabs"));
     assert_eq!(saved(), 0, "clearing history must also clear the saved session");
 }
+
+#[test]
+fn config_bangs_validates_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let ok = relay(dir.path(), &["config", "set", "bangs", "!GH=https://example.com/s?q=%s  w=https://wiki.test/?q=%s"]);
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    let get = relay(dir.path(), &["config", "get", "bangs"]);
+    assert_eq!(String::from_utf8_lossy(&get.stdout).trim(), "gh=https://example.com/s?q=%s w=https://wiki.test/?q=%s");
+    let list = relay(dir.path(), &["config", "list"]);
+    assert!(String::from_utf8_lossy(&list.stdout).contains("bangs = gh=https://example.com/s?q=%s"));
+
+    let bad = relay(dir.path(), &["config", "set", "bangs", "x=javascript:alert(1)"]);
+    assert!(!bad.status.success(), "non-http templates must be rejected");
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("invalid bangs entry"));
+    let still = relay(dir.path(), &["config", "get", "bangs"]);
+    assert!(String::from_utf8_lossy(&still.stdout).starts_with("gh="), "a rejected value leaves the old one");
+}
