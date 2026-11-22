@@ -63,6 +63,8 @@ none under Reduce Motion.
 | ⌘, | toggle Settings (search engine, blocking, sleep timeout, MCP, clear data) |
 | ⌘\ | split / unsplit the content area |
 | ⌘J, or f with the page focused (not in a text field) | link hints |
+| ⌘⇧C | copy the current URL without tracking parameters |
+| ⌘⇧M | copy the page's main content as Markdown |
 | Esc | close palette / settings / hints |
 
 On Linux development builds, ⌘ is Ctrl (GPUI's `secondary` modifier).

@@ -126,8 +126,9 @@ modules the palette calls before its normal URL/search item:
   `Item::Calc` and Enter copies it.
 - **Clean URL**: `clean_url::clean` strips `utm_*` and click ids (`si` only on
   YouTube/Spotify) and unwraps google `/url?q=` and facebook `l.php?u=`
-  redirects. Backs the `Copy Clean URL` command (⌘⇧C); `Copy Page as
-  Markdown` (⌘⇧M) and `Close Duplicate Tabs` are listed but run in `app.rs`.
+  redirects. Backs the `Copy Clean URL` command (⌘⇧C). `Copy Page as
+  Markdown` (⌘⇧M) runs `Op::Markdown` on the active tab, waits up to 3 s for
+  the bridge's reply, and copies it; `Close Duplicate Tabs` runs in `app.rs`.
 
 ## Checking Relay off-Mac
 

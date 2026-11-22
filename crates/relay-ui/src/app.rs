@@ -39,6 +39,8 @@ actions!(
         ToggleSplit,
         ToggleSettings,
         LinkHints,
+        CopyCleanUrl,
+        CopyMarkdown,
         Quit,
         SelectTab1,
         SelectTab2,
@@ -70,6 +72,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-\\", ToggleSplit, None),
         KeyBinding::new("secondary-,", ToggleSettings, None),
         KeyBinding::new("secondary-j", LinkHints, None),
+        KeyBinding::new("secondary-shift-c", CopyCleanUrl, None),
+        KeyBinding::new("secondary-shift-m", CopyMarkdown, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-1", SelectTab1, None),
         KeyBinding::new("secondary-2", SelectTab2, None),
@@ -566,12 +570,40 @@ impl RelayApp {
                     self.toast("Copied clean URL");
                 }
             }
-            Command::CopyMarkdown => {
-                // TODO(#39): wire Op::Markdown through the async bridge op runner in the Tier 1 UI pass.
-                self.toast("Copy page as Markdown is pending UI wiring (#39)");
-            }
+            Command::CopyMarkdown => self.copy_markdown(cx),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
         }
+    }
+
+    /// Ask the active page for its main content as Markdown (`Op::Markdown`,
+    /// read-only, capped at 200 KB by the bridge) and copy it.
+    fn copy_markdown(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active() else {
+            self.toast("No page to copy");
+            return;
+        };
+        let (script, rx) = match self.hub.begin_command(tab, Op::Markdown) {
+            Ok(v) => v,
+            Err(e) => {
+                self.toast(format!("Could not read the page: {e}"));
+                return;
+            }
+        };
+        self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
+        cx.spawn(async move |this, cx| {
+            let reply = futures_timeout(rx, Duration::from_secs(3), cx).await;
+            let _ = this.update(cx, |app, cx| {
+                match reply.as_ref().and_then(|v| v.as_str()).filter(|t| !t.trim().is_empty()) {
+                    Some(text) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+                        app.toast(format!("Copied page as Markdown ({})", byte_size(text.len())));
+                    }
+                    None => app.toast("This page has no content to copy as Markdown"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn close_duplicate_tabs(&mut self) {
@@ -1508,6 +1540,14 @@ impl Render for RelayApp {
                 app.run_command(Command::LinkHints, cx);
                 cx.notify()
             }))
+            .on_action(cx.listener(|app, _: &CopyCleanUrl, _, cx| {
+                app.run_command(Command::CopyCleanUrl, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &CopyMarkdown, _, cx| {
+                app.run_command(Command::CopyMarkdown, cx);
+                cx.notify();
+            }))
             .on_action(cx.listener(|app, _: &Quit, _, cx| {
                 app.save_session();
                 cx.quit()
@@ -1609,6 +1649,15 @@ fn blocklist() -> String {
         s.push_str(&extra);
     }
     s
+}
+
+/// "820 B", "14 KB" for toasts.
+fn byte_size(n: usize) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else {
+        format!("{} KB", n.div_ceil(1024))
+    }
 }
 
 /// What the saved session keeps (matches `Store::save_session`).
@@ -1727,11 +1776,18 @@ mod tests {
     }
 
     #[test]
+    fn byte_size_reads_naturally() {
+        assert_eq!(byte_size(820), "820 B");
+        assert_eq!(byte_size(1024), "1 KB");
+        assert_eq!(byte_size(14_000), "14 KB");
+    }
+
+    #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 25);
+        assert_eq!(bindings.len(), 27);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 25] = [
+        let required: [&'static str; 27] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -1747,6 +1803,8 @@ mod tests {
             ToggleSplit.name(),
             ToggleSettings.name(),
             LinkHints.name(),
+            CopyCleanUrl.name(),
+            CopyMarkdown.name(),
             Quit.name(),
             SelectTab1.name(),
             SelectTab2.name(),
