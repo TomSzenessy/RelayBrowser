@@ -42,6 +42,7 @@ actions!(
         CopyCleanUrl,
         CopyMarkdown,
         ToggleBookmark,
+        TogglePin,
         Quit,
         SelectTab1,
         SelectTab2,
@@ -76,6 +77,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-shift-c", CopyCleanUrl, None),
         KeyBinding::new("secondary-shift-m", CopyMarkdown, None),
         KeyBinding::new("secondary-d", ToggleBookmark, None),
+        KeyBinding::new("secondary-alt-p", TogglePin, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-1", SelectTab1, None),
         KeyBinding::new("secondary-2", SelectTab2, None),
@@ -360,31 +362,34 @@ impl RelayApp {
             self.sleep_policy.due(&h, &visible, Instant::now())
         };
         for tab in due {
-            // Ask the page for its scroll offset, then sleep it.
-            let Ok((script, rx)) = self.hub.begin_command(tab, Op::PageInfo) else { continue };
-            self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
-            cx.spawn(async move |this, cx| {
-                let reply = futures_timeout(rx, Duration::from_millis(500), cx).await;
-                let scroll = reply
-                    .map(|v| (v["scroll_x"].as_f64().unwrap_or(0.0), v["scroll_y"].as_f64().unwrap_or(0.0)))
-                    .unwrap_or((0.0, 0.0));
-                let _ = this.update(cx, |app, cx| {
-                    if app.sleep_minutes == 0 {
-                        return;
-                    }
-                    // The user (or an agent) may have used the tab meanwhile.
-                    let still_due = {
-                        let h = app.hub.lock();
-                        app.sleep_policy.due(&h, &app.visible_tabs(), Instant::now()).contains(&tab)
-                    };
-                    if still_due {
-                        app.web.borrow_mut().sleep(tab, scroll);
-                        cx.notify();
-                    }
-                });
-            })
-            .detach();
+            self.sleep_with_scroll(tab, cx, |app, tab| {
+                // The user (or an agent) may have used the tab meanwhile.
+                app.sleep_minutes != 0 && {
+                    let h = app.hub.lock();
+                    app.sleep_policy.due(&h, &app.visible_tabs(), Instant::now()).contains(&tab)
+                }
+            });
         }
+    }
+
+    /// Ask the page for its scroll offset, then sleep it if `still` holds
+    /// when the reply (or a 500 ms timeout) arrives.
+    fn sleep_with_scroll(&mut self, tab: TabId, cx: &mut Context<Self>, still: fn(&RelayApp, TabId) -> bool) {
+        let Ok((script, rx)) = self.hub.begin_command(tab, Op::PageInfo) else { return };
+        self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
+        cx.spawn(async move |this, cx| {
+            let reply = futures_timeout(rx, Duration::from_millis(500), cx).await;
+            let scroll = reply
+                .map(|v| (v["scroll_x"].as_f64().unwrap_or(0.0), v["scroll_y"].as_f64().unwrap_or(0.0)))
+                .unwrap_or((0.0, 0.0));
+            let _ = this.update(cx, |app, cx| {
+                if still(app, tab) {
+                    app.web.borrow_mut().sleep(tab, scroll);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     // -------------------------------------------------------- helpers
@@ -424,8 +429,12 @@ impl RelayApp {
         self.web.borrow().focus_page(tab);
     }
 
-    fn close_active(&mut self) {
+    fn close_active(&mut self, cx: &mut Context<Self>) {
         let Some(tab) = self.active() else { return };
+        if self.hub.lock().tab(tab).is_some_and(|t| t.pinned) {
+            self.put_pinned_away(tab, cx);
+            return;
+        }
         if let Some(t) = self.hub.update(|h| h.close_tab(tab)) {
             if t.url.starts_with("http") {
                 self.closed.push(t.url);
@@ -438,6 +447,34 @@ impl RelayApp {
         self.web.borrow_mut().apply(BrowserRequest::Close(tab));
         if let Some(next) = self.active() {
             self.activate(next);
+        }
+    }
+
+    /// ⌘W on a pinned tab keeps it: switch to a neighbour and sleep it (0 MB).
+    fn put_pinned_away(&mut self, tab: TabId, cx: &mut Context<Self>) {
+        if self.hub.lock().tab_ids().len() < 2 {
+            self.toast("Pinned tabs stay open; unpin with ⌘⌥P to close");
+            return;
+        }
+        if self.split == Some(tab) {
+            self.split = None;
+        }
+        self.cycle(1);
+        self.sleep_with_scroll(tab, cx, |app, tab| app.active() != Some(tab) && !app.visible_tabs().contains(&tab));
+        self.toast("Pinned tab put to sleep");
+    }
+
+    /// ⌘⌥P: pin or unpin the active tab (pinned tabs sit at the top).
+    fn toggle_pin(&mut self) {
+        let Some(tab) = self.active() else { return };
+        let now = self.hub.update(|h| {
+            let pinned = h.tab(tab).is_some_and(|t| t.pinned);
+            h.set_pinned(tab, !pinned)
+        });
+        match now {
+            Some(true) => self.toast("Pinned tab"),
+            Some(false) => self.toast("Unpinned tab"),
+            None => {}
         }
     }
 
@@ -536,7 +573,7 @@ impl RelayApp {
         let active = self.active();
         match c {
             Command::NewTab => self.open_palette(None, true),
-            Command::CloseTab => self.close_active(),
+            Command::CloseTab => self.close_active(cx),
             Command::ReopenClosedTab => {
                 if let Some(url) = self.closed.pop() {
                     self.open_url(url, true);
@@ -574,6 +611,7 @@ impl RelayApp {
             }
             Command::CopyMarkdown => self.copy_markdown(cx),
             Command::ToggleBookmark => self.toggle_bookmark(),
+            Command::TogglePin => self.toggle_pin(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
         }
     }
@@ -851,6 +889,9 @@ impl RelayApp {
             }
             if tab.challenge.is_some() {
                 r = r.child(div().text_color(t.warn).child("⚠"));
+            }
+            if tab.pinned {
+                r = r.child(div().text_color(t.muted).text_size(px(11.)).child("pin"));
             }
             if tab.sleeping {
                 r = r.child(div().text_color(t.muted).text_size(px(11.)).child("zz"));
@@ -1572,6 +1613,10 @@ impl Render for RelayApp {
                 app.run_command(Command::ToggleBookmark, cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|app, _: &TogglePin, _, cx| {
+                app.run_command(Command::TogglePin, cx);
+                cx.notify();
+            }))
             .on_action(cx.listener(|app, _: &Quit, _, cx| {
                 app.save_session();
                 cx.quit()
@@ -1809,9 +1854,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 28);
+        assert_eq!(bindings.len(), 29);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 28] = [
+        let required: [&'static str; 29] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -1830,6 +1875,7 @@ mod tests {
             CopyCleanUrl.name(),
             CopyMarkdown.name(),
             ToggleBookmark.name(),
+            TogglePin.name(),
             Quit.name(),
             SelectTab1.name(),
             SelectTab2.name(),

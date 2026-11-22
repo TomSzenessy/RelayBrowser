@@ -453,6 +453,16 @@ impl Hub {
         &self.order
     }
 
+    /// Pin or unpin a tab. Pinned tabs form a block at the top of the order:
+    /// pinning moves a tab to the end of that block, unpinning to just after
+    /// it. Returns the new state, or `None` for an unknown tab.
+    pub fn set_pinned(&mut self, id: TabId, pinned: bool) -> Option<bool> {
+        self.tabs.get_mut(&id)?.pinned = pinned;
+        let others_pinned = self.order.iter().filter(|t| **t != id && self.tabs.get(t).is_some_and(|s| s.pinned)).count();
+        self.move_tab(id, others_pinned);
+        Some(pinned)
+    }
+
     pub fn move_tab(&mut self, id: TabId, to: usize) {
         if let Some(pos) = self.order.iter().position(|x| *x == id) {
             self.order.remove(pos);
@@ -631,6 +641,21 @@ mod tests {
         let h = hub.lock();
         let t = h.tab(tab).unwrap();
         assert_eq!((t.load_seq, t.url.as_str(), t.challenge), (1, "https://b.test/", None));
+    }
+
+    #[test]
+    fn pinned_tabs_form_a_block_at_the_top() {
+        let hub = SharedHub::new();
+        let [a, b, c, d] = hub.update(|h| ["a", "b", "c", "d"].map(|n| h.create_tab(&format!("https://{n}.test/"), Owner::User)));
+        hub.update(|h| {
+            assert_eq!(h.set_pinned(c, true), Some(true));
+            assert_eq!(h.set_pinned(d, true), Some(true));
+        });
+        assert_eq!(hub.lock().tab_ids(), &[c, d, a, b], "pinning appends to the pinned block");
+        hub.update(|h| h.set_pinned(c, false));
+        assert_eq!(hub.lock().tab_ids(), &[d, c, a, b], "unpinning lands right after the block");
+        assert!(!hub.lock().tab(c).unwrap().pinned);
+        assert_eq!(hub.update(|h| h.set_pinned(999, true)), None);
     }
 
     #[test]

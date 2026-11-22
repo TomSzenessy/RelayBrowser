@@ -66,6 +66,7 @@ none under Reduce Motion.
 | ⌘⇧C | copy the current URL without tracking parameters |
 | ⌘⇧M | copy the page's main content as Markdown |
 | ⌘D | bookmark the page, or remove its bookmark |
+| ⌘⌥P | pin / unpin the tab; pinned tabs sit at the top, show `pin`, never auto-sleep, and ⌘W sleeps them instead of closing |
 | Esc | close palette / settings / hints |
 
 On Linux development builds, ⌘ is Ctrl (GPUI's `secondary` modifier).

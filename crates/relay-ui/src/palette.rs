@@ -38,10 +38,11 @@ pub enum Command {
     CopyMarkdown,
     CloseDuplicateTabs,
     ToggleBookmark,
+    TogglePin,
 }
 
 impl Command {
-    pub const ALL: [Command; 17] = [
+    pub const ALL: [Command; 18] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -59,6 +60,7 @@ impl Command {
         Command::CopyMarkdown,
         Command::CloseDuplicateTabs,
         Command::ToggleBookmark,
+        Command::TogglePin,
     ];
 
     pub fn title(self) -> &'static str {
@@ -80,6 +82,7 @@ impl Command {
             Command::CopyMarkdown => "Copy Page as Markdown",
             Command::CloseDuplicateTabs => "Close Duplicate Tabs",
             Command::ToggleBookmark => "Bookmark This Page",
+            Command::TogglePin => "Pin / Unpin Tab",
         }
     }
 
@@ -99,6 +102,7 @@ impl Command {
             Command::CopyCleanUrl => "⌘⇧C",
             Command::CopyMarkdown => "⌘⇧M",
             Command::ToggleBookmark => "⌘D",
+            Command::TogglePin => "⌘⌥P",
             Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs => "",
         }
     }
@@ -441,8 +445,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 17);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark] {
+        assert_eq!(Command::ALL.len(), 18);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }
@@ -450,6 +454,7 @@ mod tests {
         assert_eq!(Command::CopyMarkdown.keys(), "⌘⇧M");
         assert_eq!(Command::CloseDuplicateTabs.keys(), "");
         assert_eq!(Command::ToggleBookmark.keys(), "⌘D");
+        assert_eq!(Command::TogglePin.keys(), "⌘⌥P");
         let mut p = Palette { query: "duplicate".into(), ..Default::default() };
         p.refresh(&Sources::default(), DEFAULT_SEARCH);
         assert!(p.items.contains(&Item::Command(Command::CloseDuplicateTabs)));

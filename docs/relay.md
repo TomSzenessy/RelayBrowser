@@ -97,6 +97,13 @@ hidden until the bridge delivers a DOM, while the shell paints the JPEG the tab
 slept on. So the snapshot is what you see during the reload, not a white
 WKWebView. `after_load` restores scroll once the bridge says `hello`.
 
+## Pinned tabs
+
+`Hub::set_pinned` keeps pinned tabs as a block at the top of the order. The
+sleep policy never picks them, and ⌘W on a pinned tab switches to the next tab
+and sleeps the pinned one (scroll kept) instead of closing it; a lone pinned
+tab stays open. Pins persist through the saved session.
+
 ## Session restore
 
 With `restore_session` on (the default; `relay config set restore_session off`),
