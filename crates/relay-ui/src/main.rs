@@ -6,6 +6,7 @@ mod calc;
 mod clean_url;
 mod inspector;
 mod palette;
+mod startpage;
 mod tabstrip;
 mod theme;
 mod web;
