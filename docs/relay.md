@@ -55,6 +55,10 @@ new subscription every 16 ms. `SharedHub::take_hotkeys` drains the page's
 hotkey queue without ticking the watch, so an idle window settles instead of
 waking itself every frame.
 
+The bridge roots its snapshot at `documentElement` so html/head attribute
+changes stay patchable; attribute-only updates arrive as `dom_attrs` and the
+Inspector/agents read the same store either way.
+
 Panes report their bounds from a `canvas` each frame, and `WebHost::layout`
 moves the native `WKWebView`s to match. Native views draw above GPUI, so web
 views are hidden while the palette is open. Link-hint labels are drawn inside

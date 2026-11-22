@@ -10,6 +10,15 @@ use std::collections::BTreeMap;
 pub type NodeId = u32;
 
 /// A lightweight DOM element as streamed by the bridge.
+/// Attribute-only update for an existing node: body class/theme toggles and
+/// other attribute mutations do not need a full subtree resend.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DomAttrUpdate {
+    pub id: NodeId,
+    #[serde(default)]
+    pub attrs: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DomNode {
     pub id: NodeId,
@@ -103,6 +112,7 @@ pub enum PageMessage {
     Page { url: String, #[serde(default)] title: String },
     DomSnapshot { root: Option<DomNode> },
     DomPatch { nodes: Vec<DomNode>, #[serde(default)] removed: Vec<NodeId> },
+    DomAttrs { nodes: Vec<DomAttrUpdate> },
     Console(ConsoleEntry),
     Network(NetworkEntry),
     Challenge { challenge: Option<Challenge> },
@@ -202,6 +212,7 @@ mod tests {
             r#"{"kind":"page","url":"https://a.test/","title":"A","t":1}"#,
             r#"{"kind":"dom_snapshot","root":{"id":1,"tag":"body","attrs":{},"text":"","interactive":false,"children":[]}}"#,
             r#"{"kind":"dom_patch","nodes":[],"removed":[3,4]}"#,
+            r#"{"kind":"dom_attrs","nodes":[{"id":2,"attrs":{"class":"dark"}}]}"#,
             r#"{"kind":"console","level":"warn","args":["x"],"t":5}"#,
             r#"{"kind":"network","id":"f1","api":"fetch","method":"GET","url":"https://a.test/api","status":500,"duration_ms":3.2}"#,
             r#"{"kind":"challenge","challenge":"two_factor"}"#,
