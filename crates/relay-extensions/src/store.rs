@@ -237,6 +237,21 @@ impl Store {
         Ok(self.conn.execute("DELETE FROM bookmarks WHERE url=?1", [url])? > 0)
     }
 
+    /// Move every bookmark for `url` to `folder` (empty = top level),
+    /// preserving the first title. Returns false when the URL is not saved.
+    pub fn move_bookmark(&self, url: &str, folder: &[String]) -> Result<bool, Error> {
+        let Some(title) = self
+            .conn
+            .query_row("SELECT title FROM bookmarks WHERE url=?1 LIMIT 1", [url], |r| r.get::<_, String>(0))
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        self.conn.execute("DELETE FROM bookmarks WHERE url=?1", [url])?;
+        self.add_bookmark(&Bookmark { title, url: url.into(), folder: folder.to_vec() })?;
+        Ok(true)
+    }
+
     /// Add or remove; returns the new bookmarked state.
     pub fn toggle_bookmark(&self, url: &str, title: &str) -> Result<bool, Error> {
         if self.remove_bookmark(url)? {
@@ -366,6 +381,11 @@ impl Store {
         let mut stmt = self.conn.prepare("SELECT key, value FROM settings ORDER BY key")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Remove one URL from history; true if it existed.
+    pub fn delete_history(&self, url: &str) -> Result<bool, Error> {
+        Ok(self.conn.execute("DELETE FROM history WHERE url=?1", [url])? > 0)
     }
 
     pub fn clear_history(&self) -> Result<usize, Error> {
@@ -702,7 +722,9 @@ mod tests {
         s.record_visit("https://a.test/", "A", 100).unwrap();
         s.record_visit("https://b.test/", "B", 200).unwrap();
         s.add_bookmark(&Bookmark { title: "A".into(), url: "https://a.test/".into(), folder: vec!["Bar".into()] }).unwrap();
-        assert_eq!(s.clear_history().unwrap(), 2);
+        assert!(s.delete_history("https://a.test/").unwrap());
+        assert!(!s.delete_history("https://a.test/").unwrap());
+        assert_eq!(s.clear_history().unwrap(), 1);
         assert!(s.search_history("", 10).unwrap().is_empty());
         assert_eq!(s.clear_history().unwrap(), 0);
         assert_eq!(s.clear_bookmarks().unwrap(), 1);
@@ -803,6 +825,10 @@ mod tests {
         assert!(!s.remove_bookmark("https://a.test/").unwrap());
         s.toggle_bookmark("https://a.test/", "A").unwrap();
         assert!(s.remove_bookmark("https://a.test/").unwrap());
+        s.add_bookmark(&Bookmark { title: "Move".into(), url: "https://m.test/".into(), folder: vec!["Old".into()] }).unwrap();
+        assert!(s.move_bookmark("https://m.test/", &["New".into(), "Sub".into()]).unwrap());
+        assert_eq!(s.bookmarks().unwrap()[0].folder, vec!["New".to_string(), "Sub".to_string()]);
+        assert!(!s.move_bookmark("https://missing.test/", &[]).unwrap());
     }
 
     #[test]

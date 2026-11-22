@@ -33,6 +33,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   commands). The first row is always "Open <typed URL>" or "Search <query>".
 - **Inspector:** a tab strip of four panels over monospace rows. Hovering an
   Elements row highlights the node in the page.
+- **Library:** a modal over the page for History (`⌘Y`) or Bookmarks
+  (`⇧⌘B`): one query line, wrapped selection, row click opens, × deletes, and
+  Bookmarks rows have a move prompt for the folder path. Esc or click-outside
+  closes and returns focus to the page.
 - **New tab:** with no active tab, a quiet page with the app name, one search
   field (opens ⌘K), and two columns of Recent / Frequent / Apps / Bookmarks
   rows. Rows are one line with a muted note; empty sections say "Nothing yet";
@@ -82,6 +86,7 @@ none under Reduce Motion.
 | ⌘⇧M | copy the page's main content as Markdown |
 | ⌘D | bookmark the page, or remove its bookmark |
 | ⌘F | find in page (↩ next, ⇧↩ previous, Esc closes) |
+| ⌘Y / ⇧⌘B | History / Bookmarks overlay (type to filter, ↑↓, ↩ opens, × deletes, move sets a folder) |
 | ⌘= / ⌘- / ⌘0 | zoom in / out / actual size, remembered per site |
 | ⌘S | fold / unfold the tab strip |
 | ⇧⌘S | move the tab strip left → top → right |

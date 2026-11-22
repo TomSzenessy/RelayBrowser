@@ -59,7 +59,8 @@ claude mcp add relay -- "$PWD/target/release/relay" mcp
 Inspector, `⌘\\` split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector,
 `⌘⇧C` copy a clean URL, `⌘⇧M` copy the page as Markdown, `⌘D` bookmark, `⌘⌥P` pin (⌘W then sleeps a
 pinned tab instead of closing it), `⌘F` find, `⌘=` / `⌘-` / `⌘0` zoom (remembered
-per site).
+per site), `⌘Y` History, `⇧⌘B` Bookmarks (search, open, delete, and move a
+bookmark to a folder).
 
 The tab strip folds with `⌘S` and moves between the left, top, and right edge
 with `⇧⌘S`; the choice is remembered. Every row shows a `×` on hover (and on the
