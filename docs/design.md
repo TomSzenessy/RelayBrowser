@@ -55,13 +55,24 @@ none under Reduce Motion.
 | ⌘K | palette |
 | ⌘L | palette prefilled with the current URL |
 | ⌘T / ⌘W / ⌘⇧T | new tab / close tab / reopen closed tab |
-| ⌘1–⌘9, ⌃Tab / ⌃⇧Tab | switch tab |
+| ⌘1–⌘8, ⌘9 (last tab), ⌃Tab / ⌃⇧Tab | switch tab |
+| ⌘Q | quit |
 | ⌘[ / ⌘] / ⌘R | back / forward / reload |
 | ⌘⌥I | toggle the native Inspector |
 | ⌘⌥U | WebKit Web Inspector (fallback) |
 | ⌘\ | split / unsplit the content area |
-| f (page focused, no input) | link hints |
+| ⌘J, or f with the page focused (not in a text field) | link hints |
 | Esc | close palette / hints |
+
+On Linux development builds, ⌘ is Ctrl (GPUI's `secondary` modifier).
+
+## Focus
+
+When a page has focus, WebKit receives the keystrokes. ⌘ shortcuts still
+reach GPUI first, as key equivalents. The palette and link hints move focus
+to the shell while they are open (`Engine::focus_shell`) and hand it back to
+the page when they close. The bridge forwards `f` as a `hotkey` message, so
+hints start without leaving the page.
 
 ## States
 

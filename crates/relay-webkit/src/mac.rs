@@ -121,6 +121,10 @@ impl Engine {
         }
     }
 
+    pub fn extension_controller(&self) -> Option<&Retained<WKWebExtensionController>> {
+        self.extensions.as_ref()
+    }
+
     /// Attach a WKWebExtensionController to every tab created from now on.
     pub fn set_extension_controller(&mut self, c: Retained<WKWebExtensionController>) {
         self.extensions = Some(c);
@@ -255,6 +259,23 @@ impl Engine {
                 }
                 None => t.view.setHidden(true),
             }
+        }
+    }
+
+    /// Give the page keyboard focus (typing goes to WebKit).
+    pub fn focus_page(&self, tab: TabId) {
+        if let Some(t) = self.tabs.get(&tab) {
+            if let Some(w) = t.view.window() {
+                w.makeFirstResponder(Some(&t.view));
+            }
+        }
+    }
+
+    /// Give `shell` (GPUI's view) keyboard focus, e.g. while the palette or
+    /// link hints are open; otherwise WebKit swallows plain keystrokes.
+    pub fn focus_shell(shell: &NSView) {
+        if let Some(w) = shell.window() {
+            w.makeFirstResponder(Some(shell));
         }
     }
 

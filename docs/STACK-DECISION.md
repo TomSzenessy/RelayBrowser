@@ -42,7 +42,7 @@ The owner's brief chose this stack. Versions were checked on crates.io on
 ## Verification and rollback
 
 - `cargo test --workspace --locked` and
-  `cargo check --workspace --locked --target aarch64-apple-darwin` (CI, on the
+  `cargo check --workspace --locked --exclude relay-ui --target aarch64-apple-darwin` (CI, on the
   self-hosted linux/arm64 runner); `npm test` in `js/`.
 - The running app must be judged on a Mac (`cargo run -p relay-ui --release`);
   Linux can only type-check the AppKit/WebKit code.

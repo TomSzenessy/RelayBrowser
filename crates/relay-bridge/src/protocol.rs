@@ -107,6 +107,9 @@ pub enum PageMessage {
     Network(NetworkEntry),
     Challenge { challenge: Option<Challenge> },
     Media { playing: bool },
+    /// A browser hotkey pressed while the page had keyboard focus (e.g. `f`
+    /// for link hints); WebKit, not GPUI, receives keys then.
+    Hotkey { key: String },
     Result(CommandResult),
 }
 
@@ -144,6 +147,9 @@ pub enum Op {
     Scroll { x: f64, y: f64 },
     ScrollTo { x: f64, y: f64 },
     PageInfo,
+    /// Label interactive elements for keyboard clicking: `[id, label]` pairs.
+    ShowHints { hints: Vec<(NodeId, String)> },
+    HideHints,
 }
 
 fn yes() -> bool {
@@ -192,6 +198,7 @@ mod tests {
             r#"{"kind":"challenge","challenge":"two_factor"}"#,
             r#"{"kind":"challenge","challenge":null}"#,
             r#"{"kind":"media","playing":true}"#,
+            r#"{"kind":"hotkey","key":"f"}"#,
             r#"{"kind":"result","id":7,"ok":true,"value":{"tag":"button"},"error":null}"#,
         ];
         for c in cases {

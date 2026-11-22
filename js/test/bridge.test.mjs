@@ -165,3 +165,24 @@ test("the page cannot replace the bridge", async () => {
   const replaced = await page.evaluate(() => { try { window.__relay = { exec() { return "evil"; } }; } catch (e) {} return window.__relay.version; });
   assert.equal(replaced, 1);
 });
+
+test("link hints label visible elements and 'f' is forwarded only outside inputs", async () => {
+  const pay = Number(await page.getAttribute("#pay", "data-relay-id"));
+  await page.evaluate(s => eval(s), `window.__relay.exec(${JSON.stringify({ id: 50, op: "show_hints", hints: [[pay, "a"], [987654, "s"]] })})`);
+  const r = (await until(m => m.kind === "result" && m.id === 50)).hit;
+  assert.equal(r.value, 1, "only existing, visible elements get a label");
+  assert.equal(await page.locator("[data-relay-hints] span").innerText(), "A");
+  await page.evaluate(() => window.__relay.exec({ id: 51, op: "hide_hints" }));
+  assert.equal(await page.locator("[data-relay-hints]").count(), 0);
+
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.keyboard.press("f");
+  await until(m => m.kind === "hotkey" && m.key === "f");
+  const before = all.filter(m => m.kind === "hotkey").length;
+  await page.focus("#email");
+  await page.keyboard.press("f");
+  await page.waitForTimeout(100);
+  await drain();
+  assert.equal(all.filter(m => m.kind === "hotkey").length, before, "typing 'f' in an input is not a hotkey");
+  assert.match(await page.inputValue("#email"), /f$/);
+});

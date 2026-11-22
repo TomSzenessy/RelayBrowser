@@ -1,7 +1,27 @@
 [package]
 name = "relay-ui"
+description = "The relay binary: GPUI shell (tab bar, Cmd+K palette, split panes, native Inspector) plus CLI subcommands."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "relay"
+path = "src/main.rs"
+
 [dependencies]
+relay-bridge.workspace = true
+relay-webkit.workspace = true
+relay-extensions.workspace = true
+relay-mcp.workspace = true
+gpui.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+objc2-web-kit.workspace = true
+raw-window-handle = "0.6"

@@ -128,6 +128,23 @@ impl DomStore {
         })
     }
 
+    /// Interactive element ids in document order (for link hints).
+    pub fn interactive_ids(&self, limit: usize) -> Vec<NodeId> {
+        let mut out = vec![];
+        let mut stack: Vec<NodeId> = self.root.into_iter().collect();
+        while let Some(id) = stack.pop() {
+            if out.len() >= limit {
+                break;
+            }
+            let Some(n) = self.nodes.get(&id) else { continue };
+            if n.interactive {
+                out.push(id);
+            }
+            stack.extend(n.children.iter().rev());
+        }
+        out
+    }
+
     /// LLM-friendly outline: one line per meaningful element, e.g.
     /// `  [12] button "Checkout" #pay`. Interactive ids are what agents click.
     pub fn outline(&self, from: Option<NodeId>, max_depth: usize, interactive_only: bool, max_lines: usize) -> String {
@@ -212,6 +229,8 @@ pub struct TabState {
     pub pinned: bool,
     pub playing_audio: bool,
     pub sleeping: bool,
+    /// Hotkeys from the page, drained by the shell (`Hub::take_hotkeys`).
+    pub hotkeys: Vec<String>,
 }
 
 impl TabState {
@@ -231,6 +250,7 @@ impl TabState {
             pinned: false,
             playing_audio: false,
             sleeping: false,
+            hotkeys: vec![],
         }
     }
 
@@ -430,6 +450,15 @@ impl Hub {
         }
     }
 
+    /// Hotkeys pressed in any tab since the last call.
+    pub fn take_hotkeys(&mut self) -> Vec<(TabId, String)> {
+        let mut out = vec![];
+        for t in self.tabs.values_mut() {
+            out.extend(t.hotkeys.drain(..).map(|k| (t.id, k)));
+        }
+        out
+    }
+
     pub fn set_cookies(&mut self, tab: TabId, cookies: Vec<Cookie>) {
         if let Some(t) = self.tabs.get_mut(&tab) {
             t.cookies = cookies;
@@ -477,6 +506,7 @@ impl Hub {
             }
             PageMessage::Challenge { challenge } => t.challenge = challenge,
             PageMessage::Media { playing } => t.playing_audio = playing,
+            PageMessage::Hotkey { key } => t.hotkeys.push(key),
             PageMessage::Result(_) => unreachable!(),
         }
     }
@@ -537,6 +567,7 @@ mod tests {
         assert!(!d.contains(3) && !d.contains(4) && d.contains(5));
         let out = d.outline(None, 10, true, 100);
         assert_eq!(out.trim(), "[5] button \"New\"");
+        assert_eq!(d.interactive_ids(10), vec![5]);
     }
 
     #[test]

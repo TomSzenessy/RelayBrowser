@@ -21,6 +21,7 @@ with the Rust parser.
 | `network` | fetch/XHR completion; PerformanceObserver resources | method, url, status, duration, bodies ≤4 KB (text/JSON only) |
 | `challenge` | a CAPTCHA iframe or one-time-code input appears or disappears | `challenge`: `captcha`, `two_factor`, or `null` |
 | `media` | audible audio/video starts or stops | `playing` |
+| `hotkey` | `f` pressed with the page focused, outside text fields | `key` (the shell starts link hints) |
 | `result` | reply to a command | `id`, `ok`, `value`, `error` |
 
 Limits: 4,000 nodes per snapshot, 160-character text, script/style/head
@@ -31,7 +32,9 @@ skipped. Password input values are never sent.
 `window.__relay.exec({id, op, ...})`. The script is built by
 `Command::to_script` from JSON only. Ops: `snapshot`, `highlight`,
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
-`find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`. Element ids are
+`find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
+(`hints: [[id, label], …]`, labels only visible elements, returns the count),
+`hide_hints`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
 ## Trust
@@ -57,5 +60,6 @@ iframe, or a native hidden view), and `runtime.getPlatformInfo`.
 
 `js/test/bridge.test.mjs` runs the real script in Playwright's WebKit build
 with routed fake pages. It covers the DOM ids, console, fetch/XHR, mutation
-patches, commands, 2FA detection, and bridge immutability, and pipes every
+patches, commands, 2FA detection, link hints and hotkey forwarding, and
+bridge immutability, and pipes every
 message through `relay-bridge`'s `examples/validate.rs`.

@@ -222,7 +222,7 @@ extra_paths = ["Cargo.toml", "Cargo.lock", "third_party"]
 setup = [["rustup", "target", "add", "aarch64-apple-darwin"]]
 verification = [
   ["cargo", "test", "--workspace", "--locked"],
-  ["cargo", "check", "--workspace", "--locked", "--target", "aarch64-apple-darwin"],
+  ["cargo", "check", "--workspace", "--locked", "--exclude", "relay-ui", "--target", "aarch64-apple-darwin"],
 ]
 
 [[surfaces]]

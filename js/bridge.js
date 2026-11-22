@@ -364,6 +364,33 @@
     },
     scroll: function (c) { window.scrollBy(c.x || 0, c.y || 0); return { x: window.scrollX, y: window.scrollY }; },
     scroll_to: function (c) { window.scrollTo(c.x || 0, c.y || 0); return { x: window.scrollX, y: window.scrollY }; },
+    show_hints: function (c) {
+      ops.hide_hints();
+      var layer = document.createElement("div");
+      layer.setAttribute("data-relay-hints", "");
+      layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483647";
+      var shown = 0;
+      c.hints.forEach(function (pair) {
+        var el = byId.get(pair[0]);
+        if (!el || !el.isConnected) return;
+        var r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return;
+        var tag = document.createElement("span");
+        tag.textContent = pair[1].toUpperCase();
+        tag.style.cssText = "position:fixed;left:" + Math.max(0, r.left) + "px;top:" + Math.max(0, r.top) + "px;" +
+          "font:bold 11px/1.2 ui-monospace,monospace;padding:1px 3px;border-radius:3px;" +
+          "background:#ffd84d;color:#1b1c1f;box-shadow:0 1px 3px rgba(0,0,0,.4)";
+        layer.appendChild(tag);
+        shown++;
+      });
+      document.documentElement.appendChild(layer);
+      return shown;
+    },
+    hide_hints: function () {
+      var old = document.querySelector("[data-relay-hints]");
+      if (old) old.remove();
+      return true;
+    },
     page_info: function () {
       return { url: location.href, title: document.title, scroll_x: window.scrollX, scroll_y: window.scrollY };
     }
@@ -382,6 +409,18 @@
     post(reply);
     return reply;
   }
+
+  // ------------------------------------------------------------ Hotkeys
+  // With the page focused, WebKit receives keys; forward Relay's bare-key
+  // shortcuts unless the user is typing.
+  window.addEventListener("keydown", function (ev) {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.isComposing || ev.key !== "f") return;
+    var a = document.activeElement;
+    if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    post({ kind: "hotkey", key: ev.key });
+  }, true);
 
   // ---------------------------------------------------------- Lifecycle
   function announce() { post({ kind: "page", url: location.href, title: document.title }); }
