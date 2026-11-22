@@ -41,6 +41,7 @@ actions!(
         LinkHints,
         CopyCleanUrl,
         CopyMarkdown,
+        ToggleBookmark,
         Quit,
         SelectTab1,
         SelectTab2,
@@ -74,6 +75,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-j", LinkHints, None),
         KeyBinding::new("secondary-shift-c", CopyCleanUrl, None),
         KeyBinding::new("secondary-shift-m", CopyMarkdown, None),
+        KeyBinding::new("secondary-d", ToggleBookmark, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-1", SelectTab1, None),
         KeyBinding::new("secondary-2", SelectTab2, None),
@@ -571,6 +573,7 @@ impl RelayApp {
                 }
             }
             Command::CopyMarkdown => self.copy_markdown(cx),
+            Command::ToggleBookmark => self.toggle_bookmark(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
         }
     }
@@ -604,6 +607,23 @@ impl RelayApp {
             });
         })
         .detach();
+    }
+
+    /// ⌘D: bookmark the active http(s) page, or remove it if already saved.
+    fn toggle_bookmark(&mut self) {
+        let page = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| (s.url.clone(), s.title.clone())));
+        let Some((url, title)) = page.filter(|(u, _)| is_http_url(u)) else {
+            self.toast("Only web pages can be bookmarked");
+            return;
+        };
+        let title = if title.trim().is_empty() { palette::short_url(&url) } else { title };
+        let msg = match self.store.as_ref().map(|s| s.toggle_bookmark(&url, &title)) {
+            None => "Bookmarks are unavailable: the profile could not be opened".to_string(),
+            Some(Ok(true)) => format!("Bookmarked {title}"),
+            Some(Ok(false)) => "Bookmark removed".to_string(),
+            Some(Err(e)) => format!("Could not update bookmarks: {e}"),
+        };
+        self.toast(msg);
     }
 
     fn close_duplicate_tabs(&mut self) {
@@ -1548,6 +1568,10 @@ impl Render for RelayApp {
                 app.run_command(Command::CopyMarkdown, cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|app, _: &ToggleBookmark, _, cx| {
+                app.run_command(Command::ToggleBookmark, cx);
+                cx.notify();
+            }))
             .on_action(cx.listener(|app, _: &Quit, _, cx| {
                 app.save_session();
                 cx.quit()
@@ -1785,9 +1809,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 27);
+        assert_eq!(bindings.len(), 28);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 27] = [
+        let required: [&'static str; 28] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -1805,6 +1829,7 @@ mod tests {
             LinkHints.name(),
             CopyCleanUrl.name(),
             CopyMarkdown.name(),
+            ToggleBookmark.name(),
             Quit.name(),
             SelectTab1.name(),
             SelectTab2.name(),

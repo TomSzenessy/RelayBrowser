@@ -65,6 +65,7 @@ none under Reduce Motion.
 | ⌘J, or f with the page focused (not in a text field) | link hints |
 | ⌘⇧C | copy the current URL without tracking parameters |
 | ⌘⇧M | copy the page's main content as Markdown |
+| ⌘D | bookmark the page, or remove its bookmark |
 | Esc | close palette / settings / hints |
 
 On Linux development builds, ⌘ is Ctrl (GPUI's `secondary` modifier).
