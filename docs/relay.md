@@ -370,6 +370,14 @@ Six layers, cheapest first:
    Xorg-dummy, llvmpipe presents black frames even for `vkcube`. Visual review
    therefore happens on a Mac.
 
+## Chrome extension import
+
+`read_extensions` orders version directories numerically (`1.10` after `1.9`)
+and falls back to the next readable manifest, so one corrupt extension cannot
+discard the rest of the preview. `relay install-extension` prints the
+manifest's requested APIs, optional APIs, and host match patterns from one
+`PermissionReport`; installing grants all of them, and the CLI says so.
+
 ## CLI safety
 
 `relay import-chrome` parses `--dry-run`, `--profile DIR`, and `--help`

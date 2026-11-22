@@ -477,6 +477,10 @@ fn install_extension(id: Option<&str>) -> anyhow::Result<()> {
     let m = manifest::Manifest::read(&dir)?;
     let compat = m.compatibility();
     let name = m.display_name(&dir);
+    for line in m.permission_report().lines() {
+        println!("  {line}");
+    }
+    println!("  installing grants every requested permission and host pattern.");
     open_store()?.record_extension(id, &name, &m.version, &dir)?;
     println!("Installed {name} {} → {}", m.version, dir.display());
     if !compat.shimmed.is_empty() {
