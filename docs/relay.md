@@ -15,7 +15,7 @@ frontends read it: the native Inspector and the local MCP server.
 | `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy; `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback | policy portable, engine macOS |
 | `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
 | `relay-mcp` | `RelayMcp` (rmcp 3.x tool router), user-only Unix socket server, `relay mcp` stdio proxy | portable (Unix) |
-| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (tab bar with agent group, panes and split, ⌘K palette, ⌘, Settings overlay, Inspector with console/network filters, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md) with WCAG AA contrast tests. `main.rs`: the CLI (`mcp`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
+| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (native menu bar, tab strip with close buttons/agent group/fold/move, panes and split, ⌘K palette, ⌘, Settings overlay, Inspector with console/network filters, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping, web app install/remove). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `tabstrip.rs`: placement/fold logic. `webapp.rs`: manifest validation and `.app` bundle writer. `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md) with WCAG AA contrast tests. `main.rs`: the CLI (`mcp`, `--app`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
 
 ## Data flow
 
@@ -53,10 +53,81 @@ moves the native `WKWebView`s to match. Native views draw above GPUI, so web
 views are hidden while the palette is open. Link-hint labels are drawn inside
 the page, and their status line goes in the status bar.
 
+## Native menus and focus
+
+`app_menus()` in `app.rs` installs a real macOS menu bar (`cx.set_menus`). GPUI
+turns the key map into menu key equivalents, and AppKit checks those before the
+focused `WKWebView`, so ⌘K/⌘T/⌘W/⌘C and the rest reach Relay even while the
+page owns the responder chain. This is the reason the shortcuts work
+"natively"; adding only `KeyBinding`s would leave them inside GPUI's view and
+the page would swallow them.
+
+The Edit menu (`Cut`, `Copy`, `Paste`, `Select All`, `Undo`, `Redo`) does not
+use AppKit's `cut:` selectors directly. Each action reaches
+`RelayApp::apply_edit`, which handles paste into the palette or find bar when
+an overlay is open and otherwise calls `Engine::edit`. That sends the selector
+to the window's **first responder** with `tryToPerform:with:` rather than
+`NSApplication.sendAction:`: GPUI's app delegate also implements `copy:` and
+`paste:` for its own menu items, and the app-level chain could route the
+command back into Relay instead of the page. The focused page's first responder
+is WebKit's content view, which owns the real editing implementation.
+
+## Tab strip
+
+`tabstrip.rs` owns the placement (`Left`, `Top`, `Right`), fold state, metrics,
+and the `tabs_position` / `tabs_folded` settings encoding; it is pure and unit
+tested. `⌘S` folds to a clickable rail and `⇧⌘S` rotates the edge. Every row
+renders a `×` (visible on the active row and while the pointer is over it); a
+middle click closes too. Closing a pinned row sleeps it, and closing the last
+row of an `--app` window quits that window. The old fixed 220 pt sidebar is
+gone: the same renderer draws vertical rows or a horizontal row of pills.
+
+## Installed web apps
+
+The palette command **Install This Site as an App** (and File → Install This
+Site as an App) sends `Op::WebApp` to the page. The bridge reads
+`link[rel=manifest]`, resolves `start_url` against the manifest, picks the
+largest PNG icon, fetches it as a data URL (2 MB cap), and posts the reply
+as an ordinary async command result.
+
+`webapp.rs` treats that reply as untrusted data:
+
+- `start_url` must be http(s) and share the page's origin; the tab's own URL,
+  not the page's claim, is the comparison base.
+- The name is collapsed, stripped of path separators and control characters,
+  capped, and falls back to the host.
+- Only a real PNG data URL is decoded; the decoder is local, size-capped, and
+  tested against malformed base64.
+- The bundle goes to `~/Applications/<Name>.app` (with ` 2`, ` 3` on a name
+  collision): `Contents/Info.plist`, a `/bin/sh` launcher, `Contents/Resources/icon.png`,
+  and `AppIcon.icns` built with `sips` + `iconutil` when possible. No usable
+  PNG icon (none declared, or only SVG/other formats) falls back to Relay's
+  bundled icon rather than refusing an installable app. It does not copy
+  Relay: the launcher runs the installed binary, so the app shares the
+  browser's cookies, WebKit data store, and updates.
+- `Contents/.relay-webapp` is the marker: it records the start URL and bundle
+  id. Removal refuses a folder without a matching marker, so Relay never
+  deletes something it did not create.
+- The launcher `exec`s the installed Relay with `--app <url> --app-name <name>
+  --app-icon <bundle>/Contents/Resources/AppIcon.icns` (falling back to
+  `open -a Relay --args ...` if Relay moved). App mode sets that icon as the
+  Dock image and uses the name for its menu and empty-page title.
+
+The bundle id is `app.relay.webapp.<host-slug>.<fnv64>`, and the record
+(`id`, name, start URL, bundle path, installed time) lives in the `web_apps`
+table in `profile.sqlite` and appears in `relay export`.
+
+`relay --app URL` opens one chromeless window: no tab strip while it has one
+page, no status bar except a transient toast, no session restore or save, no
+extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
+`target=_blank` link navigates the one page instead of creating hidden tabs.
+More than one tab (only possible if a future feature adds one) brings the strip
+back rather than hiding it.
+
 ## Agent safety (attached mode)
 
 - Agent tabs (`Owner::Agent`) share the user's cookie store and live in a
-  tinted group in the tab bar.
+  tinted group in the tab strip.
 - When the bridge reports a CAPTCHA or 2FA prompt (`challenge`) on any tab,
   agent mutations there (click, type, edit_style) fail with "waiting for a
   human"; reads keep working, and the user can still click through
@@ -203,8 +274,9 @@ Six layers, cheapest first:
    spawns the real `relay mcp` binary, connects it to a socket-backed hub, and
    performs the initialize / tools list / list_tabs handshake.
 2. **The injected bridge runs in Playwright's WebKit 26.0** in Linux CI
-   (`js/`, 8 tests): DOM snapshots and patches, fetch/XHR status and bodies,
-   console and uncaught errors, click/type/highlight, hints, and 2FA detection.
+   (`js/`, 12 tests): DOM snapshots and patches, fetch/XHR status and bodies,
+   console and uncaught errors, click/type/highlight, hints, 2FA detection, and
+   the async `web_app` manifest/icon read with its failure reasons.
    CI installs WebKit and its host libraries on ubuntu-24.04.
 3. **The GPUI shell builds on Linux** with GPUI's system libraries
    (`libxkbcommon`, wayland, xcb, fontconfig, freetype); CI installs them and

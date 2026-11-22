@@ -66,12 +66,20 @@ behavior—test an authenticated production-like browser.
 Relay is a local-only desktop browser. It operates no cloud sync service,
 telemetry pipeline, crash-upload endpoint, or analytics SDK.
 
-- **Local profile storage:** History, bookmarks, settings, saved session tabs (http/https URL, title, pinned, scroll offset; max 200; replaced on every save; erased by `relay clear-data` and Settings → Clear history; not written at all with `restore_session off`), per-site preferences (zoom, compat, blocking, hidden selectors), and installed
-  extension metadata live in `$RELAY_HOME/profile.sqlite` (default
+- **Local profile storage:** History, bookmarks, settings, saved session tabs (http/https URL, title, pinned, scroll offset; max 200; replaced on every save; erased by `relay clear-data` and Settings → Clear history; not written at all with `restore_session off`), per-site preferences (zoom, compat, blocking, hidden selectors), installed
+  extension metadata, and installed web app records (name, start URL, bundle
+  path, install time) live in `$RELAY_HOME/profile.sqlite` (default
   `~/Library/Application Support/Relay` on macOS). The profile directory uses
   mode `0700` and `profile.sqlite` (along with its SQLite `-wal`/`-shm`
   sidecars) is hardened to mode `0600`. Nothing in the profile is synced to a
   Relay server or sent as telemetry.
+- **Installed web apps:** Choosing “Install This Site as an App” writes a
+  `.app` bundle the user asked for into `~/Applications` (Info.plist, a
+  launcher, the site's manifest icon, and a marker recording the start URL).
+  The launcher runs the installed Relay binary, so the app shares the
+  browser's WebKit store, cookies, and updates instead of carrying a second
+  engine. The bundle is the user's file; Relay only deletes one when the site
+  is open and the matching marker is still present.
 - **Passwords and form secrets:** Imported logins (`relay import-passwords`)
   are written directly to the macOS login Keychain through `Security.framework`,
   and the source plaintext CSV is deleted once every entry succeeds. Passwords

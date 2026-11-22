@@ -35,10 +35,21 @@ skipped. Password input values are never sent.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`, `markdown`. Element ids are
+`hide_hints`, `markdown`, `web_app`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
-`markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub. An MCP tool for it is Tier 2.
+`markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub; an MCP tool for it is Tier 2.
+
+`web_app` is the first asynchronous op: it reads `link[rel=manifest]`, fetches
+and resolves the manifest, fetches the largest PNG icon (2 MB cap), and posts
+the ordinary `result` when it settles. The reply is
+`{available, page_url, name, short_name, start_url, scope, display,
+theme_color, background_color, manifest_url, icon}` or
+`{available: false, reason}`. Rust validates the origin, URL scheme, icon
+signature, and sizes again before writing an installed `.app`; the page is
+untrusted, so a manifest can never point the installer at another site. The
+`exec` reply is a placeholder (`value: null`) for an async op; wait for the
+`result` message.
 
 ## Trust
 
@@ -76,6 +87,7 @@ so `sidePanel.open` currently rejects.
 
 `js/test/bridge.test.mjs` runs the real script in Playwright's WebKit build
 with routed fake pages. It covers the DOM ids, console, fetch/XHR, mutation
-patches, commands, 2FA detection, link hints and hotkey forwarding, and
-bridge immutability, and pipes every
-message through `relay-bridge`'s `examples/validate.rs`.
+patches, commands, async `web_app` manifest/icon reads and their failure
+reasons, 2FA detection, link hints and hotkey forwarding, and bridge
+immutability, and pipes every message through `relay-bridge`'s
+`examples/validate.rs`.

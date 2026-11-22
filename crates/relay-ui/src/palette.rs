@@ -45,10 +45,14 @@ pub enum Command {
     ZoomReset,
     ToggleSiteBlocking,
     ToggleCompatMode,
+    ToggleTabStrip,
+    NextTabPlacement,
+    InstallWebApp,
+    RemoveWebApp,
 }
 
 impl Command {
-    pub const ALL: [Command; 24] = [
+    pub const ALL: [Command; 28] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -73,6 +77,10 @@ impl Command {
         Command::ZoomReset,
         Command::ToggleSiteBlocking,
         Command::ToggleCompatMode,
+        Command::ToggleTabStrip,
+        Command::NextTabPlacement,
+        Command::InstallWebApp,
+        Command::RemoveWebApp,
     ];
 
     pub fn title(self) -> &'static str {
@@ -101,6 +109,10 @@ impl Command {
             Command::ZoomReset => "Actual Size",
             Command::ToggleSiteBlocking => "Toggle Blocking on This Site",
             Command::ToggleCompatMode => "Toggle Compatibility Mode on This Site",
+            Command::ToggleTabStrip => "Fold / Unfold Tab Strip",
+            Command::NextTabPlacement => "Move Tab Strip",
+            Command::InstallWebApp => "Install This Site as an App",
+            Command::RemoveWebApp => "Remove This Site's App",
         }
     }
 
@@ -125,7 +137,15 @@ impl Command {
             Command::ZoomIn => "⌘=",
             Command::ZoomOut => "⌘-",
             Command::ZoomReset => "⌘0",
-            Command::ImportChrome | Command::CopyMcpSetup | Command::CloseDuplicateTabs | Command::ToggleSiteBlocking | Command::ToggleCompatMode => "",
+            Command::ToggleTabStrip => "⌘S",
+            Command::NextTabPlacement => "⇧⌘S",
+            Command::ImportChrome
+            | Command::CopyMcpSetup
+            | Command::CloseDuplicateTabs
+            | Command::ToggleSiteBlocking
+            | Command::ToggleCompatMode
+            | Command::InstallWebApp
+            | Command::RemoveWebApp => "",
         }
     }
 }
@@ -467,8 +487,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 24);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset] {
+        assert_eq!(Command::ALL.len(), 28);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }
@@ -477,6 +497,10 @@ mod tests {
         assert_eq!(Command::CloseDuplicateTabs.keys(), "");
         assert_eq!(Command::ToggleBookmark.keys(), "⌘D");
         assert_eq!(Command::TogglePin.keys(), "⌘⌥P");
+        assert_eq!(Command::ToggleTabStrip.keys(), "⌘S");
+        assert_eq!(Command::NextTabPlacement.keys(), "⇧⌘S");
+        assert_eq!(Command::InstallWebApp.keys(), "");
+        assert_eq!(Command::RemoveWebApp.keys(), "");
         let mut p = Palette { query: "duplicate".into(), ..Default::default() };
         p.refresh(&Sources::default(), DEFAULT_SEARCH);
         assert!(p.items.contains(&Item::Command(Command::CloseDuplicateTabs)));

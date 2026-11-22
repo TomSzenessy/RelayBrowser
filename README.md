@@ -11,7 +11,8 @@ a browser engine: every tab is the macOS WebKit you already trust, so video
 decoding, security patches and 120fps scrolling are Apple's job. Relay adds the
 parts WebKit does not give you:
 
-- a keyboard-first GPUI shell (⌘K palette, vertical tabs, splits, link hints);
+- a keyboard-first GPUI shell (⌘K palette, tabs down the side or across the
+  top, native menu bar, splits, link hints);
 - one ~5 KB injected bridge that streams DOM, network and console state into a
   single Rust store;
 - a native Inspector and a local MCP server that read that **same** store, so
@@ -26,7 +27,7 @@ Early development, built in the open. Honest evidence as of this commit:
 
 | Part | Evidence |
 |---|---|
-| Bridge (`js/bridge.js`) | Playwright WebKit 26.0 in Linux CI: 8/8 tests for DOM snapshots/patches, fetch/XHR bodies, console, errors, click/type/highlight, hints, 2FA detection |
+| Bridge (`js/bridge.js`) | Playwright WebKit 26.0 in Linux CI: 12/12 tests for DOM snapshots/patches, fetch/XHR bodies, console, errors, click/type/highlight, hints, 2FA detection, and the async web-app manifest/icon op |
 | Shared state, MCP server, Chrome import, CRX, rules, sleep, theme contrast, CLI | `cargo test --workspace` in CI, including the real `relay mcp` stdio proxy, `config`/`export`/`clear-data`/`doctor` CLI, and WCAG AA contrast tests |
 | macOS `WKWebView` engine + bridge | Type-checked for Apple Silicon (`scripts/mac-check.sh`); `.github/workflows/macos.yml` runs the workspace tests, real-WebKit `smoke` example, bridge suite, and `Relay.app` packaging on `macos-15` |
 | GPUI window | Builds and links on Linux CI and macOS CI; visual polish is still judged on a Mac |
@@ -59,6 +60,24 @@ Inspector, `⌘\\` split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspecto
 `⌘⇧C` copy a clean URL, `⌘⇧M` copy the page as Markdown, `⌘D` bookmark, `⌘⌥P` pin (⌘W then sleeps a
 pinned tab instead of closing it), `⌘F` find, `⌘=` / `⌘-` / `⌘0` zoom (remembered
 per site).
+
+The tab strip folds with `⌘S` and moves between the left, top, and right edge
+with `⇧⌘S`; the choice is remembered. Every row shows a `×` on hover (and on the
+active tab), and a middle click closes it too. Relay installs a native macOS
+menu bar, so those shortcuts keep working while the page — not Relay — has
+keyboard focus, and `Edit` (`⌘X`/`⌘C`/`⌘V`/`⌘A`) reaches the page's own editing
+commands.
+
+### Install a site as an app
+
+Open a site that publishes a web app manifest and choose **Install This Site as
+an App** in `⌘K` (or File → Install This Site as an App). Relay writes a small
+`.app` to `~/Applications` with the site's name and icon (Relay's icon when the
+manifest has no usable PNG); launching it runs the
+installed Relay with `--app <start-url>` — one WKWebView, no tab strip, no
+Chrome runtime, no second MCP socket, and the same cookies and session as your
+browser. Remove it with the matching palette command, which asks for a second
+click and only deletes bundles Relay created.
 
 Tests:
 

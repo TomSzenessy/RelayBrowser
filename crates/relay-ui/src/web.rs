@@ -6,6 +6,19 @@
 use gpui::{Bounds, Pixels, Window};
 use relay_bridge::{BrowserRequest, SharedHub, TabId};
 
+/// The standard editing commands the Edit menu forwards. With a page
+/// focused they go to WKWebView's own editing implementation; with an
+/// overlay focused the shell handles paste itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditAction {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
 /// Things WebKit tells the shell (only the macOS engine produces them).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +39,7 @@ mod imp {
     use objc2_app_kit::NSView;
     use objc2_foundation::{NSPoint, NSRect, NSSize};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use relay_webkit::mac::{Engine, EngineEvent};
+    use relay_webkit::mac::{EditCommand, Engine, EngineEvent};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -165,6 +178,29 @@ mod imp {
             }
         }
 
+        /// Route a standard Edit command to the focused WKWebView.
+        pub fn edit(&self, action: EditAction) {
+            let command = match action {
+                EditAction::Undo => EditCommand::Undo,
+                EditAction::Redo => EditCommand::Redo,
+                EditAction::Cut => EditCommand::Cut,
+                EditAction::Copy => EditCommand::Copy,
+                EditAction::Paste => EditCommand::Paste,
+                EditAction::SelectAll => EditCommand::SelectAll,
+            };
+            self.engine.edit(command);
+        }
+
+        pub fn minimize(&self) {
+            self.engine.minimize();
+        }
+
+        /// Give an installed web app its own Dock icon while sharing the
+        /// installed Relay binary (and therefore its cookies and session).
+        pub fn set_application_icon(&self, path: &std::path::Path) {
+            self.engine.set_application_icon(path);
+        }
+
         pub fn take_events(&self) -> Vec<WebEvent> {
             std::mem::take(&mut *self.events.borrow_mut())
         }
@@ -213,6 +249,9 @@ mod imp {
         pub fn layout(&self, _placements: &[(TabId, Bounds<Pixels>)]) {}
         pub fn focus_page(&self, _tab: TabId) {}
         pub fn focus_shell(&self) {}
+        pub fn edit(&self, _action: EditAction) {}
+        pub fn minimize(&self) {}
+        pub fn set_application_icon(&self, _path: &std::path::Path) {}
         pub fn take_events(&self) -> Vec<WebEvent> {
             vec![]
         }
