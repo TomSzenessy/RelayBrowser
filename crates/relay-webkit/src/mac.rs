@@ -400,12 +400,12 @@ impl Engine {
     }
 
     /// Give the page keyboard focus (typing goes to WebKit).
-    pub fn focus_page(&self, tab: TabId) {
-        if let Some(t) = self.tabs.get(&tab) {
-            if let Some(w) = t.view.window() {
-                w.makeFirstResponder(Some(&t.view));
-            }
-        }
+    /// Returns true only once WebKit's view is attached and actually took
+    /// first responder; a woken/slept tab has no window yet on the first call.
+    pub fn focus_page(&self, tab: TabId) -> bool {
+        let Some(t) = self.tabs.get(&tab) else { return false };
+        let Some(w) = t.view.window() else { return false };
+        w.makeFirstResponder(Some(&t.view))
     }
 
     /// Give `shell` (GPUI's view) keyboard focus, e.g. while the palette or

@@ -168,8 +168,8 @@ mod imp {
             self.engine.show(&rects, shell);
         }
 
-        pub fn focus_page(&self, tab: TabId) {
-            self.engine.focus_page(tab);
+        pub fn focus_page(&self, tab: TabId) -> bool {
+            self.engine.focus_page(tab)
         }
 
         pub fn focus_shell(&self) {
@@ -247,7 +247,9 @@ mod imp {
             None
         }
         pub fn layout(&self, _placements: &[(TabId, Bounds<Pixels>)]) {}
-        pub fn focus_page(&self, _tab: TabId) {}
+        pub fn focus_page(&self, _tab: TabId) -> bool {
+            true
+        }
         pub fn focus_shell(&self) {}
         pub fn edit(&self, _action: EditAction) {}
         pub fn minimize(&self) {}
