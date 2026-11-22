@@ -19,6 +19,10 @@ const PAGE = `<!doctype html><html><head><title>Checkout</title></head><body>
   <form id="f" onsubmit="event.preventDefault(); window.submitted = true">
     <input id="email" type="email" placeholder="Email">
     <input id="pw" type="password" value="hunter2">
+    <input id="card" autocomplete="cc-number" value="4111111111111111">
+    <input id="otp" autocomplete="one-time-code" value="123456">
+    <input id="secret" data-relay-private value="private-value">
+    <input id="q" type="search" value="hello">
     <button id="pay" type="button" onclick="window.paid = (window.paid||0)+1">Pay now</button>
   </form>
   <div id="list"></div>
@@ -88,6 +92,12 @@ test("load announces the page and streams a DOM with ids", async () => {
   assert.equal(await page.getAttribute("#pay", "data-relay-id"), String(pay.id));
   const pw = nodes.find(n => n.attrs.id === "pw");
   assert.equal(pw.attrs.value, undefined, "password values never leave the page");
+  assert.equal(nodes.find(n => n.attrs.id === "card").attrs.value, undefined, "card numbers never leave the page");
+  assert.equal(nodes.find(n => n.attrs.id === "otp").attrs.value, undefined, "one-time codes never leave the page");
+  assert.equal(nodes.find(n => n.attrs.id === "secret").attrs.value, undefined, "data-relay-private values never leave the page");
+  assert.equal(nodes.find(n => n.attrs.id === "q").attrs.value, "hello", "ordinary fields stay debuggable");
+  assert.equal(nodes.find(n => n.attrs.id === "card").attrs.autocomplete, "cc-number", "purpose stays visible");
+  assert.equal(nodes.find(n => n.attrs.id === "card").interactive, true);
   assert.ok(!nodes.some(n => n.tag === "script"), "scripts are skipped");
   const pageMsg = (await until(m => m.kind === "page" && m.title === "Checkout")).hit;
   assert.equal(pageMsg.url, `${ORIGIN}/`);
@@ -212,7 +222,15 @@ test("commands click, type, query, and report errors", async () => {
   const found = await run({ id: 3, op: "find_text", text: "pay now" });
   assert.equal(found.value[0].id, id);
   const q = await run({ id: 4, op: "query", selector: "input" });
-  assert.equal(q.value.length, 2);
+  assert.equal(q.value.length, 6);
+  const card = Number(await page.getAttribute("#card", "data-relay-id"));
+  const filled = await run({ id: 7, op: "type", target: card, text: "4242424242424242", submit: false, clear: true });
+  assert.equal(filled.ok, true);
+  assert.equal(filled.value.text, "", "a command reply does not echo the card value");
+  assert.equal(await page.inputValue("#card"), "4242424242424242", "the page still receives the typed value");
+  const search = Number(await page.getAttribute("#q", "data-relay-id"));
+  const ordinary = await run({ id: 8, op: "type", target: search, text: "relay", submit: false, clear: true });
+  assert.equal(ordinary.value.text, "relay", "ordinary fields still report their value");
   const missing = await run({ id: 5, op: "click", target: 999999 });
   assert.equal(missing.ok, false);
   assert.match(missing.error, /re-read the DOM/);

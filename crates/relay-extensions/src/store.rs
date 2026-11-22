@@ -89,7 +89,12 @@ fn norm_host(host: &str) -> String {
 impl Store {
     pub fn open(path: &Path) -> Result<Self, Error> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            private_dir(dir)?;
+        }
+        // Create the database 0600 before SQLite opens it; an existing file is
+        // hardened after open together with its sidecars.
+        if !path.exists() {
+            create_private_file(path)?;
         }
         let store = Self::init(Connection::open(path)?)?;
         harden(path);
@@ -532,6 +537,9 @@ struct ExportExtension {
 #[cfg(unix)]
 fn harden(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
     for suffix in ["", "-wal", "-shm"] {
         let p = std::path::PathBuf::from(format!("{}{suffix}", path.display()));
         if p.exists() {
@@ -542,6 +550,32 @@ fn harden(path: &Path) {
 
 #[cfg(not(unix))]
 fn harden(_path: &Path) {}
+
+#[cfg(unix)]
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true).mode(0o700);
+    builder.create(dir)?;
+    // Tighten a directory that already existed with a wider mode.
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
+#[cfg(unix)]
+fn create_private_file(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path).map(|_| ())
+}
+
+#[cfg(not(unix))]
+fn create_private_file(path: &Path) -> std::io::Result<()> {
+    std::fs::OpenOptions::new().write(true).create_new(true).open(path).map(|_| ())
+}
 
 #[cfg(test)]
 mod tests {
@@ -609,9 +643,18 @@ mod tests {
     fn profile_file_is_private() {
         use std::os::unix::fs::PermissionsExt;
         let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("profile.sqlite");
-        drop(Store::open(&p).unwrap());
+        let home = d.path().join("Relay");
+        let p = home.join("profile.sqlite");
+        let store = Store::open(&p).unwrap();
+        store.record_visit("https://a.test", "A", 1).unwrap();
         assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::metadata(&home).unwrap().permissions().mode() & 0o777, 0o700);
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = std::path::PathBuf::from(format!("{}{suffix}", p.display()));
+            if sidecar.exists() {
+                assert_eq!(std::fs::metadata(&sidecar).unwrap().permissions().mode() & 0o777, 0o600, "{}", sidecar.display());
+            }
+        }
     }
 
     #[test]

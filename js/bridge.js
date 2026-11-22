@@ -66,12 +66,25 @@
     return s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) + "…" : s;
   }
 
+  // A field whose declared purpose is a secret. Passwords, card fields,
+  // one-time codes, and an explicit data-relay-private opt-in keep their
+  // value out of every snapshot, outline, and command reply. The element
+  // still exposes id/tag/type/name/label so agents can click or type it.
+  function isSecret(el) {
+    if (!el || el.tagName !== "INPUT") return false;
+    if (String(el.type || "").toLowerCase() === "password") return true;
+    if (el.hasAttribute && el.hasAttribute("data-relay-private")) return true;
+    var ac = String(el.getAttribute("autocomplete") || "").toLowerCase();
+    return ac.indexOf("cc-") === 0 || ac === "one-time-code";
+  }
+
   function attrsOf(el) {
     var attrs = {};
+    var secret = isSecret(el);
     for (var i = 0; i < KEEP_ATTRS.length; i++) {
       var a = KEEP_ATTRS[i];
-      var v = a === "value" && "value" in el && el.type !== "password" ? el.value : el.getAttribute(a);
-      if (a === "value" && el.type === "password") v = null;
+      var v = a === "value" && "value" in el && !secret ? el.value : el.getAttribute(a);
+      if (a === "value" && secret) v = null;
       if (v !== null && v !== undefined && v !== "") attrs[a] = String(v).slice(0, MAX_TEXT);
     }
     return attrs;
@@ -455,7 +468,8 @@
     else el.value = value;
   }
   function describe(el) {
-    return { id: relayId(el), tag: el.tagName.toLowerCase(), text: (el.innerText || el.value || "").slice(0, MAX_TEXT) };
+    var text = isSecret(el) ? "" : (el.innerText || el.value || "");
+    return { id: relayId(el), tag: el.tagName.toLowerCase(), text: String(text).slice(0, MAX_TEXT) };
   }
   function need(id) {
     var el = byId.get(id);
