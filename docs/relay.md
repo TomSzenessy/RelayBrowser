@@ -107,9 +107,10 @@ Five layers, cheapest first:
    is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which spawns the real
    `relay mcp` binary, connects it to a socket-backed hub, and performs the
    initialize / tools list / list_tabs handshake.
-2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui` (CI
-   runs this); a full link needs GPUI's system libraries (e.g. `libxkbcommon`).
-   Its macOS-only `web.rs` needs a macOS build.
+2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui`; a
+   full link needs GPUI's system libraries (e.g. `libxkbcommon`). CI leaves
+   this to a developer or the macOS job because the runner's disk cannot hold
+   the shell's tree. Its macOS-only `web.rs` needs a macOS build.
 3. **The Darwin type-check** is `bash scripts/mac-check.sh`: it installs the
    Apple standard library when rustup is available and type-checks
    `relay-webkit`, `relay-extensions`, `relay-mcp`, including the `smoke`

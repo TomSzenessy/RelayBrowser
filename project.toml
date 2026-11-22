@@ -224,12 +224,12 @@ status = "active"
 owner = "TomSzenessy"
 quality_oracle = "cargo tests (bridge state, MCP round-trip with a real MCP client, importer, CRX, rules, sleep) plus a macOS type-check of the WebKit/AppKit code; the running app is judged on a Mac"
 extra_paths = ["Cargo.toml", "Cargo.lock", "third_party"]
-# The self-hosted runner has a small disk; linking gpui's full tree needs more
-# than it has. Portable tests run here, the shell is type-checked, and the
-# macOS job runs the full workspace suite (including relay-ui's tests).
+# The self-hosted runner has a small disk. Portable tests run here, their
+# target tree is freed, then the Apple type-check runs; the macOS job runs the
+# full workspace suite (including relay-ui and its stdio-proxy test).
 verification = [
   ["cargo", "test", "--workspace", "--exclude", "relay-ui", "--locked"],
-  ["cargo", "check", "-p", "relay-ui", "--locked"],
+  ["cargo", "clean"],
   ["bash", "scripts/mac-check.sh"],
 ]
 
