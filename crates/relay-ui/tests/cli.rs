@@ -235,3 +235,21 @@ fn app_mode_requires_an_http_url() {
         assert!(String::from_utf8_lossy(&out.stderr).contains("--app"));
     }
 }
+
+#[test]
+fn start_sections_validates_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let set = relay(dir.path(), &["config", "set", "start_sections", "apps, recent apps"]);
+    assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
+    let get = relay(dir.path(), &["config", "get", "start_sections"]);
+    assert_eq!(String::from_utf8_lossy(&get.stdout).trim(), "apps,recent");
+
+    let bad = relay(dir.path(), &["config", "set", "start_sections", "recent,nope"]);
+    assert!(!bad.status.success(), "unknown section must be rejected");
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown start section"));
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "start_sections"]).stdout).trim(), "apps,recent");
+
+    assert!(relay(dir.path(), &["config", "set", "start_sections", "none"]).status.success());
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "start_sections"]).stdout).trim(), "none");
+    assert!(!relay(dir.path(), &["config", "set", "start_sections", ""]).status.success(), "empty is not a section list");
+}

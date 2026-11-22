@@ -69,8 +69,9 @@ keyboard focus, and `Edit` (`⌘X`/`⌘C`/`⌘V`/`⌘A`) reaches the page's own 
 commands.
 
 With no tab open, the new-tab page shows Recent, Frequent, installed Apps, and
-Bookmarks; `start_sections` sets their order, and `none` hides them. `⌘K` on
-that page opens the same palette as everywhere else.
+Bookmarks; `relay config set start_sections "apps,recent"` sets their order,
+and `none` hides them. `⌘K` on that page opens the same palette as everywhere
+else.
 
 ### Install a site as an app
 

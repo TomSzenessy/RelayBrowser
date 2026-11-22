@@ -89,15 +89,22 @@ one quiet search field that opens the ⌘K palette, and up to four sections from
 `startpage.rs` — **Recent** (pure `last_visit` order, 5 rows), **Frequent**
 (most-visited, with recent pages removed so the two lists do not repeat),
 **Apps** (installed web apps from the `web_apps` table), and **Bookmarks**
-(with their folder as the note). Each section caps at five rows so four
-sections fit a 980×760 window. Section order and visibility come from the
-`start_sections` setting (`recent,frequent,apps,bookmarks`; `none` hides all);
-unknown names are ignored and an empty value falls back to the default order.
+(with their folder as the note). Each section caps at five rows; a row is one
+line (title left, note right), and the area below the search field scrolls if a
+long value ever needs it. Section order and visibility come from the
+`start_sections` setting (`recent,frequent,apps,bookmarks`; `none` hides all
+and leaves the title/search field). A hand-edited profile gets the lenient
+reader: unknown names are ignored and an empty value falls back to the default
+order. Set it deliberately with `relay config set start_sections "apps,recent"`;
+the CLI rejects unknown or empty values and leaves the previous order in place.
 The data is cached in `RelayApp::start_page` and rebuilt only after a visit,
-bookmark change, Chrome import, install/remove, or history clear, never every
-frame.
-A brand-new profile with no rows shows the welcome card (Import from Chrome,
-MCP setup) inside the page.
+bookmark change, Chrome import, install/remove, or history clear, plus the 30 s
+housekeeping tick so a `relay config set start_sections` made while Relay is
+open is picked up and repainted on that tick without a restart — never every
+frame. With no profile store the page keeps the welcome state.
+A brand-new profile whose configured sections are all empty shows the welcome
+card (Import from Chrome, MCP setup); a profile with data in an unconfigured
+section keeps the grid and says "Nothing yet" for the shown empty section.
 
 ## Installed web apps
 

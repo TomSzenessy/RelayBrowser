@@ -160,6 +160,8 @@ struct EffectiveConfig {
     restore_session: bool,
     /// Custom bangs as stored (`trigger=template ...`); empty when none.
     bangs: String,
+    /// New-tab section order as stored, or the default order.
+    start_sections: String,
 }
 
 fn load_config(store: Option<&Store>) -> EffectiveConfig {
@@ -173,7 +175,10 @@ fn load_config(store: Option<&Store>) -> EffectiveConfig {
     let mcp = app::setting_enabled(store.and_then(|s| s.setting("mcp").ok().flatten()).as_deref());
     let restore_session = app::setting_enabled(store.and_then(|s| s.setting("restore_session").ok().flatten()).as_deref());
     let bangs = store.and_then(|s| s.setting("bangs").ok().flatten()).unwrap_or_default();
-    EffectiveConfig { search, search_is_default, blocking, sleep_minutes, mcp, restore_session, bangs }
+    let start_sections = store
+        .and_then(|s| s.setting("start_sections").ok().flatten())
+        .unwrap_or_else(|| "recent,frequent,apps,bookmarks".to_string());
+    EffectiveConfig { search, search_is_default, blocking, sleep_minutes, mcp, restore_session, bangs, start_sections }
 }
 
 fn print_doctor_settings(cfg: &EffectiveConfig) {
@@ -233,13 +238,21 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             }
             Ok(mins.to_string())
         }
+        "start_sections" => {
+            let sections = startpage::validate_sections(trimmed).map_err(|e| anyhow::anyhow!(e))?;
+            Ok(if sections.is_empty() {
+                "none".to_string()
+            } else {
+                sections.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",")
+            })
+        }
         "bangs" => {
             let pairs = bangs::parse_custom(trimmed).map_err(|bad| {
                 anyhow::anyhow!("invalid bangs entry {bad:?}: use space-separated trigger=https://...%s pairs (trigger: 1-16 letters or digits)")
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, bangs)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs)"),
     }
 }
 
@@ -257,6 +270,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("mcp = {}", if cfg.mcp { "on" } else { "off" });
             println!("restore_session = {}", if cfg.restore_session { "on" } else { "off" });
             println!("bangs = {}", cfg.bangs);
+            println!("start_sections = {}", cfg.start_sections);
             Ok(())
         }
         Some("get") => {
@@ -273,7 +287,8 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "mcp" => println!("{}", if cfg.mcp { "on" } else { "off" }),
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
                 "bangs" => println!("{}", cfg.bangs),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, bangs)"),
+                "start_sections" => println!("{}", cfg.start_sections),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs)"),
             }
             Ok(())
         }
