@@ -120,10 +120,12 @@ Six layers, cheapest first:
 5. **The macOS job** (`.github/workflows/macos.yml`) is the intended runtime
    evidence: the full `cargo test --workspace`, the WebKit smoke page, the same
    bridge suite on Apple's WebKit, then the release build packaged by
-   [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh).
-   It is manual because this account's GitHub-hosted macOS requests stay
-   queued; dispatch it on a Mac or with a macOS runner attached. It has not
-   produced evidence yet.
+   [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh). It is manual
+   because this account's GitHub-hosted macOS requests stay queued; dispatch
+   it on a Mac or with a macOS runner attached, choosing the label with
+   `gh workflow run macos.yml -f runner=macos-15`. On the owner's Mac,
+   [`scripts/verify-macos.sh`](../scripts/verify-macos.sh) is the one-command
+   equivalent and writes `dist/macos-verification.txt`.
 6. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
    the binary under Xvfb and drives it with `xdotool`, reading state back over
    MCP (`list_tabs`); it covers ⌘K/⌘T palette navigation, URL-vs-search, ⌘W,

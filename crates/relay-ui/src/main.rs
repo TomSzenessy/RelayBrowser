@@ -22,6 +22,7 @@ USAGE:
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
   relay install-extension ID        fetch a Chrome Web Store extension (loaded on next launch)
   relay compile-rules FILE          compile EasyList filters to WebKit content-blocker JSON
+  relay doctor                      print versions, paths, profile and MCP socket state
   relay --version | --help
 
 Agents: claude mcp add relay -- relay mcp
@@ -43,6 +44,7 @@ fn main() -> anyhow::Result<()> {
         Some("import-passwords") => import_passwords(args.get(1).map(String::as_str)),
         Some("install-extension") => install_extension(args.get(1).map(String::as_str)),
         Some("compile-rules") => compile_rules(args.get(1).map(String::as_str)),
+        Some("doctor") => doctor(),
         Some(other) if other.starts_with('-') => bail!("unknown option {other}\n\n{HELP}"),
         url => {
             run_browser(url.map(str::to_string));
@@ -57,6 +59,44 @@ fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 
 fn run_mcp_proxy() -> anyhow::Result<()> {
     runtime()?.block_on(relay_mcp::stdio_proxy(&paths::mcp_socket()))
+}
+
+/// One screen of facts for a bug report or a first-run check. Deliberately
+/// portable: it works on the Linux dev host too, where WebKit is absent.
+fn doctor() -> anyhow::Result<()> {
+    println!("relay {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
+    if cfg!(target_os = "macos") {
+        println!("engine: system WebKit (WKWebView), extensions need macOS 15.4+");
+    } else {
+        println!("engine: unavailable here; WebKit is macOS-only (this host can run tests only)");
+    }
+
+    let home = paths::relay_home();
+    println!("home: {}", home.display());
+    let socket = paths::mcp_socket();
+    let socket_state = if socket.exists() { "present (a Relay instance is serving)" } else { "absent (start Relay, then connect)" };
+    println!("mcp socket: {} — {socket_state}", socket.display());
+
+    let db = home.join("profile.sqlite");
+    if db.exists() {
+        match Store::open(&db) {
+            Ok(store) => {
+                let bookmarks = store.bookmarks().map(|b| b.len()).unwrap_or(0);
+                let extensions = store.enabled_extensions().map(|e| e.len()).unwrap_or(0);
+                let search = store.setting("search").ok().flatten().unwrap_or_else(|| "default (Google)".into());
+                println!("profile: {} — {bookmarks} bookmarks, {extensions} enabled extensions", db.display());
+                println!("search: {search}");
+            }
+            Err(e) => println!("profile: {} — unreadable: {e}", db.display()),
+        }
+    } else {
+        println!("profile: {} — absent (created on first run)", db.display());
+    }
+
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "relay".into());
+    println!("bridge: {} bytes, protocol v1", relay_bridge::BRIDGE_JS.len());
+    println!("agents: claude mcp add relay -- {exe} mcp");
+    Ok(())
 }
 
 fn open_store() -> anyhow::Result<Store> {

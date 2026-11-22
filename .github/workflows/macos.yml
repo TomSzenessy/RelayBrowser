@@ -10,6 +10,12 @@ name: macos
 # Dispatch it from a Mac or after a macOS self-hosted runner is attached.
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner label: macos-13, macos-14, macos-15, or a self-hosted macOS label"
+        required: false
+        type: string
+        default: macos-13
 
 permissions:
   contents: read
@@ -22,7 +28,7 @@ jobs:
   macos:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: build, test and smoke (Apple Silicon)
-    runs-on: macos-13
+    runs-on: ${{ inputs.runner || 'macos-13' }}
     timeout-minutes: 60
     permissions:
       contents: read

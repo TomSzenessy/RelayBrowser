@@ -63,10 +63,22 @@ split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector.
 Tests:
 
 ```bash
-cargo test --workspace          # portable crates + UI view logic
-make verify                     # repository gates
+cargo test --workspace          # 50 tests: crates, UI logic, MCP stdio proxy
+make check                      # repository gates
 npm --prefix js test            # bridge in Playwright's WebKit (needs its browser)
 ```
+
+On a Mac, one command runs everything and leaves a report:
+
+```bash
+bash scripts/verify-macos.sh            # tests, real-WebKit smoke, bridge suite,
+                                        # Relay.app, signature check, doctor
+bash scripts/verify-macos.sh --no-open  # same without launching the app
+```
+
+`relay doctor` prints the version, engine availability, data and socket paths,
+profile counts, and the exact `claude mcp add` command — include its output in a
+bug report.
 
 ## Working on this repository
 
