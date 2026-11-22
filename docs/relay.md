@@ -97,30 +97,28 @@ restores scroll once the bridge says `hello`.
 
 ## Checking Relay off-Mac
 
-Four layers, cheapest first:
+Five layers, cheapest first:
 
-1. **Portable tests** (`cargo test --workspace`) run anywhere: protocol, hub,
-   MCP round-trip with a real client, Chrome import, CRX, content rules, sleep,
-   palette, inspector, hints.
-2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui`
-   (its crates compile; a full link needs GPUI's system libraries, e.g.
-   `libxkbcommon`). The macOS-only `web.rs` is first compiled by the macOS job.
-3. **The macOS job** (`.github/workflows/macos.yml`) is the intended real
-   engine evidence: `cargo test --workspace`, then
-   `cargo run -p relay-webkit --example smoke`. It is manual because this
-   account's GitHub-hosted macOS requests stay queued; dispatch it on a Mac or
-   with a macOS runner attached. The engine and the smoke example are
-   type-checked for `aarch64-apple-darwin` from Linux today. The smoke example serves a
-   loopback page, loads it through `Engine` in a real `WKWebView`, and asserts
-   the bridge hello, DOM, console, a 500 `fetch` with its body, a click that
-   runs the page's own handler, and page info. The job then builds the release
-   binary, packages `Relay.app` with [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh),
-   and uploads the zip.
-The stdio transport itself is covered by `crates/relay-ui/tests/mcp_proxy.rs`,
-which spawns the real `relay mcp` binary, connects it to a socket-backed hub,
-and performs the initialize / tools list / list_tabs handshake.
-
-4. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
+1. **Portable tests** (`cargo test --workspace`, 50 tests) run anywhere:
+   protocol, hub, MCP round-trip with a real client, Chrome import, CRX,
+   content rules, sleep, palette, inspector, hints. The stdio transport itself
+   is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which spawns the real
+   `relay mcp` binary, connects it to a socket-backed hub, and performs the
+   initialize / tools list / list_tabs handshake.
+2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui`; a
+   full link needs GPUI's system libraries (e.g. `libxkbcommon`). Its
+   macOS-only `web.rs` needs a macOS build.
+3. **The Darwin type-check** is `bash scripts/mac-check.sh`: it installs the
+   Apple standard library when rustup is available and type-checks
+   `relay-webkit`, `relay-extensions`, `relay-mcp`, including the `smoke`
+   example. It proves API use, not behaviour.
+4. **The macOS job** (`.github/workflows/macos.yml`) is the intended runtime
+   evidence: `cargo test --workspace`, the WebKit smoke page, then the release
+   build packaged by [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh).
+   It is manual because this account's GitHub-hosted macOS requests stay
+   queued; dispatch it on a Mac or with a macOS runner attached. It has not
+   produced evidence yet.
+5. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
    the binary under Xvfb and drives it with `xdotool`, reading state back over
    MCP (`list_tabs`); it covers ⌘K/⌘T palette navigation, URL-vs-search, ⌘W,
    ⌘⇧T, and Esc. It needs `Xvfb`, `xdotool` and `python3`. Screenshots are not
@@ -137,10 +135,10 @@ and performs the initialize / tools list / list_tabs handshake.
   `bash scripts/mac-check.sh` (or its `cargo check --workspace --exclude
   relay-ui --target aarch64-apple-darwin` body) type-checks the macOS code in
   `relay-webkit` and `relay-extensions` (including the `smoke` example); the
-  script skips with a message when the Apple std is not installed. `relay-ui` cannot be checked for the Darwin
-  target here: gpui's macOS build compiles C and Metal code (`ring`, shaders),
-  which needs the Apple SDK. Its macOS-only `web.rs` is first compiled by the
-  macOS CI job.
+  script skips with a message when the Apple std is not installed. `relay-ui`
+  cannot be checked for the Darwin target here: gpui's macOS build compiles C
+  and Metal code (`ring`, shaders), which needs the Apple SDK. Its macOS-only
+  `web.rs` therefore needs a macOS build, and no such build has run yet.
 - On macOS, SQLite links the system `libsqlite3`; elsewhere it is bundled.
   `ureq` uses native TLS (Security.framework on macOS), so no C
   cross-compilation is needed.
