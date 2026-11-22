@@ -8,6 +8,10 @@
 use relay_extensions::store::{Store, WebAppRecord};
 use std::collections::HashSet;
 
+/// Rows per section: enough to be useful, small enough that four sections
+/// fit a 980×760 window without scrolling.
+pub const MAX_ROWS: usize = 5;
+
 /// The sections a new tab can show, in their default order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {
@@ -93,16 +97,16 @@ impl StartPage {
 
     pub fn build(store: &Store, raw_sections: Option<&str>) -> relay_extensions::Result<Self> {
         let wanted = parse_sections(raw_sections);
-        let recent_visits = store.recent_sites(8)?;
+        let recent_visits = store.recent_sites(MAX_ROWS)?;
         let recent_urls: HashSet<String> = recent_visits.iter().map(|v| v.url.clone()).collect();
         let frequent: Vec<_> = store
             .frequent_sites(24)?
             .into_iter()
             .filter(|v| !recent_urls.contains(&v.url))
-            .take(8)
+            .take(MAX_ROWS)
             .collect();
-        let apps = store.web_apps()?.into_iter().take(8).collect::<Vec<_>>();
-        let bookmarks = store.bookmarks()?.into_iter().take(8).collect::<Vec<_>>();
+        let apps = store.web_apps()?.into_iter().take(MAX_ROWS).collect::<Vec<_>>();
+        let bookmarks = store.bookmarks()?.into_iter().take(MAX_ROWS).collect::<Vec<_>>();
 
         let sections = wanted
             .into_iter()
@@ -189,9 +193,9 @@ mod tests {
         assert_eq!(page.sections.len(), 4);
         let by = |s: Section| page.sections.iter().find(|(x, _)| *x == s).map(|(_, i)| i).unwrap();
         let recent = by(Section::Recent);
-        assert_eq!(recent.len(), 8);
+        assert_eq!(recent.len(), MAX_ROWS);
         assert_eq!(recent[0].title, "Fresh 9", "recent is recency-ranked");
-        assert!(!recent.iter().any(|i| i.title == "Often"), "ten fresh pages push Often out of eight recents");
+        assert!(!recent.iter().any(|i| i.title == "Often"), "ten fresh pages push Often out of five recents");
         let frequent = by(Section::Frequent);
         assert!(frequent.iter().any(|i| i.title == "Often"));
         assert!(frequent.iter().all(|i| !recent.iter().any(|r| r.url == i.url)), "frequent does not repeat recent rows");

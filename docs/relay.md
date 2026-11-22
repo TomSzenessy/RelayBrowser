@@ -86,10 +86,11 @@ gone: the same renderer draws vertical rows or a horizontal row of pills.
 
 With no active tab, `render_start_page` paints the new-tab page: the app name,
 one quiet search field that opens the ⌘K palette, and up to four sections from
-`startpage.rs` — **Recent** (pure `last_visit` order, 8 pages), **Frequent**
+`startpage.rs` — **Recent** (pure `last_visit` order, 5 rows), **Frequent**
 (most-visited, with recent pages removed so the two lists do not repeat),
 **Apps** (installed web apps from the `web_apps` table), and **Bookmarks**
-(with their folder as the note). Section order and visibility come from the
+(with their folder as the note). Each section caps at five rows so four
+sections fit a 980×760 window. Section order and visibility come from the
 `start_sections` setting (`recent,frequent,apps,bookmarks`; `none` hides all);
 unknown names are ignored and an empty value falls back to the default order.
 The data is cached in `RelayApp::start_page` and rebuilt only after a visit,
