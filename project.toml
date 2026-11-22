@@ -230,7 +230,7 @@ extra_paths = ["Cargo.toml", "Cargo.lock", "third_party"]
 verification = [
   ["cargo", "test", "--workspace", "--exclude", "relay-ui", "--locked"],
   ["cargo", "clean"],
-  ["bash", "scripts/mac-check.sh"],
+  ["bash", "../scripts/mac-check.sh"],
 ]
 
 [[surfaces]]
