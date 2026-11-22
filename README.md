@@ -1,24 +1,69 @@
-# relay
+# Relay
+
 <!-- repoctl:description -->
 A 120fps, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents.
 <!-- /repoctl:description -->
+<!-- repoctl:project-readme -->
+> Project initialized: **relay** (`desktop`)
+
+Relay is a Mac browser for people who debug with coding agents. It does not ship
+a browser engine: every tab is the macOS WebKit you already trust, so video
+decoding, security patches and 120fps scrolling are Apple's job. Relay adds the
+parts WebKit does not give you:
+
+- a keyboard-first GPUI shell (⌘K palette, vertical tabs, splits, link hints);
+- one ~5 KB injected bridge that streams DOM, network and console state into a
+  single Rust store;
+- a native Inspector and a local MCP server that read that **same** store, so
+  Claude Code, Codex, OpenCode or Zed can answer "why is checkout failing?"
+  from structured state instead of screenshots;
+- Chrome bookmark/history/extension import, native content blocking, tab
+  sleeping, and the real WebKit Web Inspector one shortcut away.
+
+## Status
+
+Early development, built in the open. Honest evidence as of this commit:
+
+| Part | Evidence |
+|---|---|
+| Bridge (`js/bridge.js`) | Playwright WebKit tests: DOM snapshots/patches, fetch/XHR bodies, console, errors, click/type/highlight, hints, 2FA detection |
+| Shared state, MCP server, Chrome import, CRX, rules, sleep | `cargo test --workspace` (47 tests) |
+| macOS `WKWebView` engine + bridge | GitHub `macos` job: builds, runs every test, and executes a real-WebKit smoke page |
+| GPUI window | Compiles and links on macOS in CI; a human still has to look at it |
+| `.app` bundle | Built, ad-hoc signed, and uploaded by the `macos` job |
+
+The GPUI window has not yet been visually reviewed on a Mac, and extensions need
+macOS 15.4. See [`docs/relay.md`](./docs/relay.md) for the architecture and
+[`docs/product/features.csv`](./docs/product/features.csv) for the live feature
+matrix.
 
 ## Quick start
-<!-- repoctl:quickstart -->
+
+macOS 13.3 or newer, Rust 1.100, and full Xcode (GPUI compiles Metal). Then:
+
 ```bash
-# This project is initialized. Complete the intake and replace the
-# template-bootstrap surface before treating checks as product evidence.
-make inventory
-make check
+cargo run --release -p relay-ui            # opens Relay
+cargo run --release -p relay-ui -- https://example.com
 ```
-<!-- /repoctl:quickstart -->
-<!-- repoctl:project-readme -->
-> Project initialized: **relay** (`desktop`). Keep this identity,
-> launch state, and project-specific quick start current.
 
-## About
+Connect an agent to the running browser:
 
-FILL-IN: what this project does, for whom, how its success is judged, and how to run it.
+```bash
+cargo build --release -p relay-ui
+claude mcp add relay -- "$PWD/target/release/relay" mcp
+```
+
+`⌘K` opens everything: URLs, searches, tabs, history, bookmarks and commands.
+`⌘T` new tab, `⌘W` close, `⌘⇧T` reopen, `⌘L` address, `⌘⌥I` Inspector, `⌘\\`
+split, `⌘J` link hints, `⌘⌥U` WebKit's own Web Inspector.
+
+Tests:
+
+```bash
+cargo test --workspace          # portable crates + UI view logic
+make verify                     # repository gates
+npm --prefix js test            # bridge in Playwright's WebKit (needs its browser)
+```
 
 ## Working on this repository
 

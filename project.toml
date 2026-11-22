@@ -16,7 +16,7 @@ default_branch = "main"
 github = "TomSzenessy/RelayBrowser"
 # Add project-specific generated/infrastructure paths here when the defaults
 # are not enough. Product surfaces still belong in [[surfaces]].
-infrastructure_paths = []
+infrastructure_paths = ["scripts"]
 # Single source for the README description block and the GitHub repository
 # metadata (`make sync` renders the README; `make github-sync` applies GitHub).
 description = "A 120fps, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents."
@@ -154,6 +154,11 @@ reason = "gitleaks-action with a GITLEAKS_LICENSE and GitHub PR commit enumerati
 workflow = ".github/workflows/specialist-scans.yml"
 job = "links"
 reason = "lychee scans external URLs; needs network access and the workflow's reviewed exclusions, so the PR names it while markdown-links runs in make check"
+
+[[ci.local.not_local]]
+workflow = ".github/workflows/macos.yml"
+job = "macos"
+reason = "needs Apple Silicon macOS with Xcode and the system WebKit; it is the only job that links the GPUI window and runs the real-WebKit smoke example, and GitHub-hosted macOS runners are the intended host"
 
 [[ci.local.not_local]]
 workflow = ".github/workflows/issue-contract.yml"

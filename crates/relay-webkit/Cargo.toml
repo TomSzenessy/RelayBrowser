@@ -10,6 +10,10 @@ relay-bridge.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+# The smoke example drives the same oneshot command replies the shell uses.
+tokio.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # objc2 framework crates enable every class by default.
 objc2.workspace = true

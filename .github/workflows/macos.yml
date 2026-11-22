@@ -1,0 +1,84 @@
+name: macos
+
+# Real Apple Silicon evidence: every crate compiles, links and runs its tests
+# against the system WebKit; the WebKit smoke example loads a page through the
+# actual engine and bridge; the release binary is packaged as Relay.app.
+# GitHub-hosted macOS runners are free for public repositories.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: build, test and smoke (Apple Silicon)
+    runs-on: macos-14
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show the runner
+        run: |
+          uname -a
+          sw_vers
+          xcodebuild -version
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
+          cargo --version
+
+      - name: Test every crate against the system WebKit
+        run: cargo test --workspace --locked
+
+      - name: Smoke-test the engine in a real WKWebView
+        run: cargo run --locked -p relay-webkit --example smoke
+
+      - name: Build and package Relay.app
+        run: |
+          cargo build --release --locked -p relay-ui
+          bash scripts/bundle-macos.sh
+
+      - name: Zip the app for the artifact
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent dist/Relay.app dist/Relay-macOS.zip
+          shasum -a 256 dist/Relay-macOS.zip | tee dist/Relay-macOS.zip.sha256
+
+      - name: Upload Relay.app
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Relay-macOS
+          path: |
+            dist/Relay-macOS.zip
+            dist/Relay-macOS.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload crash and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-diagnostics
+          path: |
+            ~/Library/Logs/DiagnosticReports/**
+            ~/Library/Application Support/Relay/**
+          if-no-files-found: ignore
+          retention-days: 7

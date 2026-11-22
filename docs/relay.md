@@ -79,16 +79,31 @@ message). It always keeps at least one tab awake. `Engine::sleep` snapshots the
 viewport to JPEG, records URL and scroll, then destroys the view. `Engine::wake`
 recreates it, and `after_load` restores scroll once the bridge says `hello`.
 
-## Checking the shell off-Mac
+## Checking Relay off-Mac
 
-`crates/relay-ui/review/keyboard_e2e.sh` runs the real `relay` binary under
-Xvfb, drives it with `xdotool`, and reads the browser's own state back over
-MCP (`list_tabs`). It covers ⌘K/⌘T palette navigation, URL-vs-search, ⌘W,
-⌘⇧T, and Esc. It needs `Xvfb`, `xdotool` and `python3`, so it is a manual
-check rather than a declared verification command. Screenshots are not
-possible on headless VMs without a working Vulkan display: under Xvfb and
-Xorg-dummy, llvmpipe presents black frames even for `vkcube`. So visual
-review happens on a Mac.
+Four layers, cheapest first:
+
+1. **Portable tests** (`cargo test --workspace`) run anywhere: protocol, hub,
+   MCP round-trip with a real client, Chrome import, CRX, content rules, sleep,
+   palette, inspector, hints.
+2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui`
+   (its crates compile; a full link needs GPUI's system libraries, e.g.
+   `libxkbcommon`). The macOS-only `web.rs` is first compiled by the macOS job.
+3. **The macOS job** (`.github/workflows/macos.yml`, `macos-14`) is the real
+   engine evidence: `cargo test --workspace`, then
+   `cargo run -p relay-webkit --example smoke`. The smoke example serves a
+   loopback page, loads it through `Engine` in a real `WKWebView`, and asserts
+   the bridge hello, DOM, console, a 500 `fetch` with its body, a click that
+   runs the page's own handler, and page info. The job then builds the release
+   binary, packages `Relay.app` with [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh),
+   and uploads the zip.
+4. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
+   the binary under Xvfb and drives it with `xdotool`, reading state back over
+   MCP (`list_tabs`); it covers ⌘K/⌘T palette navigation, URL-vs-search, ⌘W,
+   ⌘⇧T, and Esc. It needs `Xvfb`, `xdotool` and `python3`. Screenshots are not
+   possible on headless VMs without a working Vulkan display: under Xvfb and
+   Xorg-dummy, llvmpipe presents black frames even for `vkcube`. Visual review
+   therefore happens on a Mac.
 
 ## Build notes
 
@@ -97,10 +112,11 @@ review happens on a Mac.
 
 - `cargo test --workspace` runs everywhere. On Linux,
   `cargo check --workspace --exclude relay-ui --target aarch64-apple-darwin`
-  type-checks the macOS code in `relay-webkit` and `relay-extensions`.
-  `relay-ui` cannot be checked that way: gpui's macOS build compiles C and
-  Metal code (`ring`, shaders), which needs the Apple SDK. Its macOS-only
-  code (`web.rs`) is first compiled on a Mac.
+  type-checks the macOS code in `relay-webkit` and `relay-extensions`
+  (including the `smoke` example). `relay-ui` cannot be checked for the Darwin
+  target here: gpui's macOS build compiles C and Metal code (`ring`, shaders),
+  which needs the Apple SDK. Its macOS-only `web.rs` is first compiled by the
+  macOS CI job.
 - On macOS, SQLite links the system `libsqlite3`; elsewhere it is bundled.
   `ureq` uses native TLS (Security.framework on macOS), so no C
   cross-compilation is needed.
