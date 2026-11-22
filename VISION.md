@@ -2,32 +2,54 @@
 
 <!-- index: operate | Accepted product direction, constraints, and success evidence | Starting a project or making a high-impact scope decision. -->
 
-Status: pending
+Status: accepted
 Project: relay
 Owner: TomSzenessy
-Date: [YYYY-MM-DD]
+Date: 2026-11-22
 
-The `product-kickoff` skill fills this in with the owner. Replace every bracketed
-REQUIRED line, then set `Status: accepted` with the owner and today's date, and
-`[vision].status = "accepted"` in `project.toml`. Checks refuse an accepted
-record that still has a placeholder.
+Source: the owner's written brief "Project Codename: Relay" (2026-11-22
+session). Every decision below is the owner's own, not an agent's pick.
 
 ## Outcome
 
-[REQUIRED: who it is for, the problem it solves, and what success looks like (one metric)]
+A 120fps, keyboard-first macOS browser written in Rust (GPUI) on native WebKit.
+One lightweight injected bridge powers both a native DevTools Inspector and a
+built-in MCP server, so coding agents (Claude Code, OpenCode, Codex, Zed) can
+read and drive the user's live tabs without screenshots. Success metric: an
+agent answers "why is this page failing?" from `get_console_logs` and
+`get_network_requests` in under 1 ms of state access, with no screenshot.
 
 ## Users and context
 
-[REQUIRED: the people who use it, where, and what they use today]
+Developers on macOS who work alongside coding agents every day. Today they use
+Chrome or Arc for browsing, Chrome DevTools for inspection, and screenshot-based
+or Playwright-based browser MCP servers for agents.
 
 ## Platforms and constraints
 
-[REQUIRED: platforms, offline needs, budget, deadline, data and privacy limits]
+- macOS only for v1 (WKWebView, WKWebExtension, Keychain, Metal/GPUI); no
+  cross-platform abstraction.
+- Never bundle a browser engine: binary about 15 MB or less, idle RAM about
+  50 MB.
+- Everything is local: SQLite for history, bookmarks and settings; Keychain for
+  passwords; no accounts, no telemetry.
+- 80/20: build Elements/Network/Console/Cookies natively; leave heap profiling
+  and breakpoints to WebKit's own Web Inspector, one shortcut away.
 
 ## Non-goals
 
-[REQUIRED: what this version deliberately does not do]
+- No custom cloud sync backend (use iCloud Drive or a folder/Git repo).
+- No built-in LLM chat UI or subscriptions; Relay is the browser + MCP surface
+  agents plug into.
+- No Windows or Linux build at v1. Linux builds exist only to develop and test
+  the portable crates.
 
 ## Success evidence
 
-[REQUIRED: how we will know it works: tests, observed real artifacts, the metric]
+- Automated: `cargo test --workspace` (bridge state, MCP round-trip with a real
+  MCP client, importer, CRX, rules, sleep); `npm test` in `js/` (bridge.js in
+  WebKit, every message parsed by Rust); macOS type-check in CI.
+- Observed on a Mac: the window opens, pages render in WKWebView, ⌘K/⌘T/⌘W
+  work, the Inspector shows live DOM/Network/Console, and Claude Code connected
+  through `relay mcp` can navigate, click, and read console and network state.
+- Roadmap phases 1–4 in the brief are the feature list (`docs/product/features.csv`).

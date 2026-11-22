@@ -56,8 +56,11 @@ itself and this table cannot drift. Edit the line in the document, not here.
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | Human contribution and review flow | A person or agent prepares a branch or pull request. |
 | [`../SECURITY.md`](../SECURITY.md) | Vulnerability disclosure and security contact | A vulnerability or security-sensitive change is involved. |
 | [`../.security/threat-model.md`](../.security/threat-model.md) | STRIDE threat model and accepted trust boundaries | A security-sensitive tool, CI path, or agent permission is reviewed. |
+| [`bridge.md`](./bridge.md) | The injected JS bridge wire contract and Chrome shims | changing bridge.js, chrome-shims.js, or the page protocol |
+| [`design.md`](./design.md) | Visual direction, layout, keyboard map, and UX principles | before any UI work |
 | [`engineering.md`](./engineering.md) | Modular design, single source of truth, dependency, cleanup rules | Code changed, refactored, or reviewed; deep modules. |
 | [`model-integration.md`](./model-integration.md) | Confining a language model inside a product: code decides, the model reads and writes, votes, grounding, shadow mode, measured confidence | code calls a model at runtime or model output reaches a decision |
+| [`relay.md`](./relay.md) | Relay crate map, data flow, threading, and seams | changing any crate or adding one |
 | [`security.md`](./security.md) | Secure implementation baseline | Auth, secrets, CI, dependencies, deployment, or untrusted input changes. |
 | [`architecture/README.md`](./architecture/README.md) | Current structure, seams, kit module map, and design rules | Adding a surface, changing dependencies, or locating ownership. |
 
@@ -85,6 +88,7 @@ itself and this table cannot drift. Edit the line in the document, not here.
 | [`adr/0001-issue-backed-write-ahead.md`](./adr/0001-issue-backed-write-ahead.md) | Accepted write-ahead and documentation-boundary decision | You need the rationale for issue-backed continuity. |
 | [`adr/0002-one-capability-model.md`](./adr/0002-one-capability-model.md) | The capability model: kinds, declaration fields, discovery, packs, and what is out of scope | You add, find, or switch off a skill, role, doc, rule, check, command, MCP route, or pack. |
 | [`adr/README.md`](./adr/README.md) | Architecture decision record rules | A hard-to-reverse, surprising trade-off is made. |
+| [`product/research.md`](./product/research.md) | Comparable products, prior art, and Relay's angle | Scoping a feature or judging what to borrow. |
 <!-- /repoctl:index -->
 
 ## Durable knowledge versus live work

@@ -1,0 +1,141 @@
+//! End-to-end: a real MCP client talks to RelayMcp over an in-memory pipe,
+//! and a simulated page answers bridge commands exactly as bridge.js does.
+
+use relay_bridge::{Browser, Owner, SharedHub, TabId};
+use relay_mcp::RelayMcp;
+use rmcp::{model::CallToolRequestParams, ServiceExt};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+
+/// Plays the role of WKWebView + bridge.js: loads post `hello` + a DOM
+/// snapshot; evaluated commands post a `result`.
+struct SimPage {
+    hub: SharedHub,
+    log: Mutex<Vec<String>>,
+}
+
+impl SimPage {
+    fn load(&self, tab: TabId, url: &str) {
+        let hub = self.hub.clone();
+        let url = url.to_string();
+        tokio::spawn(async move {
+            hub.ingest_json(tab, &json!({"kind":"hello","url":url,"version":1}).to_string()).unwrap();
+            hub.ingest_json(tab, &json!({"kind":"page","url":url,"title":"Checkout"}).to_string()).unwrap();
+            hub.ingest_json(tab, &json!({"kind":"dom_snapshot","root":{"id":1,"tag":"body","children":[
+                {"id":2,"tag":"h1","text":"Your cart"},
+                {"id":3,"tag":"input","attrs":{"type":"email","placeholder":"Email"},"interactive":true},
+                {"id":4,"tag":"button","text":"Pay now","attrs":{"id":"pay"},"interactive":true}
+            ]}}).to_string()).unwrap();
+            hub.ingest_json(tab, r#"{"kind":"console","level":"error","args":["TypeError: cart.total is undefined"],"source":"app.js:10:3"}"#).unwrap();
+            hub.ingest_json(tab, r#"{"kind":"network","id":"f1","api":"fetch","method":"POST","url":"https://shop.test/api/checkout","status":500,"duration_ms":41.27,"response_body":"{\"error\":\"card declined\"}"}"#).unwrap();
+            hub.ingest_json(tab, r#"{"kind":"network","id":"r1","api":"resource","method":"GET","url":"https://shop.test/app.js","status":200}"#).unwrap();
+        });
+    }
+}
+
+impl Browser for SimPage {
+    fn open(&self, tab: TabId, url: &str) { self.load(tab, url) }
+    fn navigate(&self, tab: TabId, url: &str) { self.load(tab, url) }
+    fn go_back(&self, _: TabId) {}
+    fn go_forward(&self, _: TabId) {}
+    fn reload(&self, _: TabId) {}
+    fn close(&self, _: TabId) {}
+    fn activate(&self, _: TabId) {}
+    fn refresh_cookies(&self, _: TabId) {}
+    fn open_web_inspector(&self, _: TabId) {}
+    fn eval(&self, tab: TabId, script: String) {
+        let payload = script.trim_start_matches("window.__relay && window.__relay.exec(").trim_end_matches("), void 0");
+        let cmd: Value = serde_json::from_str(payload).unwrap();
+        self.log.lock().unwrap().push(cmd["op"].as_str().unwrap().to_string());
+        let value = match cmd["op"].as_str().unwrap() {
+            "click" => json!({"id": cmd["target"], "tag": "button", "text": "Pay now"}),
+            "type" => json!({"id": cmd["target"], "tag": "input", "text": cmd["text"]}),
+            "read_text" => json!("Your cart\nPay now"),
+            _ => Value::Null,
+        };
+        let ok = cmd["target"].as_u64() != Some(99);
+        let reply = json!({"kind":"result","id":cmd["id"],"ok":ok,"value":value,
+            "error": if ok { Value::Null } else { "element 99 not found (re-read the DOM)".into() }});
+        let hub = self.hub.clone();
+        tokio::spawn(async move { hub.ingest_json(tab, &reply.to_string()).unwrap() });
+    }
+}
+
+fn text(r: &rmcp::model::CallToolResult) -> String {
+    r.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.clone()).collect::<Vec<_>>().join("\n")
+}
+
+async fn call(client: &rmcp::service::RunningService<rmcp::RoleClient, ()>, name: &'static str, args: Value) -> (bool, String) {
+    let r = client
+        .call_tool(CallToolRequestParams::new(name).with_arguments(args.as_object().unwrap().clone()))
+        .await
+        .unwrap();
+    (r.is_error.unwrap_or(false), text(&r))
+}
+
+#[tokio::test]
+async fn agent_debugs_a_failing_checkout_without_screenshots() {
+    let hub = SharedHub::new();
+    let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub.clone(), page.clone());
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+
+    let tools: Vec<String> = client.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
+    for t in ["navigate", "click_element", "type_text", "read_dom", "get_console_logs", "get_network_requests", "list_tabs", "open_tab"] {
+        assert!(tools.contains(&t.to_string()), "missing tool {t}: {tools:?}");
+    }
+
+    // No active tab yet: a clear error, not a crash.
+    let (err, msg) = call(&client, "read_dom", json!({})).await;
+    assert!(err && msg.contains("no active tab"), "{msg}");
+
+    // Agents may not open non-web schemes.
+    let (err, msg) = call(&client, "open_tab", json!({"url": "file:///etc/passwd"})).await;
+    assert!(err && msg.contains("only http(s)"), "{msg}");
+
+    let (err, msg) = call(&client, "open_tab", json!({"url": "https://shop.test/cart"})).await;
+    assert!(!err, "{msg}");
+    assert!(msg.contains("[4] button \"Pay now\" #pay"), "{msg}");
+    let tab = hub.lock().tabs().next().unwrap().id;
+    assert_eq!(hub.lock().tab(tab).unwrap().owner, Owner::Agent);
+    hub.update(|h| h.set_active(tab));
+
+    let (_, dom) = call(&client, "read_dom", json!({})).await;
+    assert!(dom.contains("[2] h1 \"Your cart\"") && dom.contains("[3] input[type=email] \"Email\""), "{dom}");
+
+    let (err, msg) = call(&client, "type_text", json!({"element_id": 3, "text": "a@b.test"})).await;
+    assert!(!err && msg.contains("a@b.test"), "{msg}");
+    let (err, msg) = call(&client, "click_element", json!({"element_id": 4})).await;
+    assert!(!err && msg.contains("Pay now"), "{msg}");
+    let (err, msg) = call(&client, "click_element", json!({"element_id": 99})).await;
+    assert!(err && msg.contains("re-read the DOM"), "{msg}");
+
+    let (_, logs) = call(&client, "get_console_logs", json!({"min_level": "warn"})).await;
+    assert!(logs.contains("[Error] TypeError: cart.total is undefined (app.js:10:3)"), "{logs}");
+
+    let (_, net) = call(&client, "get_network_requests", json!({"failed_only": true, "include_bodies": true})).await;
+    let net: Value = serde_json::from_str(&net).unwrap();
+    assert_eq!(net.as_array().unwrap().len(), 1);
+    assert_eq!(net[0]["status"], 500);
+    assert_eq!(net[0]["duration_ms"], 41.3);
+    assert!(net[0]["response_body"].as_str().unwrap().contains("card declined"));
+
+    // A CAPTCHA pauses the agent's mutating actions but not reads.
+    hub.ingest_json(tab, r#"{"kind":"challenge","challenge":"captcha"}"#).unwrap();
+    let (err, msg) = call(&client, "click_element", json!({"element_id": 4})).await;
+    assert!(err && msg.contains("waiting for a human"), "{msg}");
+    let (err, _) = call(&client, "read_text", json!({})).await;
+    assert!(!err);
+
+    // Agents cannot close user tabs.
+    let user_tab = hub.update(|h| h.create_tab("https://mail.test", Owner::User));
+    let (err, msg) = call(&client, "close_tab", json!({"tab_id": user_tab})).await;
+    assert!(err && msg.contains("belongs to the user"), "{msg}");
+    let (err, _) = call(&client, "close_tab", json!({"tab_id": tab})).await;
+    assert!(!err);
+
+    assert_eq!(*page.log.lock().unwrap(), vec!["type", "click", "click", "read_text"]);
+    client.cancel().await.unwrap();
+}

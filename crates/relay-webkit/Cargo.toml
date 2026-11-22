@@ -1,0 +1,20 @@
+[package]
+name = "relay-webkit"
+description = "WKWebView lifecycle, bridge injection, content blocking, and tab sleeping."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+relay-bridge.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# objc2 framework crates enable every class by default.
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true
+objc2-web-kit.workspace = true
+objc2-core-foundation = "0.3"
+block2 = "0.6"

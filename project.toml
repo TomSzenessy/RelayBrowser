@@ -19,8 +19,8 @@ github = "TomSzenessy/RelayBrowser"
 infrastructure_paths = []
 # Single source for the README description block and the GitHub repository
 # metadata (`make sync` renders the README; `make github-sync` applies GitHub).
-description = ""
-topics = []
+description = "A 120fps, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents."
+topics = ["browser", "rust", "gpui", "webkit", "macos", "mcp", "devtools", "ai-agents"]
 is_template = false
 
 [template]
@@ -33,7 +33,7 @@ prune = []
 records = { "VISION.md" = "sha256:54cd11f15fea92efb8536336450fa30a5073563d72b73c8ead995b61e03a755b", "docs/STACK-DECISION.md" = "sha256:477676bd70f6eb7c05c5449ec13e2889142e127eafc8020daba519f19dfc0722" }
 
 [vision]
-status = "pending"
+status = "accepted"
 record = "VISION.md"
 stack_decision = "docs/STACK-DECISION.md"
 
@@ -211,12 +211,33 @@ legal_document_paths = []
 # exists, then give it an owner, a quality oracle, and evidence-producing checks.
 
 [[surfaces]]
-id = "template-bootstrap"
-path = "."
-kind = "template"
-status = "planned"
-# Replace this bootstrap declaration with the first real product surface.
-verification = []
+# The browser: 5-crate Cargo workspace (GPUI shell, WebKit, bridge state, extensions, MCP).
+id = "relay"
+path = "crates"
+kind = "desktop"
+status = "active"
+owner = "TomSzenessy"
+quality_oracle = "cargo tests (bridge state, MCP round-trip with a real MCP client, importer, CRX, rules, sleep) plus a macOS type-check of the WebKit/AppKit code; the running app is judged on a Mac"
+extra_paths = ["Cargo.toml", "Cargo.lock", "third_party"]
+setup = [["rustup", "target", "add", "aarch64-apple-darwin"]]
+verification = [
+  ["cargo", "test", "--workspace", "--locked"],
+  ["cargo", "check", "--workspace", "--locked", "--target", "aarch64-apple-darwin"],
+]
+
+[[surfaces]]
+# The injected page bridge and Chrome API shims, tested in Playwright's WebKit.
+id = "bridge-js"
+path = "js"
+kind = "code"
+status = "active"
+owner = "TomSzenessy"
+quality_oracle = "node:test suite running bridge.js in WebKit; every emitted message must parse in Rust (relay-bridge examples/validate.rs)"
+setup = [["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], ["npx", "playwright", "install", "webkit"]]
+verification = [
+  ["cargo", "build", "-q", "-p", "relay-bridge", "--example", "validate"],
+  ["npm", "test"],
+]
 [[skills]]
 package = "Jakeschincariol/replica-skill@product-recon"
 pack = "product"

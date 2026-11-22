@@ -1,0 +1,35 @@
+feature,area,priority,status,evidence,acceptance,source
+GPUI window embedding WKWebView per tab,shell,must,no,,A Mac opens a Relay window; pages render and scroll natively inside the GPUI layout; resizing keeps the web view aligned,owner brief phase 1
+Vertical tab bar with agent tab group tint,shell,must,no,,Tabs list in a left sidebar in hub order; agent-owned tabs are visibly tinted and grouped; clicking activates,owner brief phase 1
+Cmd+K palette for URLs / tabs / history / commands,shell,must,no,,Cmd+K opens a fuzzy palette; Enter on a URL or search loads it; tabs and history are ranked; all keyboard,owner brief phase 1
+Cmd+T / Cmd+W / Cmd+L / Cmd+1-9 shortcuts,shell,must,no,,Each shortcut works from anywhere in the window; covered by a keymap unit test,owner brief phase 1
+WKContentRuleList ad and tracker blocking,engine,must,partial,crates/relay-webkit/src/content_rules.rs,EasyList subset compiles to WebKit JSON (tested); on a Mac the built-in list blocks doubleclick.net before load,owner brief phase 1
+Injected bridge streams DOM / network / console,bridge,must,yes,js/test/bridge.test.mjs crates/relay-bridge/src/hub.rs,bridge.js in WebKit emits snapshots / patches / console / fetch+XHR and every message parses in Rust,owner brief phase 2
+Bridge actions: highlight / editStyle / click / type,bridge,must,yes,js/test/bridge.test.mjs,Commands run in a real WebKit page and fire the page's own listeners; missing ids report an error,owner brief phase 2
+Native Inspector pane: Elements / Network / Console / Cookies,inspector,must,no,,A split pane renders the live hub state for the active tab and updates as the page changes; hovering an element highlights it,owner brief phase 2
+MCP server exposing tabs and bridge state to agents,mcp,must,yes,crates/relay-mcp/tests/mcp_roundtrip.rs,A real MCP client lists tools and drives open_tab / read_dom / type_text / click_element / get_console_logs / get_network_requests,owner brief phase 2
+relay mcp stdio proxy for Claude Code / OpenCode / Codex,mcp,must,partial,crates/relay-mcp/src/lib.rs,"claude mcp add relay -- relay mcp connects to the running browser socket (user-only 0600) and tools work end to end on a Mac",owner brief phase 2
+Agent-safe attached mode pauses on CAPTCHA / 2FA,mcp,must,yes,crates/relay-mcp/tests/mcp_roundtrip.rs js/test/bridge.test.mjs,Agent clicks fail with waiting-for-human while a challenge is shown; reads continue; agents cannot close user tabs,owner brief shortcut 4
+Chrome import: bookmarks / history / extension list,migration,must,yes,crates/relay-extensions/tests/chrome_migration.rs crates/relay-extensions/src/chrome_import.rs,Fixture profile imports bookmarks with folders / history newest-first / localized extension names; idempotent store import,owner brief phase 3
+Chrome password CSV into macOS Keychain,migration,should,partial,crates/relay-extensions/src/chrome_import.rs,CSV parses with redacted Debug (tested); on a Mac imported logins appear in Keychain Access as internet passwords,owner brief shortcut 2
+Chrome Web Store installer (CRX3) + WKWebExtension loading,extensions,must,partial,crates/relay-extensions/src/crx.rs,CRX3 header id checked and zip unpacked without traversal (tested); on a Mac uBlock Origin Lite installs by id and runs,owner brief phase 3
+chrome.sidePanel / chrome.offscreen shims,extensions,should,partial,crates/relay-extensions/src/manifest.rs js/chrome-shims.js,Shims install ahead of background code (tested); on a Mac an extension's side panel opens in a GPUI pane,owner brief phase 3
+Automatic tab sleeping with snapshot restore,memory,should,partial,crates/relay-webkit/src/sleep.rs,Idle background tabs are chosen correctly (tested); on a Mac a slept tab frees its WebContent process and wakes showing its snapshot then restores scroll,owner brief phase 4
+Multi-pane split view,shell,should,no,,Cmd+\ splits the content area; each pane shows its own tab; visible panes never sleep,owner brief phase 4
+Vimium-style link hints,shell,should,no,,Pressing f labels every interactive element; typing a label clicks it; Esc cancels,owner brief phase 4
+WebKit Web Inspector fallback shortcut,inspector,should,partial,crates/relay-webkit/src/mac.rs,Cmd+Opt+U opens WebKit's Web Inspector for the active tab on a Mac,owner brief principle 3
+Obscura headless background worker for agents,mcp,could,skip,,Deferred: no Obscura worker exists yet; background agents use attached mode,owner brief shortcut 4
+Local profile store (history / bookmarks / settings),data,must,yes,crates/relay-extensions/tests/chrome_migration.rs crates/relay-extensions/src/store.rs,SQLite store ranks history and refuses newer schemas; lives in relay_home(),owner brief stack
+First run reaches the core value fast,onboarding,must,no,,First launch shows a one-screen welcome with Import from Chrome and the MCP setup command; a URL can be typed immediately,production
+Every screen has designed empty / loading / error states,states,must,no,,Empty window / page loading / load failure / asleep / no DOM yet each have a designed state,production
+Accessibility,accessibility,must,no,,Full keyboard path for every action; contrast checked; VoiceOver labels on tab bar and palette rows,production
+App identity: name / icon / window titles,identity,must,no,,Relay app icon and bundle (Relay.app) with meaningful window titles,production
+Destructive actions are undoable or confirmed,safety,must,no,,Cmd+Shift+T reopens a closed tab; clearing data asks first,production
+Data survives: backup / export / import,data,must,partial,crates/relay-extensions/src/store.rs,Profile is a single SQLite file in relay_home() that can be copied or synced; export command documented,production
+Errors are caught / shown kindly / and reported,reliability,must,no,,Page load failures show an in-pane error with retry; Rust errors are logged with context,production
+Deployed and reachable,delivery,must,no,,A signed Relay.app build (or a documented cargo install) is recorded in docs/production.md,production
+Light and dark themes are both intentional,visual,should,no,,Follows the macOS appearance; both reviewed,production
+Feels fast,performance,should,no,,Window chrome renders at the display refresh rate; idle RAM about 50 MB with one tab; binary about 15 MB or less,production
+Settings for the choices users expect,settings,should,no,,Search engine / blocking on-off / sleep timeout / MCP on-off in one place,production
+Privacy notice when personal data is stored or sent,privacy,should,no,,docs/privacy.md states that all data stays local and what agents can read,production
+Polished motion and feedback,visual,could,no,,Palette and pane transitions 150-250 ms,production

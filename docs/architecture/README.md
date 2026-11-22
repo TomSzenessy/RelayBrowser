@@ -12,7 +12,8 @@ Maintain one table when the project has more than one surface:
 
 | Surface | Path | Owner | Interface / entry point | Quality oracle | Verification |
 |---|---|---|---|---|---|
-| _Add real surfaces after initialization._ | — | — | — | — | — |
+| relay | `crates/` (+ `Cargo.toml`, `Cargo.lock`, `third_party/`) | TomSzenessy | `relay` binary (`crates/relay-ui`); crate map in [`../relay.md`](../relay.md) | cargo tests + macOS type-check; app judged on a Mac | `cargo test --workspace`; `cargo check --target aarch64-apple-darwin` |
+| bridge-js | `js/` | TomSzenessy | `bridge.js` injected per page; contract in [`../bridge.md`](../bridge.md) | WebKit node:test suite; every message parsed by Rust | `npm test` in `js/` |
 
 `project.toml` is the machine-readable source for paths and commands. This table
 is the human navigation view, not a second command catalog.

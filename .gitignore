@@ -53,3 +53,6 @@ playwright-report/
 
 # Rust build output
 /target/
+
+# JS test dependencies
+/js/node_modules/

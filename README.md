@@ -1,6 +1,6 @@
 # relay
 <!-- repoctl:description -->
-Describe this project in `project.toml` `[repository].description`, then run `make sync`.
+A 120fps, keyboard-first macOS browser in Rust (GPUI) on native WebKit, where one injected bridge powers both a native Inspector and a built-in MCP server for AI agents.
 <!-- /repoctl:description -->
 
 ## Quick start
