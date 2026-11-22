@@ -209,14 +209,19 @@ mod mac {
         let info = op(&engine, &hub, tab, Op::PageInfo);
         assert_eq!(info["title"], "Relay smoke");
 
-        // A refused connection is surfaced as a readable load error (the shell
-        // hides WebKit's blank error page and shows Retry).
-        let dead = "http://127.0.0.1:1/";
-        let failed_tab = hub.update(|h| h.create_tab(dead, Owner::User));
-        engine.create(failed_tab, dead);
+        // A refused connection on an ephemeral closed port (avoiding port 1,
+        // which WebKit blocks on the Fetch bad-port list before navigation)
+        // must surface as a readable load error.
+        let dead_port = TcpListener::bind("127.0.0.1:0").expect("bind dead port").local_addr().expect("dead addr").port();
+        let dead = format!("http://127.0.0.1:{dead_port}/");
+        let failed_tab = hub.update(|h| h.create_tab(&dead, Owner::User));
+        engine.create(failed_tab, &dead);
+        if let Some(view) = engine.view(failed_tab) {
+            win.contentView().unwrap().addSubview(view);
+        }
         assert!(
             until(|| hub.lock().tab(failed_tab).is_some_and(|t| t.load_error.is_some()), 15.0),
-            "a refused navigation did not set load_error"
+            "a refused navigation to {dead} did not set load_error"
         );
         println!("smoke: load error = {:?}", hub.lock().tab(failed_tab).unwrap().load_error);
 
@@ -229,6 +234,9 @@ mod mac {
             "sleep did not capture a JPEG snapshot"
         );
         engine.wake(tab);
+        if let Some(view) = engine.view(tab) {
+            win.contentView().unwrap().addSubview(view);
+        }
         assert!(!hub.lock().tab(tab).unwrap().sleeping, "wake left the tab asleep");
         assert!(
             until(|| hub.lock().tab(tab).is_some_and(|t| t.dom.root().is_some()), 20.0),
