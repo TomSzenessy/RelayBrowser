@@ -555,7 +555,11 @@ impl RelayApp {
             self.sleep_idle_tabs(cx);
             self.save_session();
             // Pick up a start_sections change made from the CLI while open.
+            let before = self.start_page.clone();
             self.refresh_start_page();
+            if self.start_page != before {
+                changed = true;
+            }
         }
         if self.toast.as_ref().is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(3)) {
             self.toast = None;
@@ -613,7 +617,7 @@ impl RelayApp {
     /// indexed SQLite reads, only on a visit/bookmark/app change.
     fn refresh_start_page(&mut self) {
         let Some(store) = &self.store else {
-            self.start_page = StartPage::default();
+            self.start_page = StartPage::welcome();
             return;
         };
         let sections = store.setting("start_sections").ok().flatten();
