@@ -68,7 +68,8 @@ before(async () => {
 after(async () => {
   await browser?.close();
   // Contract: Rust parses every message the real bridge produced.
-  const bin = join(root, "target", "debug", "examples", "validate");
+  const targetDir = process.env.CARGO_TARGET_DIR || join(root, "target");
+  const bin = join(targetDir, "debug", "examples", "validate");
   if (!existsSync(bin)) throw new Error("build it first: cargo build -p relay-bridge --example validate");
   const r = spawnSync(bin, { input: all.map(m => JSON.stringify(m)).join("\n") });
   assert.equal(r.status, 0, r.stderr.toString());

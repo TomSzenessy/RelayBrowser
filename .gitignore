@@ -53,6 +53,21 @@ playwright-report/
 
 # Rust build output
 /target/
+**/*.rs.bk
+
+# macOS app packaging (scripts/bundle-macos.sh writes dist/Relay.app)
+*.app
+DerivedData/
+*.xcarchive
+*.xcuserstate
+
+# Playwright artifacts beyond test-results/ and playwright-report/
+blob-report/
+playwright/.cache/
+
+# Local environment backups left by a previous owner (read-only originals)
+*.ro
+*.ro/
 
 # JS test dependencies
 /js/node_modules/
