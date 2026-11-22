@@ -27,13 +27,14 @@ Early development, built in the open. Honest evidence as of this commit:
 | Part | Evidence |
 |---|---|
 | Bridge (`js/bridge.js`) | Playwright WebKit tests: DOM snapshots/patches, fetch/XHR bodies, console, errors, click/type/highlight, hints, 2FA detection |
-| Shared state, MCP server, Chrome import, CRX, rules, sleep | `cargo test --workspace` (49 tests) |
-| macOS `WKWebView` engine + bridge | GitHub `macos` job: builds, runs every test, and executes a real-WebKit smoke page |
-| GPUI window | Type-checks on Linux; the macOS job links it; a human still has to look at it |
-| `.app` bundle | Built, ad-hoc signed, and uploaded by the `macos` job |
+| Shared state, MCP server, Chrome import, CRX, rules, sleep | `cargo test --workspace` (50 tests) |
+| macOS `WKWebView` engine + bridge | Type-checked for Apple Silicon; a real-WebKit smoke page (`relay-webkit` example) exists for the manual `macos` workflow |
+| GPUI window | Type-checks on Linux; it has not been linked or observed on a Mac yet |
+| `.app` bundle | `scripts/bundle-macos.sh` packages and ad-hoc signs it; produced by a macOS run |
 
-The GPUI window has not yet been visually reviewed on a Mac, and extensions need
-macOS 15.4. See [`docs/relay.md`](./docs/relay.md) for the architecture and
+The `macos` workflow is manual: this account has no working GitHub-hosted macOS
+runner (jobs stay queued), so the engine's real-WebKit smoke evidence and the
+GPUI window are still pending. Extensions need macOS 15.4. See [`docs/relay.md`](./docs/relay.md) for the architecture and
 [`docs/product/features.csv`](./docs/product/features.csv) for the live feature
 matrix.
 

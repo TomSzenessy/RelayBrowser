@@ -105,14 +105,21 @@ Four layers, cheapest first:
 2. **The GPUI shell type-checks on Linux** with `cargo check -p relay-ui`
    (its crates compile; a full link needs GPUI's system libraries, e.g.
    `libxkbcommon`). The macOS-only `web.rs` is first compiled by the macOS job.
-3. **The macOS job** (`.github/workflows/macos.yml`, `macos-14`) is the real
+3. **The macOS job** (`.github/workflows/macos.yml`) is the intended real
    engine evidence: `cargo test --workspace`, then
-   `cargo run -p relay-webkit --example smoke`. The smoke example serves a
+   `cargo run -p relay-webkit --example smoke`. It is manual because this
+   account's GitHub-hosted macOS requests stay queued; dispatch it on a Mac or
+   with a macOS runner attached. The engine and the smoke example are
+   type-checked for `aarch64-apple-darwin` from Linux today. The smoke example serves a
    loopback page, loads it through `Engine` in a real `WKWebView`, and asserts
    the bridge hello, DOM, console, a 500 `fetch` with its body, a click that
    runs the page's own handler, and page info. The job then builds the release
    binary, packages `Relay.app` with [`scripts/bundle-macos.sh`](../scripts/bundle-macos.sh),
    and uploads the zip.
+The stdio transport itself is covered by `crates/relay-ui/tests/mcp_proxy.rs`,
+which spawns the real `relay mcp` binary, connects it to a socket-backed hub,
+and performs the initialize / tools list / list_tabs handshake.
+
 4. **Manual keyboard review** (`crates/relay-ui/review/keyboard_e2e.sh`) runs
    the binary under Xvfb and drives it with `xdotool`, reading state back over
    MCP (`list_tabs`); it covers ⌘K/⌘T palette navigation, URL-vs-search, ⌘W,

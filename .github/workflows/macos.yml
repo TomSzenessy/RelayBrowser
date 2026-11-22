@@ -5,12 +5,11 @@ name: macos
 # actual engine and bridge; the release binary is packaged as Relay.app.
 # GitHub-hosted macOS runners are free for public repositories.
 
+# Manual: this account's GitHub-hosted macOS requests stay queued (the
+# macos-14 arm64 configuration is rejected, macos-13 never receives a runner).
+# Dispatch it from a Mac or after a macOS self-hosted runner is attached.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read

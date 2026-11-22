@@ -4768,6 +4768,7 @@ dependencies = [
  "relay-mcp",
  "relay-webkit",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

@@ -25,3 +25,6 @@ objc2-app-kit.workspace = true
 objc2-foundation.workspace = true
 objc2-web-kit.workspace = true
 raw-window-handle = "0.6"
+
+[dev-dependencies]
+tempfile = "3"
