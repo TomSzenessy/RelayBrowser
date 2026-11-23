@@ -3,7 +3,8 @@
 <!-- index: extend | Comparable products, prior art, and Relay's angle | Scoping a feature or judging what to borrow. -->
 <!-- covers: docs/product/features.csv -->
 
-These sources come from the owner's brief (2026-11-22) plus the primary docs
+The current feature matrix is [`features.csv`](./features.csv). These sources
+come from the owner's brief (2026-11-22) plus the primary docs
 for the APIs Relay uses. The owner named the three GitHub projects and asked
 for Search's daily-driver feel in particular. What Relay borrowed from Search
 is listed below; the code was read as MIT-licensed prior art, not copied, and

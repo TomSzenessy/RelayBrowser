@@ -1203,24 +1203,46 @@ impl RelayApp {
         // With an overlay focused, the page is not the editing target. Paste
         // is the only command the overlay implements; the rest are no-ops so
         // ⌘Z cannot silently change the page behind the palette.
-        if self.palette.is_some() || self.find.is_some() {
+        if self.palette.is_some() {
+            let clipboard = || cx.read_from_clipboard().and_then(|c| c.text()).and_then(|t| t.lines().next().map(str::to_string));
+            let Some(p) = self.palette.as_mut() else { return };
+            let mut changed = false;
+            match action {
+                EditAction::Paste => {
+                    if let Some(text) = clipboard() {
+                        p.insert(&text);
+                        changed = true;
+                    }
+                }
+                EditAction::Copy | EditAction::Cut => {
+                    let text = p.selected_text().or_else(|| (!p.query.is_empty()).then(|| p.query.clone()));
+                    if let Some(text) = text {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                    if action == EditAction::Cut {
+                        p.cut();
+                        changed = true;
+                    }
+                }
+                EditAction::SelectAll => p.select_all(),
+                EditAction::Undo | EditAction::Redo => {}
+            }
+            if changed {
+                p.refresh(&self.sources, &self.search);
+            }
+            cx.notify();
+            return;
+        }
+        if let Some(f) = self.find.as_mut() {
             if action != EditAction::Paste {
                 return;
             }
             let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()).and_then(|t| t.lines().next().map(str::to_string)) else {
                 return;
             };
-            if let Some(p) = self.palette.as_mut() {
-                p.insert(&text);
-                p.refresh(&self.sources, &self.search);
-                cx.notify();
-                return;
-            }
-            if let Some(f) = self.find.as_mut() {
-                f.query.push_str(&text);
-                self.run_find(false);
-                cx.notify();
-            }
+            f.query.push_str(&text);
+            self.run_find(false);
+            cx.notify();
             return;
         }
         self.web.borrow().edit(action);
@@ -1946,10 +1968,10 @@ impl RelayApp {
             }
             "up" => p.move_selection(-1),
             "down" | "tab" => p.move_selection(1),
-            "left" => p.move_cursor(-1),
-            "right" => p.move_cursor(1),
-            "home" => p.cursor_home(),
-            "end" => p.cursor_end(),
+            "left" => p.move_cursor_ext(-1, k.modifiers.shift, k.modifiers.alt),
+            "right" => p.move_cursor_ext(1, k.modifiers.shift, k.modifiers.alt),
+            "home" => p.set_cursor(0, k.modifiers.shift),
+            "end" => p.set_cursor(p.query.len(), k.modifiers.shift),
             "delete" => {
                 p.delete();
                 p.refresh(&self.sources, &self.search);
@@ -3060,12 +3082,36 @@ impl RelayApp {
                     .child(div().text_size(px(12.)).text_color(t.muted).child(SharedString::from(item.detail()))),
             );
         }
-        let query: SharedString = if p.query.is_empty() {
-            "▏Search or enter address…".into()
+        let cursor_el = || div().w(px(1.5)).h(px(18.)).bg(t.accent);
+        let selection = p.selection();
+        let mut query_row = div().flex().items_center().whitespace_nowrap();
+        if p.query.is_empty() {
+            query_row = query_row.child(cursor_el()).child("Search or enter address…");
         } else {
-            let (before, after) = p.query.split_at(p.cursor.min(p.query.len()));
-            format!("{before}▏{after}").into()
-        };
+            for (start, ch) in p.query.char_indices() {
+                if p.cursor == start {
+                    query_row = query_row.child(cursor_el());
+                }
+                let end = start + ch.len_utf8();
+                let selected = selection.is_some_and(|(s, e)| start >= s && start < e);
+                query_row = query_row.child(
+                    div()
+                        .id(("pal-char", start))
+                        .when(selected, |d| d.bg(t.active))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            if let Some(p) = app.palette.as_mut() {
+                                p.set_cursor(end, false);
+                            }
+                            cx.notify();
+                        }))
+                        .child(SharedString::from(ch.to_string())),
+                );
+            }
+            if p.cursor == p.query.len() {
+                query_row = query_row.child(cursor_el());
+            }
+        }
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
             div()
                 .id("palette")
@@ -3093,8 +3139,7 @@ impl RelayApp {
                         .border_color(t.border)
                         .text_size(px(15.))
                         .text_color(if p.query.is_empty() { t.muted } else { t.text })
-                        .child(query)
-                        .child(div().w(px(1.5)).h(px(18.)).ml_0p5().bg(t.accent)),
+                        .child(query_row),
                 )
                 .child(list),
         )

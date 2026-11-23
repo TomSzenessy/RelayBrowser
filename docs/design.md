@@ -89,7 +89,7 @@ none under Reduce Motion.
 
 | Keys | Action |
 |---|---|
-| ⌘K | palette |
+| ⌘K | palette; ←/→/Home/End move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, click places the caret |
 | ⌘L | palette prefilled with the current URL |
 | ⌘T / ⌘W / ⌘⇧T | new tab / close tab / reopen closed tab |
 | ⌘1–⌘8, ⌘9 (last tab), ⌃Tab / ⌃⇧Tab | switch tab |

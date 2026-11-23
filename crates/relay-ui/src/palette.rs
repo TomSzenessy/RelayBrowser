@@ -340,6 +340,8 @@ pub struct Palette {
     pub query: String,
     /// Byte offset of the text cursor in `query`; always on a char boundary.
     pub cursor: usize,
+    /// Selection anchor; `Some` when a selection is active.
+    pub anchor: Option<usize>,
     pub selected: usize,
     pub items: Vec<Item>,
     /// User-defined `(trigger, template-with-%s)` bangs; override built-ins.
@@ -350,22 +352,72 @@ impl Palette {
     pub fn set_query(&mut self, query: String) {
         self.query = query;
         self.cursor = self.query.len();
+        self.anchor = None;
         self.selected = 0;
+    }
+
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        let anchor = self.anchor?;
+        if anchor == self.cursor {
+            None
+        } else {
+            Some((anchor.min(self.cursor), anchor.max(self.cursor)))
+        }
+    }
+
+    pub fn selected_text(&self) -> Option<String> {
+        let (start, end) = self.selection()?;
+        Some(self.query[start..end].to_string())
+    }
+
+    pub fn select_all(&mut self) {
+        self.anchor = Some(0);
+        self.cursor = self.query.len();
+    }
+
+    pub fn set_cursor(&mut self, cursor: usize, extend: bool) {
+        if extend {
+            self.anchor.get_or_insert(self.cursor);
+        } else {
+            self.anchor = None;
+        }
+        self.cursor = cursor.min(self.query.len());
+    }
+
+    fn delete_selection(&mut self) -> bool {
+        let Some((start, end)) = self.selection() else { return false };
+        self.query.replace_range(start..end, "");
+        self.cursor = start;
+        self.anchor = None;
+        self.selected = 0;
+        true
+    }
+
+    pub fn cut(&mut self) {
+        if !self.delete_selection() && !self.query.is_empty() {
+            self.clear_query();
+        }
     }
 
     pub fn clear_query(&mut self) {
         self.query.clear();
         self.cursor = 0;
+        self.anchor = None;
         self.selected = 0;
     }
 
     pub fn insert(&mut self, text: &str) {
+        self.delete_selection();
         self.query.insert_str(self.cursor, text);
         self.cursor += text.len();
+        self.anchor = None;
         self.selected = 0;
     }
 
     pub fn backspace(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
         let Some((i, _)) = self.query[..self.cursor].char_indices().next_back() else { return false };
         self.query.remove(i);
         self.cursor = i;
@@ -374,6 +426,9 @@ impl Palette {
     }
 
     pub fn delete(&mut self) -> bool {
+        if self.delete_selection() {
+            return true;
+        }
         if self.query[self.cursor..].chars().next().is_none() {
             return false;
         }
@@ -383,19 +438,40 @@ impl Palette {
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
+        self.move_cursor_ext(delta, false, false);
+    }
+
+    pub fn move_cursor_ext(&mut self, delta: isize, extend: bool, by_word: bool) {
         let mut chars: Vec<usize> = self.query.char_indices().map(|(i, _)| i).collect();
         chars.push(self.query.len());
         let pos = chars.binary_search(&self.cursor).unwrap_or(0) as isize;
-        let next = (pos + delta).clamp(0, chars.len() as isize - 1) as usize;
-        self.cursor = chars[next];
+        let next = if by_word {
+            let chars: Vec<char> = self.query.chars().collect();
+            let mut p = pos as usize;
+            if delta < 0 {
+                while p > 0 {
+                    p -= 1;
+                    if chars[p].is_alphanumeric() { break; }
+                }
+                while p > 0 && chars[p - 1].is_alphanumeric() { p -= 1; }
+            } else {
+                while p < chars.len() && chars[p].is_alphanumeric() { p += 1; }
+                while p < chars.len() && !chars[p].is_alphanumeric() { p += 1; }
+            }
+            p as isize
+        } else {
+            pos + delta
+        };
+        let next = next.clamp(0, chars.len() as isize - 1) as usize;
+        self.set_cursor(chars[next], extend);
     }
 
     pub fn cursor_home(&mut self) {
-        self.cursor = 0;
+        self.set_cursor(0, false);
     }
 
     pub fn cursor_end(&mut self) {
-        self.cursor = self.query.len();
+        self.set_cursor(self.query.len(), false);
     }
 
     pub fn refresh(&mut self, sources: &Sources, search_template: &str) {
@@ -551,6 +627,26 @@ mod tests {
         assert_eq!((p.query.as_str(), p.cursor), ("ab", 2));
         p.clear_query();
         assert_eq!((p.query.as_str(), p.cursor), ("", 0));
+    }
+
+    #[test]
+    fn selection_replaces_and_copy_text() {
+        let mut p = Palette::default();
+        p.set_query("hello world".into());
+        p.select_all();
+        assert_eq!(p.selected_text().as_deref(), Some("hello world"));
+        p.insert("x");
+        assert_eq!((p.query.as_str(), p.cursor), ("x", 1));
+        p.set_query("abc".into());
+        p.set_cursor(1, false);
+        p.set_cursor(3, true);
+        assert_eq!(p.selected_text().as_deref(), Some("bc"));
+        assert!(p.backspace());
+        assert_eq!((p.query.as_str(), p.cursor), ("a", 1));
+        p.set_query("one two".into());
+        p.set_cursor(7, false);
+        p.move_cursor_ext(-1, false, true);
+        assert!(p.cursor < 7);
     }
 
     #[test]
