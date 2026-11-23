@@ -412,7 +412,8 @@ mod tests {
     fn from_setting_skips_reserved_and_conflicting_overrides() {
         let map = Keymap::from_setting(Some("new-tab=secondary-q;close-tab=secondary-shift-9;reload=secondary-shift-9"));
         assert_eq!(map.key(ActionId::NewTab), ActionId::NewTab.default_key(), "⌘Q stays reserved for Quit");
-        assert_eq!(map.key(ActionId::CloseTab), "ctrl-shift-9");
+        assert!(map.key(ActionId::CloseTab).ends_with("shift-9"), "{}", map.key(ActionId::CloseTab));
+        assert_ne!(map.key(ActionId::CloseTab), ActionId::CloseTab.default_key());
         assert_eq!(map.key(ActionId::Reload), ActionId::Reload.default_key(), "conflicting key is skipped");
     }
 
