@@ -312,6 +312,7 @@ pub struct RelayApp {
     connect_open: bool,
     downloads_open: bool,
     downloads_selected: usize,
+    download_poll_at: std::time::Instant,
     reader_tabs: HashSet<TabId>,
     /// History/Bookmarks modal; `None` when closed.
     library: Option<Library>,
@@ -464,6 +465,7 @@ impl RelayApp {
             connect_open: false,
             downloads_open: false,
             downloads_selected: 0,
+            download_poll_at: std::time::Instant::now(),
             reader_tabs: HashSet::new(),
             library: None,
             panel: Panel::Elements,
@@ -760,6 +762,10 @@ impl RelayApp {
         if shell_changed {
             self.title_cache = (u64::MAX, String::new());
             cx.notify();
+        }
+        if self.download_poll_at.elapsed() > Duration::from_millis(500) {
+            self.download_poll_at = std::time::Instant::now();
+            self.web.borrow().poll_downloads();
         }
         self.request_favicons(cx);
     }
@@ -3377,7 +3383,12 @@ impl RelayApp {
         for (idx, d) in downloads.into_iter().enumerate() {
             let selected = idx == self.downloads_selected;
             let state = match &d.state {
-                relay_bridge::DownloadState::Downloading => "Downloading…".to_string(),
+                relay_bridge::DownloadState::Downloading => match (d.received, d.total) {
+                    (Some(received), Some(total)) if total > 0 => {
+                        format!("Downloading… {} / {} ({:.0}%)", human_bytes(received), human_bytes(total), received as f64 * 100.0 / total as f64)
+                    }
+                    _ => "Downloading…".to_string(),
+                },
                 relay_bridge::DownloadState::Done => "Done".to_string(),
                 relay_bridge::DownloadState::Failed(e) => format!("Failed: {e}"),
             };
@@ -4304,6 +4315,18 @@ fn restore_into(hub: &mut Hub, saved: &[SessionTab]) -> (Vec<(TabId, String, f64
         hub.set_active(id);
     }
     (restored, active)
+}
+
+fn human_bytes(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 pub(crate) fn setting_enabled(value: Option<&str>) -> bool {

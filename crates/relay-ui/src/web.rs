@@ -92,6 +92,10 @@ mod imp {
             self.engine.load_content_rules_then(json, move || events.borrow_mut().push(WebEvent::RulesApplied { reload: tab }));
         }
 
+        pub fn poll_downloads(&self) {
+            self.engine.poll_download_progress();
+        }
+
         pub fn apply(&mut self, req: BrowserRequest) {
             match req {
                 BrowserRequest::Open { tab, url } => {
@@ -232,6 +236,7 @@ mod imp {
             false
         }
         pub fn load_content_rules(&self, _json: &str) {}
+        pub fn poll_downloads(&self) {}
         pub fn clear_content_rules(&self) {}
         pub fn load_content_rules_and_reload(&self, _json: &str, _tab: TabId) {}
         pub fn apply(&mut self, req: BrowserRequest) {

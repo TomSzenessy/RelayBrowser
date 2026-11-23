@@ -550,6 +550,9 @@ pub struct Download {
     pub url: String,
     pub filename: String,
     pub path: Option<String>,
+    /// Native progress when WebKit reports a positive total; bytes.
+    pub received: Option<u64>,
+    pub total: Option<u64>,
     pub state: DownloadState,
 }
 
@@ -818,9 +821,20 @@ impl Hub {
         self.next_download += 1;
         self.downloads.insert(
             id,
-            Download { id, tab, url: url.to_string(), filename: filename.to_string(), path: None, state: DownloadState::Downloading },
+            Download { id, tab, url: url.to_string(), filename: filename.to_string(), path: None, received: None, total: None, state: DownloadState::Downloading },
         );
         id
+    }
+
+    /// Update a running row's native byte progress. Values shrink to the
+    /// reported total; finished/failed rows keep their last state.
+    pub fn set_download_progress(&mut self, id: u64, received: u64, total: u64) {
+        if let Some(d) = self.downloads.get_mut(&id) {
+            if d.state == DownloadState::Downloading && total > 0 {
+                d.received = Some(received.min(total));
+                d.total = Some(total);
+            }
+        }
     }
 
     /// Record a user cancellation; the native delegate also cancels the
@@ -1184,6 +1198,20 @@ mod tests {
         let h = hub.lock();
         assert!(matches!(h.downloads().into_iter().find(|d| d.id == a).unwrap().state, DownloadState::Failed(ref e) if e.contains("cancelled")));
         assert_eq!(h.downloads().into_iter().find(|d| d.id == b).unwrap().state, DownloadState::Done, "finished rows are not cancelled");
+    }
+
+    #[test]
+    fn download_progress_updates_only_running_rows() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://x.test/", Owner::User));
+        let a = hub.update(|h| h.begin_download(tab, "https://x.test/a", "a"));
+        hub.update(|h| h.set_download_progress(a, 50, 100));
+        let d = hub.lock().downloads().into_iter().find(|d| d.id == a).unwrap();
+        assert_eq!((d.received, d.total), (Some(50), Some(100)));
+        hub.update(|h| h.finish_download(a));
+        hub.update(|h| h.set_download_progress(a, 90, 100));
+        let d = hub.lock().downloads().into_iter().find(|d| d.id == a).unwrap();
+        assert_eq!((d.received, d.total), (Some(50), Some(100)), "finished rows keep their last progress");
     }
 
     #[test]
