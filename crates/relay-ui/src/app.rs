@@ -1211,7 +1211,7 @@ impl RelayApp {
                 return;
             };
             if let Some(p) = self.palette.as_mut() {
-                p.query.push_str(&text);
+                p.insert(&text);
                 p.refresh(&self.sources, &self.search);
                 cx.notify();
                 return;
@@ -1489,6 +1489,7 @@ impl RelayApp {
             bookmarks: self.store.as_ref().and_then(|s| s.bookmarks().ok()).unwrap_or_default().into_iter().map(|b| (b.title, b.url)).collect(),
         };
         let mut p = Palette { query: prefill.unwrap_or_default(), custom_bangs: self.custom_bangs.clone(), ..Default::default() };
+        p.cursor = p.query.len();
         p.refresh(&self.sources, &self.search);
         self.palette = Some(p);
         self.web.borrow().focus_shell();
@@ -1945,18 +1946,25 @@ impl RelayApp {
             }
             "up" => p.move_selection(-1),
             "down" | "tab" => p.move_selection(1),
+            "left" => p.move_cursor(-1),
+            "right" => p.move_cursor(1),
+            "home" => p.cursor_home(),
+            "end" => p.cursor_end(),
+            "delete" => {
+                p.delete();
+                p.refresh(&self.sources, &self.search);
+            }
             "backspace" => {
                 if k.modifiers.secondary() || k.modifiers.alt {
-                    p.query.clear();
+                    p.clear_query();
                 } else {
-                    p.query.pop();
+                    p.backspace();
                 }
                 p.refresh(&self.sources, &self.search);
             }
             _ => {
                 if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
-                    p.query.push_str(c);
-                    p.selected = 0;
+                    p.insert(c);
                     p.refresh(&self.sources, &self.search);
                 } else {
                     return;
@@ -3052,7 +3060,12 @@ impl RelayApp {
                     .child(div().text_size(px(12.)).text_color(t.muted).child(SharedString::from(item.detail()))),
             );
         }
-        let query: SharedString = if p.query.is_empty() { "Search or enter address…".into() } else { p.query.clone().into() };
+        let query: SharedString = if p.query.is_empty() {
+            "▏Search or enter address…".into()
+        } else {
+            let (before, after) = p.query.split_at(p.cursor.min(p.query.len()));
+            format!("{before}▏{after}").into()
+        };
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
             div()
                 .id("palette")

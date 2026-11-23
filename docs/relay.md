@@ -403,6 +403,14 @@ real load, so an SPA that rewrites `document.title` every second does not
 inflate `history.visit_count` or the ⌘K frecency ranking. There is no SQL
 write per title change.
 
+## Palette editing
+
+The query has a byte-index cursor on a character boundary: ←/→/Home/End move
+it, ⌫ deletes the character before it, Delete removes the one after, ⌘⌫/⌥⌫
+clears all, pasted text inserts at the cursor, and a visible `▏` caret marks
+the position. Composed `key_char` input (IME/accented keys) is inserted as a
+unit; there is no separate composition popup.
+
 ## Palette smart input
 
 Palette scoring lowercases the query once and iterates each candidate without
