@@ -338,7 +338,10 @@ is platform-independent, I/O-free, and tested on Linux CI:
 
 It does not read or write the Keychain, touch WebKit, or render UI. A future
 native slice must depend on this model rather than re-implementing the
-decisions in the engine or UI.
+decisions in the engine or UI. It lives in `relay-extensions` because that crate
+already owns Keychain import; if wiring the WebKit engine to it creates a cycle
+or an awkward dependency, move it to a dedicated `relay-credentials` crate
+before implementation rather than copying it.
 
 ## Test plan and evidence
 
@@ -399,11 +402,20 @@ model only refuses the unsafe direction.
   same-document logins and some successful navigations. A false negative is a
   missed save prompt; a false positive would train approval of the wrong
   origin, which is why the heuristic is gated as above.
+- **No server-verified success.** A site can return a 200 error page, a 2FA
+  challenge, or an account-locked page with no password field; the heuristic
+  would treat that as a candidate success and offer a save. The prompt shows the
+  exact origin, and the user can decline, but Relay cannot prove the login
+  succeeded. A future success signal must be owner-approved.
 - **Origin strictness.** Users with a login saved at `www.` or a sibling
   subdomain will not be offered it. That is a usability cost accepted for v1.
 - **Imported items.** Existing `http` imports remain in the Keychain but are
   never offered (only secure origins fill). Their paths are imports from a
   third-party CSV and are only ranking hints.
+- **Public secret accessor.** `Password::expose` is public inside the crate's
+  API so the native writer/fill code can use it; it is not a memory boundary.
+  Any future code that calls it must be reviewed, and it must never feed a log
+  or serialization path.
 - **No independent security review yet.** `.security/config.json` still records
   the pending reviewer; #57 must not merge as a complete fix before that
   review.
@@ -415,5 +427,5 @@ the owner's security decisions. It does **not** implement the feature: no
 native isolated-world helper, no capture/fill call, no save prompt, no Keychain
 write or delete, no Settings UI, and no macOS evidence. The decisions in the
 table above change the security boundary, so a full implementation needs the
-owner's review and a macOS artifact. The PR for this record is `Part of #57`,
-not `Fixes #57`.
+owner's review and a macOS artifact. The PR for this record says `Part of #57`,
+not a closing reference.
