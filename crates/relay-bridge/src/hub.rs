@@ -571,6 +571,7 @@ pub enum ShellChange {
     StartSections { sections: String },
     Setting { key: String, value: String },
     Sidebar { open: bool, tab: String },
+    Widget { title: String, body: String },
 }
 
 /// Thread-safe handle shared by the UI, the WebKit layer, and the MCP server.

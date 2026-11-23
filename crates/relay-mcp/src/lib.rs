@@ -42,6 +42,14 @@ pub struct RelayMcp {
     tool_router: ToolRouter<Self>,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct PlanWidget {
+    pub title: String,
+    pub body: String,
+    #[serde(default)]
+    pub visible: Option<bool>,
+}
+
 #[derive(Debug, Clone)]
 struct PendingPlan {
     theme: Option<String>,
@@ -49,6 +57,7 @@ struct PendingPlan {
     sections: Option<String>,
     settings: BTreeMap<String, String>,
     sidebar: Option<String>,
+    widget: Option<PlanWidget>,
     created: Instant,
 }
 
@@ -101,6 +110,8 @@ pub struct PlanChangeArgs {
     pub settings: Option<BTreeMap<String, String>>,
     /// inspector, agents, or off.
     pub sidebar: Option<String>,
+    /// One small start-page widget (title/body), or visible=false to clear.
+    pub widget: Option<PlanWidget>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -515,7 +526,13 @@ impl RelayMcp {
                 return Err(ErrorData::invalid_params("sidebar must be inspector, agents, or off", None));
             }
         }
-        if theme.is_none() && accent.is_none() && sections.is_none() && settings.is_empty() && sidebar.is_none() {
+        if let Some(w) = &a.widget {
+            if w.title.chars().count() > 80 || w.body.chars().count() > 280 || w.title.chars().chain(w.body.chars()).any(char::is_control) {
+                return Err(ErrorData::invalid_params("widget title must be <=80 chars, body <=280, and both free of control characters", None));
+            }
+        }
+        let widget = a.widget;
+        if theme.is_none() && accent.is_none() && sections.is_none() && settings.is_empty() && sidebar.is_none() && widget.is_none() {
             return Err(ErrorData::invalid_params("plan has no changes", None));
         }
         let old_theme = store.setting("theme").ok().flatten().unwrap_or_else(|| "system".into());
@@ -526,12 +543,13 @@ impl RelayMcp {
         if let Some(a) = &accent { diff.push_str(&format!("accent: {old_accent} -> {a}\n")); }
         if let Some(s) = &sections { diff.push_str(&format!("start_sections: {old_sections} -> {s}\n")); }
         if let Some(s) = &sidebar { diff.push_str(&format!("sidebar: -> {s}\n")); }
+        if let Some(w) = &widget { diff.push_str(&format!("widget: {}\n", if w.visible.unwrap_or(true) { "set" } else { "clear" })); }
         for (key, value) in &settings {
             let old = store.setting(key).ok().flatten().unwrap_or_default();
             diff.push_str(&format!("{key}: {old} -> {value}\n"));
         }
         let id = self.next_plan.fetch_add(1, Ordering::SeqCst);
-        self.plans.lock().unwrap_or_else(|p| p.into_inner()).insert(id, PendingPlan { theme, accent, sections, settings, sidebar, created: Instant::now() });
+        self.plans.lock().unwrap_or_else(|p| p.into_inner()).insert(id, PendingPlan { theme, accent, sections, settings, sidebar, widget, created: Instant::now() });
         Ok(json(&serde_json::json!({ "plan_id": id, "diff": diff.trim_end(), "expires_in_seconds": 60 })))
     }
 
@@ -588,6 +606,14 @@ impl RelayMcp {
             let open = !matches!(sidebar.as_str(), "off" | "closed");
             self.hub.push_shell_change(relay_bridge::ShellChange::Sidebar { open, tab: sidebar.clone() });
             audit.push_str(" sidebar");
+        }
+        if let Some(w) = &plan.widget {
+            let visible = w.visible.unwrap_or(true);
+            let (title, body) = if visible { (w.title.clone(), w.body.clone()) } else { (String::new(), String::new()) };
+            store.set_setting("agent_widget_title", &title).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            store.set_setting("agent_widget_body", &body).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            self.hub.push_shell_change(relay_bridge::ShellChange::Widget { title, body });
+            audit.push_str(" widget");
         }
         self.audit("shell_apply", "", None, &audit);
         Ok(json(&serde_json::json!({ "applied": true, "plan_id": a.plan_id })))

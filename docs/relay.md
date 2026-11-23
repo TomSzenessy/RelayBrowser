@@ -290,8 +290,9 @@ a human diff, then `shell_apply_change {plan_id}`. The plan expires after 60 s,
 is single-use. It accepts system/light/dark, the four accents, an ordered
 unique subset of recent/frequent/apps/bookmarks, an allowlist of settings
 (`search`, `blocking`, `sleep_minutes`, `tabs_position`, `tabs_folded`,
-`restore_session`, `keybindings`), and a sidebar target (`inspector`, `agents`,
-or `off`). Shortcut overrides are re-validated by
+`restore_session`, `keybindings`), a sidebar target (`inspector`, `agents`, or
+`off`), and one small start-page widget (`title` ≤80 chars, `body` ≤280;
+`visible: false` clears it). Shortcut overrides are re-validated by
 `Keymap::from_setting`, which skips reserved/conflicting keys. `mcp`,
 `shell_control`, and `agent_eval` are reserved. Apply writes the Store, pushes bounded `ShellChange`s the GPUI
 pump drains (theme/accent/settings update live; start sections rebuild), and
