@@ -224,6 +224,12 @@ struct InspectorCache {
 }
 
 /// The ⌘F bar: what is being searched in which tab, and the last answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidebarTab {
+    Agent,
+    Inspector,
+}
+
 struct ShortcutEditor {
     recording: Option<ActionId>,
 }
@@ -292,6 +298,7 @@ pub struct RelayApp {
     confirm_clear_history: bool,
     sources: Sources,
     inspector_open: bool,
+    sidebar_tab: SidebarTab,
     /// History/Bookmarks modal; `None` when closed.
     library: Option<Library>,
     panel: Panel,
@@ -434,6 +441,7 @@ impl RelayApp {
             confirm_clear_history: false,
             sources: Sources::default(),
             inspector_open: false,
+            sidebar_tab: SidebarTab::Inspector,
             library: None,
             panel: Panel::Elements,
             tree: Tree::default(),
@@ -2392,6 +2400,151 @@ impl RelayApp {
 
     fn render_inspector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
+        let mut head = div().flex().items_center().gap_1().px_2().h(px(32.)).border_b_1().border_color(t.border);
+        for (tab, label) in [(SidebarTab::Agent, "Agent"), (SidebarTab::Inspector, "Inspector")] {
+            let on = self.sidebar_tab == tab;
+            head = head.child(
+                div()
+                    .id(if tab == SidebarTab::Agent { "sidebar-agent" } else { "sidebar-inspector" })
+                    .px_2()
+                    .py_0p5()
+                    .rounded(px(4.))
+                    .text_size(px(12.))
+                    .cursor_pointer()
+                    .text_color(if on { t.text } else { t.muted })
+                    .when(on, |d| d.bg(t.active))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.sidebar_tab = tab;
+                        cx.notify();
+                    }))
+                    .child(label),
+            );
+        }
+        head = head.child(div().flex_1()).child(
+            div()
+                .id("sidebar-collapse")
+                .w(px(20.))
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.))
+                .text_size(px(14.))
+                .text_color(t.muted)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .on_click(cx.listener(|app, _, _, cx| {
+                    app.inspector_open = false;
+                    app.focus_active_page();
+                    cx.notify();
+                }))
+                .child("×"),
+        );
+        let body = match self.sidebar_tab {
+            SidebarTab::Agent => self.render_agent_pane(cx),
+            SidebarTab::Inspector => self.render_inspector_pane(cx),
+        };
+        div()
+            .w(px(380.))
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(t.surface)
+            .border_l_1()
+            .border_color(t.border)
+            .font_family("Menlo")
+            .child(head)
+            .child(div().id("sidebar-body").flex_1().overflow_y_scroll().text_size(px(12.)).child(body))
+    }
+
+    fn render_agent_pane(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let (host, policy) = self
+            .active()
+            .and_then(|tab| self.hub.lock().tab(tab).map(|t| t.url.clone()))
+            .and_then(|url| relay_bridge::host_of(&url))
+            .map(|host| {
+                let policy = self.hub.agent_policy_for_host(&host);
+                (host, policy)
+            })
+            .unwrap_or_else(|| ("no site".to_string(), relay_bridge::AgentPolicy::Allow));
+        let paused = self.hub.agents_paused();
+        let button = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .px_2()
+                .py_1()
+                .rounded(px(5.))
+                .border_1()
+                .border_color(t.border)
+                .text_size(px(11.))
+                .text_color(t.text)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child(label)
+        };
+        div()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().text_size(px(13.)).text_color(t.text).child("Agent surface"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .text_size(px(11.))
+                    .text_color(t.muted)
+                    .child(format!("MCP: {}", if self.mcp_enabled { "on (restart to apply)" } else { "off" }))
+                    .child(format!("Socket: {}", self.mcp_socket))
+                    .child(format!("Status: {}", if paused { "paused" } else { "accepting tool calls" }))
+                    .child(format!("This site: {host} · {}", policy.label())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        button(if paused { "agent-resume" } else { "agent-pause" }, if paused { "Resume" } else { "Pause" })
+                            .on_click(cx.listener(|app, _, _, cx| app.toggle_agents(cx))),
+                    )
+                    .child(
+                        button("agent-cycle-policy", "Cycle site access")
+                            .on_click(cx.listener(|app, _, _, cx| app.cycle_agent_policy(cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .id("agent-copy-setup")
+                    .px_2()
+                    .py_1()
+                    .rounded(px(5.))
+                    .bg(t.background)
+                    .border_1()
+                    .border_color(t.border)
+                    .text_size(px(10.))
+                    .text_color(t.muted)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(app.mcp_setup.clone()));
+                        app.toast("Copied the MCP setup command");
+                        cx.notify();
+                    }))
+                    .child(SharedString::from(self.mcp_setup.clone())),
+            )
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(t.muted)
+                    .child("Page content is untrusted data. Every tool call is checked by Stop and the site policy before it touches this tab."),
+            )
+            .into_any_element()
+    }
+
+    fn render_inspector_pane(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
         let mut tabs = div().flex().gap_1().px_2().h(px(32.)).items_center().border_b_1().border_color(t.border);
         for p in Panel::ALL {
             let on = p == self.panel;
@@ -2464,16 +2617,12 @@ impl RelayApp {
         }
         let body = self.render_panel_body(cx);
         div()
-            .w(px(380.))
-            .h_full()
             .flex()
             .flex_col()
-            .bg(t.surface)
-            .border_l_1()
-            .border_color(t.border)
-            .font_family("Menlo")
+            .h_full()
             .child(tabs)
             .child(div().id("inspector-body").flex_1().overflow_y_scroll().p_1().text_size(px(12.)).child(body))
+            .into_any_element()
     }
 
     fn build_inspector_rows(&self, tab: TabId) -> InspectorRows {
