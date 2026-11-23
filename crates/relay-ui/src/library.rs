@@ -52,13 +52,13 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn open(store: &Store, mode: Mode) -> relay_extensions::Result<Self> {
+    pub fn open(store: &Store, mode: Mode) -> Result<Self, relay_extensions::Error> {
         let mut lib = Self { mode, query: String::new(), selected: 0, rows: vec![], folder_input: None };
         lib.refresh(store)?;
         Ok(lib)
     }
 
-    pub fn refresh(&mut self, store: &Store) -> relay_extensions::Result<()> {
+    pub fn refresh(&mut self, store: &Store) -> Result<(), relay_extensions::Error> {
         self.rows = match self.mode {
             Mode::History => history_rows(store, &self.query)?,
             Mode::Bookmarks => bookmark_rows(store, &self.query)?,
@@ -81,7 +81,7 @@ impl Library {
     }
 }
 
-pub fn history_rows(store: &Store, query: &str) -> relay_extensions::Result<Vec<Row>> {
+pub fn history_rows(store: &Store, query: &str) -> Result<Vec<Row>, relay_extensions::Error> {
     let visits: Vec<Visit> = if query.trim().is_empty() { store.recent_sites(200)? } else { store.search_history(query, 200)? };
     let now = now_unix();
     Ok(visits
@@ -116,7 +116,7 @@ pub fn when(last_visit: i64, now: i64) -> String {
     }
 }
 
-pub fn bookmark_rows(store: &Store, query: &str) -> relay_extensions::Result<Vec<Row>> {
+pub fn bookmark_rows(store: &Store, query: &str) -> Result<Vec<Row>, relay_extensions::Error> {
     let q = query.trim().to_lowercase();
     let mut rows: Vec<Row> = store
         .bookmarks()?

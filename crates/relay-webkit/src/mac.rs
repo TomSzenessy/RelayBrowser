@@ -222,16 +222,19 @@ impl Engine {
 
     /// Remove any active content rule lists from every live tab and stop
     /// applying them to future tabs.
+    /// Access the tab's native view. Used by the macOS smoke example to read
+    /// WebKit's own URL/title; the shell keeps its own placements.
+    #[doc(hidden)]
+    pub fn view(&self, tab: TabId) -> Option<&Retained<WKWebView>> {
+        self.tabs.get(&tab).map(|t| &t.view)
+    }
+
     pub fn clear_content_rules(&self) {
         self.blocking_enabled.set(false);
         *self.rules.borrow_mut() = None;
         for ucc in self.uccs.borrow().iter() {
             unsafe { ucc.removeAllContentRuleLists() };
         }
-    }
-
-    pub fn view(&self, tab: TabId) -> Option<&Retained<WKWebView>> {
-        self.tabs.get(&tab).map(|t| &t.view)
     }
 
     pub fn is_awake(&self, tab: TabId) -> bool {

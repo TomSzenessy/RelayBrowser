@@ -130,7 +130,7 @@ impl StartPage {
         Self { sections: Section::ALL.into_iter().map(|s| (s, vec![])).collect(), profile_empty: true }
     }
 
-    pub fn build(store: &Store, raw_sections: Option<&str>) -> relay_extensions::Result<Self> {
+    pub fn build(store: &Store, raw_sections: Option<&str>) -> Result<Self, relay_extensions::Error> {
         let wanted = parse_sections(raw_sections);
         let recent_visits = store.recent_sites(MAX_ROWS)?;
         let recent_urls: HashSet<String> = recent_visits.iter().map(|v| v.url.clone()).collect();

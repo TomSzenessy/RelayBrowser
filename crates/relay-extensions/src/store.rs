@@ -113,6 +113,9 @@ impl Store {
         Ok(store)
     }
 
+    /// Test-only profile. Crates outside this one enable the `test-support`
+    /// feature in their dev-dependencies; production builds cannot call it.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn in_memory() -> Result<Self, Error> {
         Self::init(Connection::open_in_memory()?)
     }
