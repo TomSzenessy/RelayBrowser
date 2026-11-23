@@ -609,6 +609,7 @@ impl RelayMcp {
             };
             let timeout = Duration::from_millis(a.timeout_ms.unwrap_or(5_000).min(30_000));
             let start = std::time::Instant::now();
+            let mut rx = self.hub.subscribe();
             loop {
                 let snapshot = {
                     let h = self.hub.lock();
@@ -626,7 +627,8 @@ impl RelayMcp {
                 if start.elapsed() >= timeout {
                     return Err(HubError::Browser(format!("{what} did not appear within {} ms", timeout.as_millis())));
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                let remaining = timeout.saturating_sub(start.elapsed());
+                let _ = tokio::time::timeout(remaining, rx.changed()).await;
             }
         }.await);
         self.audit("wait_for", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
@@ -945,8 +947,9 @@ impl RelayMcp {
         self.ensure_running()?;
         let result = reply(async {
             let tab = self.tab(a.tab_id)?;
+            let before = self.hub.lock().tab(tab).map(|t| t.cookies_seq).unwrap_or(0);
             self.browser.refresh_cookies(tab);
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            let _ = self.hub.wait_for_cookies(tab, before, Duration::from_secs(2)).await;
             let h = self.hub.lock();
             Ok(json(&h.tab(tab).map(|t| t.cookies.clone()).unwrap_or_default()))
         }.await);
