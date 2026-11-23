@@ -562,3 +562,28 @@ test("picture_in_picture toggles a video or reports no support", async () => {
   assert.equal(none.value.available, false);
   await p.close();
 });
+
+test("a moved element keeps a resolvable id; a removed one stays gone", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: PAGE }));
+  await p.goto(`${ORIGIN}/move/`);
+  const snap = await p.evaluate(() => window.__relay.drain());
+  let payId;
+  walk(snap.find(m => m.kind === "dom_snapshot").root, n => { if (n.attrs && n.attrs.id === "pay") payId = n.id; });
+  assert.ok(payId, "pay button id");
+  await p.evaluate(() => document.getElementById("list").appendChild(document.getElementById("pay")));
+  await p.waitForTimeout(80);
+  await p.evaluate(() => window.__relay.drain());
+  const moved = await p.evaluate(id => window.__relay.exec({ id: 190, op: "click", target: id }), payId);
+  assert.equal(moved.ok, true, moved.error);
+  assert.equal(await p.evaluate(() => window.paid), 1);
+
+  await p.evaluate(() => document.getElementById("pay").remove());
+  await p.waitForTimeout(80);
+  await p.evaluate(() => window.__relay.drain());
+  const gone = await p.evaluate(id => window.__relay.exec({ id: 191, op: "click", target: id }), payId);
+  assert.equal(gone.ok, false);
+  assert.match(gone.error, /not found/);
+  await p.close();
+});

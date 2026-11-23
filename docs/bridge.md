@@ -115,6 +115,12 @@ title/meta/link children are skipped. Attribute-only changes never resend a
 subtree. A patch whose serialization would exceed the 4,000-node budget falls
 back to one full snapshot instead of posting a partial patch.
 
+A DOM move is reported as a child-list removal plus insertion; the bridge keeps
+the id in `byId` until the coalesced flush and only forgets nodes that are
+still disconnected then. `need(id)` also rejects a detached element, so a
+moved/reordered node stays clickable while a genuinely removed one reports
+"not found".
+
 Rust treats the patch as untrusted input. `DomStore::replace_all` and `patch`
 reject a message that repeats an id within one tree (or would close a cycle
 through the existing store) and leave the previous tree untouched.
