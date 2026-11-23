@@ -98,6 +98,7 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
     let audit = Arc::new(Mutex::new(Store::in_memory().unwrap()));
     audit.lock().unwrap().set_setting("blocking", "on").unwrap();
+    audit.lock().unwrap().set_setting("shell_control", "on").unwrap();
     audit.lock().unwrap().set_setting("start_sections", "frequent,recent").unwrap();
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let server = RelayMcp::new(hub.clone(), page.clone()).with_audit(audit.clone());

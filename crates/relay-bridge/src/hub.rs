@@ -559,6 +559,14 @@ pub enum DownloadState {
     Failed(String),
 }
 
+/// A shell-visible change produced by the MCP plan/apply pair. The shell
+/// drains these on its next pump so the running UI, not just SQLite, updates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellChange {
+    Theme { theme: String, accent: String },
+    StartSections { sections: String },
+}
+
 /// Thread-safe handle shared by the UI, the WebKit layer, and the MCP server.
 /// `changed` ticks on every mutation so UIs can re-render without polling.
 #[derive(Clone)]
@@ -571,6 +579,8 @@ pub struct SharedHub {
     agent_policies: Arc<Mutex<std::collections::HashMap<String, AgentPolicy>>>,
     /// `eval_js` is off until the user enables it in Settings.
     agent_eval: Arc<std::sync::atomic::AtomicBool>,
+    /// Applied shell changes waiting for the GPUI pump.
+    shell_changes: Arc<Mutex<Vec<ShellChange>>>,
 }
 
 impl Default for SharedHub {
@@ -588,6 +598,7 @@ impl SharedHub {
             agents_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             agent_policies: Arc::new(Mutex::new(std::collections::HashMap::new())),
             agent_eval: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shell_changes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -608,6 +619,16 @@ impl SharedHub {
 
     pub fn agent_eval(&self) -> bool {
         self.agent_eval.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn push_shell_change(&self, change: ShellChange) {
+        self.shell_changes.lock().unwrap_or_else(|p| p.into_inner()).push(change);
+        self.changed.send_modify(|v| *v = v.wrapping_add(1));
+    }
+
+    /// Drain changes under the lock; the shell applies them in one pump.
+    pub fn take_shell_changes(&self) -> Vec<ShellChange> {
+        std::mem::take(&mut *self.shell_changes.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
     pub fn set_agent_eval(&self, enabled: bool) {
@@ -1134,6 +1155,14 @@ mod tests {
         let t = t.tab(tab).unwrap();
         assert_eq!(t.url, "https://new.test/");
         assert!(t.title.is_empty() && t.dom.is_empty() && t.load_error.is_none());
+    }
+
+    #[test]
+    fn shell_changes_are_drained_once() {
+        let hub = SharedHub::new();
+        hub.push_shell_change(ShellChange::Theme { theme: "dark".into(), accent: "purple".into() });
+        assert_eq!(hub.take_shell_changes(), vec![ShellChange::Theme { theme: "dark".into(), accent: "purple".into() }]);
+        assert!(hub.take_shell_changes().is_empty());
     }
 
     #[test]

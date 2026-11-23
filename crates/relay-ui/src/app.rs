@@ -302,6 +302,7 @@ pub struct RelayApp {
     settings_open: bool,
     blocking: bool,
     agent_eval: bool,
+    shell_control: bool,
     sleep_minutes: u64,
     mcp_enabled: bool,
     confirm_clear_history: bool,
@@ -387,6 +388,7 @@ impl RelayApp {
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
         let agent_eval = setting_enabled(store.as_ref().and_then(|s| s.setting("agent_eval").ok().flatten()).as_deref());
+        let shell_control = setting_enabled(store.as_ref().and_then(|s| s.setting("shell_control").ok().flatten()).as_deref());
         hub.set_agent_eval(agent_eval);
         let custom_bangs = store
             .as_ref()
@@ -451,6 +453,7 @@ impl RelayApp {
             settings_open: false,
             blocking,
             agent_eval,
+            shell_control,
             sleep_minutes,
             mcp_enabled,
             confirm_clear_history: false,
@@ -729,6 +732,28 @@ impl RelayApp {
         }
         if visited {
             self.refresh_start_page();
+        }
+        let mut shell_changed = false;
+        for change in self.hub.take_shell_changes() {
+            match change {
+                relay_bridge::ShellChange::Theme { theme, accent } => {
+                    if let Some(theme) = ThemeChoice::parse(&theme) {
+                        self.theme_choice = theme;
+                    }
+                    if let Some(accent) = AccentChoice::parse(&accent) {
+                        self.accent_choice = accent;
+                    }
+                    shell_changed = true;
+                }
+                relay_bridge::ShellChange::StartSections { .. } => {
+                    self.refresh_start_page();
+                    shell_changed = true;
+                }
+            }
+        }
+        if shell_changed {
+            self.title_cache = (u64::MAX, String::new());
+            cx.notify();
         }
         self.request_favicons(cx);
     }
@@ -2602,6 +2627,7 @@ impl RelayApp {
                     .child(format!("Socket: {}", self.mcp_socket))
                     .child(format!("Status: {}", if paused { "paused" } else { "accepting tool calls" }))
                     .child(format!("eval_js: {}", if self.agent_eval { "on (Allow sites only)" } else { "off" }))
+                    .child(format!("shell writes: {}", if self.shell_control { "on" } else { "off" }))
                     .child(format!("This site: {host} · {}", policy.label())),
             )
             .child(
@@ -3645,6 +3671,15 @@ impl RelayApp {
         let connect_btn = pill("settings-connect", "Set up…".into(), false)
             .on_click(cx.listener(|app, _, _, cx| app.open_connect(cx)))
             .into_any_element();
+        let shell_btn = pill("settings-shell-control", if self.shell_control { "On" } else { "Off" }.into(), self.shell_control)
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.shell_control = !app.shell_control;
+                if let Some(store) = &app.store {
+                    let _ = store.set_setting("shell_control", if app.shell_control { "on" } else { "off" });
+                }
+                cx.notify();
+            }))
+            .into_any_element();
         let strip_position = pill("settings-tabs-position", self.strip.placement.label().into(), false)
             .on_click(cx.listener(|app, _, _, cx| {
                 app.rotate_tab_strip(cx);
@@ -3754,6 +3789,7 @@ impl RelayApp {
                 .child(row("Tab strip", Some("⌘S folds · ⇧⌘S moves"), strip_control))
                 .child(row("Local MCP server", Some("(restart to apply)"), mcp_btn))
                 .child(row("Agent JavaScript (eval_js)", Some("On only for Allow sites; agents can read page data"), eval_btn))
+                .child(row("Agent shell changes", Some("Allow plan/apply for theme, accent, and start sections"), shell_btn))
                 .child(row("Connect an agent", Some("Claude Code, Codex, OpenCode, Cursor, Zed"), connect_btn))
                 .child(
                     div()
