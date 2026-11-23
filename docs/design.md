@@ -66,6 +66,11 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 | error | `#ff6b6b` | `#c92f2f` |
 | warn | `#ffb84d` | `#8a5300` |
 
+Appearance is System (follow macOS), Light, or Dark; the accent is Blue
+(default), Purple, Green, or Orange. `theme::Theme::for_choice` applies the
+accent's light/dark pair, and every accent is checked at 3:1 against the
+surface. Settings → Appearance changes it live and stores `theme`/`accent`.
+
 Type: system UI font at 13 pt for chrome and 12 pt monospace for the Inspector.
 Corner radius is 6 pt and spacing uses a 4 pt grid. Motion is 150 ms, and is
 none under Reduce Motion.
