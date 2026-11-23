@@ -238,7 +238,19 @@ impl RelayMcp {
     }
 
     fn tab(&self, id: Option<TabId>) -> Result<TabId, HubError> {
+        if self.hub.agents_paused() {
+            return Err(HubError::Paused);
+        }
         self.hub.lock().resolve(id)
+    }
+
+    /// The user's Stop control is checked before every tool, including reads.
+    fn ensure_running(&self) -> Result<(), ErrorData> {
+        if self.hub.agents_paused() {
+            Err(ErrorData::invalid_params("paused by the user; resume agents in Relay to continue", None))
+        } else {
+            Ok(())
+        }
     }
 
     async fn op(&self, tab: TabId, op: Op) -> Result<serde_json::Value, HubError> {
@@ -290,6 +302,7 @@ fn check_url(url: &str) -> Result<(), HubError> {
 impl RelayMcp {
     #[tool(description = "List open tabs with id, url, title, owner (user/agent), and error counts.")]
     async fn list_tabs(&self) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         let h = self.hub.lock();
         let tabs: Vec<_> = h.tabs().map(|t| t.summary()).collect();
         Ok(json(&serde_json::json!({ "active_tab": h.active(), "tabs": tabs })))
@@ -297,6 +310,7 @@ impl RelayMcp {
 
     #[tool(description = "Open a URL in a new tab in the Agent Tab Group (shares the user's logins). Waits for load and returns interactive elements.")]
     async fn open_tab(&self, Parameters(a): Parameters<OpenTabArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             check_url(&a.url)?;
             let tab = self.hub.update(|h| h.create_tab(&a.url, Owner::Agent));
@@ -307,6 +321,7 @@ impl RelayMcp {
 
     #[tool(description = "Navigate a tab to a URL, wait for load, and return its interactive elements.")]
     async fn navigate(&self, Parameters(a): Parameters<NavigateArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             check_url(&a.url)?;
             let tab = self.tab(a.tab_id)?;
@@ -318,6 +333,7 @@ impl RelayMcp {
 
     #[tool(description = "Go back in a tab's history.")]
     async fn go_back(&self, Parameters(a): Parameters<TabArg>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             let before = self.load_seq(tab)?;
@@ -328,6 +344,7 @@ impl RelayMcp {
 
     #[tool(description = "Read the page structure as an outline. Each line is `[id] tag \"label\"`; pass the id to click_element/type_text.")]
     async fn read_dom(&self, Parameters(a): Parameters<ReadDomArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         if let Ok(tab) = self.tab(a.tab_id) {
             if let Err(e) = self.ensure_awake(tab).await {
                 return reply(Err(e));
@@ -350,6 +367,7 @@ impl RelayMcp {
 
     #[tool(description = "Wait until text or a simple selector appears in the live DOM; returns its element id for click_element. Use after a click or navigation that loads content asynchronously.")]
     async fn wait_for(&self, Parameters(a): Parameters<WaitForArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             self.ensure_awake(tab).await?;
@@ -384,6 +402,7 @@ impl RelayMcp {
 
     #[tool(description = "URL, title, and scroll position of a tab (works while the page is still loading).")]
     async fn get_page_info(&self, Parameters(a): Parameters<PageInfoArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             Ok(json(&self.op(tab, Op::PageInfo).await?))
@@ -392,6 +411,7 @@ impl RelayMcp {
 
     #[tool(description = "Find elements by CSS selector or visible text. Returns ids, tags, and text.")]
     async fn find_elements(&self, Parameters(a): Parameters<FindArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             let op = match (a.selector, a.text) {
@@ -405,6 +425,7 @@ impl RelayMcp {
 
     #[tool(description = "Click an element by id (from read_dom or find_elements).")]
     async fn click_element(&self, Parameters(a): Parameters<ElementArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             let v = self.op(tab, Op::Click { target: a.element_id }).await?;
@@ -416,6 +437,7 @@ impl RelayMcp {
 
     #[tool(description = "Type text into an input, textarea, or contenteditable element; optionally submit.")]
     async fn type_text(&self, Parameters(a): Parameters<TypeArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             let v = self.op(tab, Op::Type { target: a.element_id, text: a.text, submit: a.submit, clear: true }).await?;
@@ -427,6 +449,7 @@ impl RelayMcp {
 
     #[tool(description = "Highlight an element in the user's visible tab so they can see what you mean.")]
     async fn highlight_element(&self, Parameters(a): Parameters<ElementArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             self.op(tab, Op::Highlight { target: a.element_id }).await?;
@@ -436,6 +459,7 @@ impl RelayMcp {
 
     #[tool(description = "Read the visible text of the page or of one element (max 20k chars).")]
     async fn read_text(&self, Parameters(a): Parameters<ReadTextArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             let v = self.op(tab, Op::ReadText { target: a.element_id }).await?;
@@ -445,6 +469,7 @@ impl RelayMcp {
 
     #[tool(description = "Scroll the page vertically by dy pixels.")]
     async fn scroll(&self, Parameters(a): Parameters<ScrollArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             Ok(json(&self.op(tab, Op::Scroll { x: 0.0, y: a.dy }).await?))
@@ -453,6 +478,7 @@ impl RelayMcp {
 
     #[tool(description = "Console messages (console.*, uncaught errors, unhandled rejections), most recent last.")]
     async fn get_console_logs(&self, Parameters(a): Parameters<ConsoleArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply((|| {
             let h = self.hub.lock();
             let tab = h.resolve(a.tab_id)?;
@@ -481,6 +507,7 @@ impl RelayMcp {
 
     #[tool(description = "Network requests (fetch, XHR, resources) with method, status, timing, and optionally bodies.")]
     async fn get_network_requests(&self, Parameters(a): Parameters<NetworkArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply((|| {
             let h = self.hub.lock();
             let tab = h.resolve(a.tab_id)?;
@@ -515,6 +542,7 @@ impl RelayMcp {
 
     #[tool(description = "Cookies for the tab's site from WebKit's cookie store (values included).")]
     async fn get_cookies(&self, Parameters(a): Parameters<TabArg>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             self.browser.refresh_cookies(tab);
@@ -526,6 +554,7 @@ impl RelayMcp {
 
     #[tool(description = "Close a tab the agent opened. User tabs are left alone.")]
     async fn close_tab(&self, Parameters(a): Parameters<TabArg>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
         reply((|| {
             let tab = self.tab(a.tab_id)?;
             let owner = self.hub.lock().tab(tab).map(|t| t.owner);

@@ -76,6 +76,7 @@ actions!(
         Help,
         ShowHistory,
         ShowBookmarks,
+        ToggleAgents,
     ]
 );
 
@@ -132,6 +133,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-m", Minimize, None),
         KeyBinding::new("secondary-y", ShowHistory, None),
         KeyBinding::new("secondary-shift-b", ShowBookmarks, None),
+        KeyBinding::new("secondary-shift-.", ToggleAgents, None),
     ]
 }
 
@@ -152,6 +154,7 @@ fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
             name: app_name.map(|s| SharedString::from(s.to_string())).unwrap_or_else(|| "Relay".into()),
             items: vec![
                 item("Settings…", ToggleSettings),
+                item("Pause / Resume Agents", ToggleAgents),
                 sep(),
                 item("Quit Relay", Quit),
             ],
@@ -1170,6 +1173,13 @@ impl RelayApp {
         self.web.borrow().edit(action);
     }
 
+    fn toggle_agents(&mut self, cx: &mut Context<Self>) {
+        let paused = !self.hub.agents_paused();
+        self.hub.set_agents_paused(paused);
+        self.toast(if paused { "Agents paused; page automation is stopped" } else { "Agents resumed" });
+        cx.notify();
+    }
+
     fn open_help(&mut self) {
         let url = "https://github.com/TomSzenessy/RelayBrowser#readme".to_string();
         if self.app_mode {
@@ -1479,6 +1489,7 @@ impl RelayApp {
             Command::RemoveWebApp => self.remove_web_app(cx),
             Command::ShowHistory => self.open_library(Mode::History, cx),
             Command::ShowBookmarks => self.open_library(Mode::Bookmarks, cx),
+            Command::ToggleAgents => self.toggle_agents(cx),
         }
     }
 
@@ -2975,6 +2986,39 @@ impl RelayApp {
         )
     }
 
+    fn render_agent_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(30.))
+            .px_3()
+            .bg(t.agent_bg)
+            .border_t_1()
+            .border_color(t.agent)
+            .text_size(px(12.))
+            .text_color(t.text)
+            .child(div().child("Agents paused — page automation is stopped"))
+            .child(
+                div()
+                    .id("resume-agents")
+                    .px_2()
+                    .py_0p5()
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(t.agent)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.hub.set_agents_paused(false);
+                        app.toast("Agents resumed");
+                        cx.notify();
+                    }))
+                    .child("Resume"),
+            )
+    }
+
     fn render_status(&self) -> impl IntoElement {
         let t = self.theme;
         let (url, total, asleep, agents) = {
@@ -3191,6 +3235,9 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &ShowBookmarks, _, cx| {
                 app.open_library(Mode::Bookmarks, cx);
+            }))
+            .on_action(cx.listener(|app, _: &ToggleAgents, _, cx| {
+                app.toggle_agents(cx);
             }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
@@ -3199,6 +3246,9 @@ impl Render for RelayApp {
         }
         select!(SelectTab1 => 0, SelectTab2 => 1, SelectTab3 => 2, SelectTab4 => 3, SelectTab5 => 4, SelectTab6 => 5, SelectTab7 => 6, SelectTab8 => 7, SelectTab9 => 8);
         root = root.child(main);
+        if self.hub.agents_paused() {
+            root = root.child(self.render_agent_banner(cx));
+        }
         if !self.app_mode || self.toast.is_some() || self.hints.is_some() {
             root = root.child(self.render_status());
         }
@@ -3522,9 +3572,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 44);
+        assert_eq!(bindings.len(), 45);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 44] = [
+        let required: [&'static str; 45] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -3569,6 +3619,7 @@ mod tests {
             Minimize.name(),
             ShowHistory.name(),
             ShowBookmarks.name(),
+            ToggleAgents.name(),
         ];
         for name in required {
             assert!(bound.contains(name), "missing key binding for {name}");
