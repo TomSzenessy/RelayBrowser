@@ -2,304 +2,134 @@
 //! overrides, conflict/reserved validation, and the GPUI bindings built from
 //! them. `app::key_bindings()` delegates here so the default map has one owner.
 
-use crate::app::{
-    Back, CloseTab, Copy, CopyCleanUrl, CopyMarkdown, Cut, CycleAgentPolicy, Find, Forward, LinkHints, Minimize,
-    NewTab, NextTab, NextTabStripPosition, OpenLocation, OpenPalette, Paste, PrevTab, Quit, Redo, ReopenClosedTab, Reload,
-    SelectAll, SelectTab1, SelectTab2, SelectTab3, SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8, SelectTab9, ShowBookmarks,
-    ShowDownloads, ShowHistory, ToggleAgents, ToggleBookmark, ToggleInspector, TogglePictureInPicture, TogglePin, ToggleReader, ToggleSettings, ToggleSplit, ToggleTabStrip, Undo, WebInspector,
-    ZoomIn, ZoomOut, ZoomReset,
-};
 use gpui::{KeyBinding, Keystroke};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ActionId {
-    OpenPalette,
-    OpenLocation,
-    NewTab,
-    CloseTab,
-    ReopenClosedTab,
-    Reload,
-    Back,
-    Forward,
-    NextTab,
-    PrevTab,
-    ToggleInspector,
-    WebInspector,
-    ToggleSplit,
-    ToggleSettings,
-    LinkHints,
-    CopyCleanUrl,
-    CopyMarkdown,
-    ToggleBookmark,
-    TogglePin,
-    Find,
-    ZoomIn,
-    ZoomOut,
-    ZoomReset,
-    Quit,
-    SelectTab1,
-    SelectTab2,
-    SelectTab3,
-    SelectTab4,
-    SelectTab5,
-    SelectTab6,
-    SelectTab7,
-    SelectTab8,
-    SelectTab9,
-    ToggleTabStrip,
-    NextTabStripPosition,
-    Cut,
-    Copy,
-    Paste,
-    SelectAll,
-    Undo,
-    Redo,
-    Minimize,
-    ShowHistory,
-    ShowBookmarks,
-    ToggleAgents,
-    CycleAgentPolicy,
-    ToggleReader,
-    TogglePictureInPicture,
-    ShowDownloads,
+/// One row of the action table: stable id, Settings label, default keystroke,
+/// and the GPUI action type that carries it. Add an action by adding one row to
+/// `action_table!`; the enum, `ALL`, every accessor, and the bindings follow.
+#[derive(Debug, Clone, Copy)]
+struct ActionSpec {
+    id: ActionId,
+    name: &'static str,
+    label: &'static str,
+    key: &'static str,
+    #[cfg_attr(not(test), allow(dead_code))]
+    action_name: fn() -> &'static str,
+    binding: fn(&str) -> KeyBinding,
 }
 
-impl ActionId {
-    pub const ALL: [ActionId; 49] = [
-        ActionId::OpenPalette, ActionId::OpenLocation, ActionId::NewTab, ActionId::CloseTab, ActionId::ReopenClosedTab,
-        ActionId::Reload, ActionId::Back, ActionId::Forward, ActionId::NextTab, ActionId::PrevTab, ActionId::ToggleInspector,
-        ActionId::WebInspector, ActionId::ToggleSplit, ActionId::ToggleSettings, ActionId::LinkHints, ActionId::CopyCleanUrl,
-        ActionId::CopyMarkdown, ActionId::ToggleBookmark, ActionId::TogglePin, ActionId::Find, ActionId::ZoomIn, ActionId::ZoomOut,
-        ActionId::ZoomReset, ActionId::Quit, ActionId::SelectTab1, ActionId::SelectTab2, ActionId::SelectTab3, ActionId::SelectTab4,
-        ActionId::SelectTab5, ActionId::SelectTab6, ActionId::SelectTab7, ActionId::SelectTab8, ActionId::SelectTab9,
-        ActionId::ToggleTabStrip, ActionId::NextTabStripPosition, ActionId::Cut, ActionId::Copy, ActionId::Paste, ActionId::SelectAll,
-        ActionId::Undo, ActionId::Redo, ActionId::Minimize, ActionId::ShowHistory, ActionId::ShowBookmarks, ActionId::ToggleAgents,
-        ActionId::CycleAgentPolicy,
-        ActionId::ToggleReader,
-        ActionId::TogglePictureInPicture,
-        ActionId::ShowDownloads,
-    ];
+fn action_name<A: gpui::Action>() -> &'static str {
+    A::name_for_type()
+}
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ActionId::OpenPalette => "palette",
-            ActionId::OpenLocation => "location",
-            ActionId::NewTab => "new-tab",
-            ActionId::CloseTab => "close-tab",
-            ActionId::ReopenClosedTab => "reopen-tab",
-            ActionId::Reload => "reload",
-            ActionId::Back => "back",
-            ActionId::Forward => "forward",
-            ActionId::NextTab => "next-tab",
-            ActionId::PrevTab => "prev-tab",
-            ActionId::ToggleInspector => "inspector",
-            ActionId::WebInspector => "web-inspector",
-            ActionId::ToggleSplit => "split",
-            ActionId::ToggleSettings => "settings",
-            ActionId::LinkHints => "hints",
-            ActionId::CopyCleanUrl => "copy-clean-url",
-            ActionId::CopyMarkdown => "copy-markdown",
-            ActionId::ToggleBookmark => "bookmark",
-            ActionId::TogglePin => "pin",
-            ActionId::Find => "find",
-            ActionId::ZoomIn => "zoom-in",
-            ActionId::ZoomOut => "zoom-out",
-            ActionId::ZoomReset => "zoom-reset",
-            ActionId::Quit => "quit",
-            ActionId::SelectTab1 => "tab-1",
-            ActionId::SelectTab2 => "tab-2",
-            ActionId::SelectTab3 => "tab-3",
-            ActionId::SelectTab4 => "tab-4",
-            ActionId::SelectTab5 => "tab-5",
-            ActionId::SelectTab6 => "tab-6",
-            ActionId::SelectTab7 => "tab-7",
-            ActionId::SelectTab8 => "tab-8",
-            ActionId::SelectTab9 => "tab-9",
-            ActionId::ToggleTabStrip => "fold-tabs",
-            ActionId::NextTabStripPosition => "move-tabs",
-            ActionId::Cut => "cut",
-            ActionId::Copy => "copy",
-            ActionId::Paste => "paste",
-            ActionId::SelectAll => "select-all",
-            ActionId::Undo => "undo",
-            ActionId::Redo => "redo",
-            ActionId::Minimize => "minimize",
-            ActionId::ShowHistory => "history",
-            ActionId::ShowBookmarks => "bookmarks",
-            ActionId::ToggleAgents => "pause-agents",
-            ActionId::CycleAgentPolicy => "agent-policy",
-            ActionId::ToggleReader => "reading-mode",
-            ActionId::TogglePictureInPicture => "picture-in-picture",
-            ActionId::ShowDownloads => "downloads",
+fn binding<A: gpui::Action + Default>(keystroke: &str) -> KeyBinding {
+    KeyBinding::new(keystroke, A::default(), None)
+}
+
+macro_rules! action_table {
+    ($($variant:ident => $id:literal, $label:literal, $key:literal;)*) => {
+        /// Stable identity of a keyboard action, also the settings/MCP id.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum ActionId { $($variant),* }
+
+        impl ActionId {
+            /// Every action, in Settings → Keyboard shortcuts order.
+            pub const ALL: &'static [ActionId] = &[$(ActionId::$variant),*];
+
+            fn spec(self) -> &'static ActionSpec {
+                static SPECS: &[ActionSpec] = &[$(
+                    ActionSpec {
+                        id: ActionId::$variant,
+                        name: $id,
+                        label: $label,
+                        key: $key,
+                        action_name: action_name::<crate::app::$variant>,
+                        binding: binding::<crate::app::$variant>,
+                    }
+                ),*];
+                SPECS.iter().find(|spec| spec.id == self).expect("every ActionId has a spec row")
+            }
+
+            pub fn as_str(self) -> &'static str {
+                self.spec().name
+            }
+
+            pub fn parse(value: &str) -> Option<Self> {
+                Self::ALL.iter().copied().find(|a| a.as_str() == value)
+            }
+
+            pub fn label(self) -> &'static str {
+                self.spec().label
+            }
+
+            pub fn default_key(self) -> &'static str {
+                self.spec().key
+            }
+
+            /// The `actions!` type name, which links a binding back to this row.
+            #[cfg_attr(not(test), allow(dead_code))]
+            pub fn action_name(self) -> &'static str {
+                (self.spec().action_name)()
+            }
+
+            fn binding(self, keystroke: &str) -> KeyBinding {
+                (self.spec().binding)(keystroke)
+            }
         }
-    }
+    };
+}
 
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|a| a.as_str() == value)
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            ActionId::OpenPalette => "Command palette",
-            ActionId::OpenLocation => "Open location",
-            ActionId::NewTab => "New tab",
-            ActionId::CloseTab => "Close tab",
-            ActionId::ReopenClosedTab => "Reopen closed tab",
-            ActionId::Reload => "Reload page",
-            ActionId::Back => "Go back",
-            ActionId::Forward => "Go forward",
-            ActionId::NextTab => "Next tab",
-            ActionId::PrevTab => "Previous tab",
-            ActionId::ToggleInspector => "Toggle Inspector",
-            ActionId::WebInspector => "WebKit Web Inspector",
-            ActionId::ToggleSplit => "Toggle split view",
-            ActionId::ToggleSettings => "Settings",
-            ActionId::LinkHints => "Link hints",
-            ActionId::CopyCleanUrl => "Copy clean URL",
-            ActionId::CopyMarkdown => "Copy page as Markdown",
-            ActionId::ToggleBookmark => "Bookmark this page",
-            ActionId::TogglePin => "Pin / unpin tab",
-            ActionId::Find => "Find in page",
-            ActionId::ZoomIn => "Zoom in",
-            ActionId::ZoomOut => "Zoom out",
-            ActionId::ZoomReset => "Actual size",
-            ActionId::Quit => "Quit Relay",
-            ActionId::SelectTab1 => "Select tab 1",
-            ActionId::SelectTab2 => "Select tab 2",
-            ActionId::SelectTab3 => "Select tab 3",
-            ActionId::SelectTab4 => "Select tab 4",
-            ActionId::SelectTab5 => "Select tab 5",
-            ActionId::SelectTab6 => "Select tab 6",
-            ActionId::SelectTab7 => "Select tab 7",
-            ActionId::SelectTab8 => "Select tab 8",
-            ActionId::SelectTab9 => "Select tab 9",
-            ActionId::ToggleTabStrip => "Fold / unfold tab strip",
-            ActionId::NextTabStripPosition => "Move tab strip",
-            ActionId::Cut => "Cut",
-            ActionId::Copy => "Copy",
-            ActionId::Paste => "Paste",
-            ActionId::SelectAll => "Select all",
-            ActionId::Undo => "Undo",
-            ActionId::Redo => "Redo",
-            ActionId::Minimize => "Minimize window",
-            ActionId::ShowHistory => "Show history",
-            ActionId::ShowBookmarks => "Show bookmarks",
-            ActionId::ToggleAgents => "Pause / resume agents",
-            ActionId::CycleAgentPolicy => "Cycle agent access on this site",
-            ActionId::ToggleReader => "Reading mode",
-            ActionId::TogglePictureInPicture => "Picture in Picture",
-            ActionId::ShowDownloads => "Show downloads",
-        }
-    }
-
-    pub fn default_key(self) -> &'static str {
-        match self {
-            ActionId::OpenPalette => "secondary-k",
-            ActionId::OpenLocation => "secondary-l",
-            ActionId::NewTab => "secondary-t",
-            ActionId::CloseTab => "secondary-w",
-            ActionId::ReopenClosedTab => "secondary-shift-t",
-            ActionId::Reload => "secondary-r",
-            ActionId::Back => "secondary-[",
-            ActionId::Forward => "secondary-]",
-            ActionId::NextTab => "ctrl-tab",
-            ActionId::PrevTab => "ctrl-shift-tab",
-            ActionId::ToggleInspector => "secondary-alt-i",
-            ActionId::WebInspector => "secondary-alt-u",
-            ActionId::ToggleSplit => "secondary-\\",
-            ActionId::ToggleSettings => "secondary-,",
-            ActionId::LinkHints => "secondary-j",
-            ActionId::CopyCleanUrl => "secondary-shift-c",
-            ActionId::CopyMarkdown => "secondary-shift-m",
-            ActionId::ToggleBookmark => "secondary-d",
-            ActionId::TogglePin => "secondary-alt-p",
-            ActionId::Find => "secondary-f",
-            ActionId::ZoomIn => "secondary-=",
-            ActionId::ZoomOut => "secondary--",
-            ActionId::ZoomReset => "secondary-0",
-            ActionId::Quit => "secondary-q",
-            ActionId::SelectTab1 => "secondary-1",
-            ActionId::SelectTab2 => "secondary-2",
-            ActionId::SelectTab3 => "secondary-3",
-            ActionId::SelectTab4 => "secondary-4",
-            ActionId::SelectTab5 => "secondary-5",
-            ActionId::SelectTab6 => "secondary-6",
-            ActionId::SelectTab7 => "secondary-7",
-            ActionId::SelectTab8 => "secondary-8",
-            ActionId::SelectTab9 => "secondary-9",
-            ActionId::ToggleTabStrip => "secondary-s",
-            ActionId::NextTabStripPosition => "secondary-shift-s",
-            ActionId::Cut => "secondary-x",
-            ActionId::Copy => "secondary-c",
-            ActionId::Paste => "secondary-v",
-            ActionId::SelectAll => "secondary-a",
-            ActionId::Undo => "secondary-z",
-            ActionId::Redo => "secondary-shift-z",
-            ActionId::Minimize => "secondary-m",
-            ActionId::ShowHistory => "secondary-y",
-            ActionId::ShowBookmarks => "secondary-shift-b",
-            ActionId::ToggleAgents => "secondary-shift-.",
-            ActionId::CycleAgentPolicy => "secondary-alt-a",
-            ActionId::ToggleReader => "secondary-shift-r",
-            ActionId::TogglePictureInPicture => "secondary-shift-p",
-            ActionId::ShowDownloads => "secondary-shift-j",
-        }
-    }
-
-    fn binding(self, keystroke: &str) -> KeyBinding {
-        match self {
-            ActionId::OpenPalette => KeyBinding::new(keystroke, OpenPalette, None),
-            ActionId::OpenLocation => KeyBinding::new(keystroke, OpenLocation, None),
-            ActionId::NewTab => KeyBinding::new(keystroke, NewTab, None),
-            ActionId::CloseTab => KeyBinding::new(keystroke, CloseTab, None),
-            ActionId::ReopenClosedTab => KeyBinding::new(keystroke, ReopenClosedTab, None),
-            ActionId::Reload => KeyBinding::new(keystroke, Reload, None),
-            ActionId::Back => KeyBinding::new(keystroke, Back, None),
-            ActionId::Forward => KeyBinding::new(keystroke, Forward, None),
-            ActionId::NextTab => KeyBinding::new(keystroke, NextTab, None),
-            ActionId::PrevTab => KeyBinding::new(keystroke, PrevTab, None),
-            ActionId::ToggleInspector => KeyBinding::new(keystroke, ToggleInspector, None),
-            ActionId::WebInspector => KeyBinding::new(keystroke, WebInspector, None),
-            ActionId::ToggleSplit => KeyBinding::new(keystroke, ToggleSplit, None),
-            ActionId::ToggleSettings => KeyBinding::new(keystroke, ToggleSettings, None),
-            ActionId::LinkHints => KeyBinding::new(keystroke, LinkHints, None),
-            ActionId::CopyCleanUrl => KeyBinding::new(keystroke, CopyCleanUrl, None),
-            ActionId::CopyMarkdown => KeyBinding::new(keystroke, CopyMarkdown, None),
-            ActionId::ToggleBookmark => KeyBinding::new(keystroke, ToggleBookmark, None),
-            ActionId::TogglePin => KeyBinding::new(keystroke, TogglePin, None),
-            ActionId::Find => KeyBinding::new(keystroke, Find, None),
-            ActionId::ZoomIn => KeyBinding::new(keystroke, ZoomIn, None),
-            ActionId::ZoomOut => KeyBinding::new(keystroke, ZoomOut, None),
-            ActionId::ZoomReset => KeyBinding::new(keystroke, ZoomReset, None),
-            ActionId::Quit => KeyBinding::new(keystroke, Quit, None),
-            ActionId::SelectTab1 => KeyBinding::new(keystroke, SelectTab1, None),
-            ActionId::SelectTab2 => KeyBinding::new(keystroke, SelectTab2, None),
-            ActionId::SelectTab3 => KeyBinding::new(keystroke, SelectTab3, None),
-            ActionId::SelectTab4 => KeyBinding::new(keystroke, SelectTab4, None),
-            ActionId::SelectTab5 => KeyBinding::new(keystroke, SelectTab5, None),
-            ActionId::SelectTab6 => KeyBinding::new(keystroke, SelectTab6, None),
-            ActionId::SelectTab7 => KeyBinding::new(keystroke, SelectTab7, None),
-            ActionId::SelectTab8 => KeyBinding::new(keystroke, SelectTab8, None),
-            ActionId::SelectTab9 => KeyBinding::new(keystroke, SelectTab9, None),
-            ActionId::ToggleTabStrip => KeyBinding::new(keystroke, ToggleTabStrip, None),
-            ActionId::NextTabStripPosition => KeyBinding::new(keystroke, NextTabStripPosition, None),
-            ActionId::Cut => KeyBinding::new(keystroke, Cut, None),
-            ActionId::Copy => KeyBinding::new(keystroke, Copy, None),
-            ActionId::Paste => KeyBinding::new(keystroke, Paste, None),
-            ActionId::SelectAll => KeyBinding::new(keystroke, SelectAll, None),
-            ActionId::Undo => KeyBinding::new(keystroke, Undo, None),
-            ActionId::Redo => KeyBinding::new(keystroke, Redo, None),
-            ActionId::Minimize => KeyBinding::new(keystroke, Minimize, None),
-            ActionId::ShowHistory => KeyBinding::new(keystroke, ShowHistory, None),
-            ActionId::ShowBookmarks => KeyBinding::new(keystroke, ShowBookmarks, None),
-            ActionId::ToggleAgents => KeyBinding::new(keystroke, ToggleAgents, None),
-            ActionId::CycleAgentPolicy => KeyBinding::new(keystroke, CycleAgentPolicy, None),
-            ActionId::ToggleReader => KeyBinding::new(keystroke, ToggleReader, None),
-            ActionId::TogglePictureInPicture => KeyBinding::new(keystroke, TogglePictureInPicture, None),
-            ActionId::ShowDownloads => KeyBinding::new(keystroke, ShowDownloads, None),
-        }
-    }
+action_table! {
+    OpenPalette => "palette", "Command palette", "secondary-k";
+    OpenLocation => "location", "Open location", "secondary-l";
+    NewTab => "new-tab", "New tab", "secondary-t";
+    CloseTab => "close-tab", "Close tab", "secondary-w";
+    ReopenClosedTab => "reopen-tab", "Reopen closed tab", "secondary-shift-t";
+    Reload => "reload", "Reload page", "secondary-r";
+    Back => "back", "Go back", "secondary-[";
+    Forward => "forward", "Go forward", "secondary-]";
+    NextTab => "next-tab", "Next tab", "ctrl-tab";
+    PrevTab => "prev-tab", "Previous tab", "ctrl-shift-tab";
+    ToggleInspector => "inspector", "Toggle Inspector", "secondary-alt-i";
+    WebInspector => "web-inspector", "WebKit Web Inspector", "secondary-alt-u";
+    ToggleSplit => "split", "Toggle split view", "secondary-\\";
+    ToggleSettings => "settings", "Settings", "secondary-,";
+    LinkHints => "hints", "Link hints", "secondary-j";
+    CopyCleanUrl => "copy-clean-url", "Copy clean URL", "secondary-shift-c";
+    CopyMarkdown => "copy-markdown", "Copy page as Markdown", "secondary-shift-m";
+    ToggleBookmark => "bookmark", "Bookmark this page", "secondary-d";
+    TogglePin => "pin", "Pin / unpin tab", "secondary-alt-p";
+    Find => "find", "Find in page", "secondary-f";
+    ZoomIn => "zoom-in", "Zoom in", "secondary-=";
+    ZoomOut => "zoom-out", "Zoom out", "secondary--";
+    ZoomReset => "zoom-reset", "Actual size", "secondary-0";
+    Quit => "quit", "Quit Relay", "secondary-q";
+    SelectTab1 => "tab-1", "Select tab 1", "secondary-1";
+    SelectTab2 => "tab-2", "Select tab 2", "secondary-2";
+    SelectTab3 => "tab-3", "Select tab 3", "secondary-3";
+    SelectTab4 => "tab-4", "Select tab 4", "secondary-4";
+    SelectTab5 => "tab-5", "Select tab 5", "secondary-5";
+    SelectTab6 => "tab-6", "Select tab 6", "secondary-6";
+    SelectTab7 => "tab-7", "Select tab 7", "secondary-7";
+    SelectTab8 => "tab-8", "Select tab 8", "secondary-8";
+    SelectTab9 => "tab-9", "Select tab 9", "secondary-9";
+    ToggleTabStrip => "fold-tabs", "Fold / unfold tab strip", "secondary-s";
+    NextTabStripPosition => "move-tabs", "Move tab strip", "secondary-shift-s";
+    Cut => "cut", "Cut", "secondary-x";
+    Copy => "copy", "Copy", "secondary-c";
+    Paste => "paste", "Paste", "secondary-v";
+    SelectAll => "select-all", "Select all", "secondary-a";
+    Undo => "undo", "Undo", "secondary-z";
+    Redo => "redo", "Redo", "secondary-shift-z";
+    Minimize => "minimize", "Minimize window", "secondary-m";
+    ShowHistory => "history", "Show history", "secondary-y";
+    ShowBookmarks => "bookmarks", "Show bookmarks", "secondary-shift-b";
+    ToggleAgents => "pause-agents", "Pause / resume agents", "secondary-shift-.";
+    CycleAgentPolicy => "agent-policy", "Cycle agent access on this site", "secondary-alt-a";
+    ToggleReader => "reading-mode", "Reading mode", "secondary-shift-r";
+    TogglePictureInPicture => "picture-in-picture", "Picture in Picture", "secondary-shift-p";
+    ShowDownloads => "downloads", "Show downloads", "secondary-shift-j";
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -326,14 +156,14 @@ impl Keymap {
     }
 
     pub fn bindings(&self) -> Vec<KeyBinding> {
-        ActionId::ALL.into_iter().map(|id| id.binding(self.key(id))).collect()
+        ActionId::ALL.iter().map(|id| id.binding(self.key(*id))).collect()
     }
 
     pub fn set(&mut self, id: ActionId, keystroke: &str) -> Result<(), String> {
         let parsed = Keystroke::parse(keystroke).map_err(|_| format!("{keystroke:?} is not a shortcut"))?;
         let key = canonical(&parsed);
         validate_key(&key)?;
-        if let Some(other) = ActionId::ALL.into_iter().find(|other| *other != id && same_key(self.key(*other), &key)) {
+        if let Some(other) = ActionId::ALL.iter().find(|other| **other != id && same_key(self.key(**other), &key)) {
             return Err(format!("{} already uses {}", other.label(), display_key(&key)));
         }
         if same_key(&key, "secondary-q") && id != ActionId::Quit {
@@ -404,6 +234,21 @@ pub fn display_key(keystroke: &str) -> String {
     keystroke.replace("secondary-", "⌘").replace("ctrl-", "⌃").replace("alt-", "⌥").replace("shift-", "⇧")
 }
 
+/// A shortcut as the palette and the documented map show it: modifier glyphs,
+/// then the key capitalised (`⌘⇧T`, `⌃Tab`). One formatter so a shortcut shown
+/// anywhere is the keystroke the binding actually uses.
+pub fn shortcut_label(keystroke: &str) -> String {
+    let display = display_key(keystroke);
+    let key_start = display.rfind(['⌘', '⌥', '⌃', '⇧']).map_or(0, |i| i + '⌘'.len_utf8());
+    let (modifiers, key) = display.split_at(key_start);
+    let mut chars = key.chars();
+    let key = match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+        _ => key.to_string(),
+    };
+    format!("{modifiers}{key}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,14 +265,28 @@ mod tests {
     #[test]
     fn shared_action_file_matches_the_keymap() {
         let raw = include_str!("../../../.agents/keymap-actions.txt");
-        let mut seen = 0;
+        let mut seen = std::collections::HashSet::new();
         for line in raw.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
             let (id, key) = line.split_once('|').expect("id|key");
             let id = ActionId::parse(id).unwrap_or_else(|| panic!("unknown action {id}"));
             assert_eq!(id.default_key(), key, "{id:?}");
-            seen += 1;
+            assert!(seen.insert(id), "the shared table lists {id:?} twice");
         }
-        assert_eq!(seen, ActionId::ALL.len());
+        assert_eq!(seen.len(), ActionId::ALL.len(), "every table action is in .agents/keymap-actions.txt");
+    }
+
+    #[test]
+    fn action_table_rows_are_unique_and_complete() {
+        let mut ids = std::collections::HashSet::new();
+        let mut labels = std::collections::HashSet::new();
+        for id in ActionId::ALL {
+            assert!(!id.as_str().is_empty(), "{id:?}");
+            assert!(!id.label().is_empty(), "{id:?}");
+            assert!(Keystroke::parse(id.default_key()).is_ok(), "{id:?} has {:?}", id.default_key());
+            assert!(ids.insert(id.as_str()), "duplicate action id {}", id.as_str());
+            assert!(labels.insert(id.label()), "duplicate Settings label {}", id.label());
+        }
+        assert_eq!(ActionId::ALL.len(), 49);
     }
 
     #[test]
@@ -435,10 +294,60 @@ mod tests {
         let map = Keymap::default();
         let keys: std::collections::HashSet<&str> = ActionId::ALL.iter().map(|id| map.key(*id)).collect();
         assert_eq!(keys.len(), ActionId::ALL.len(), "default shortcuts are unique");
-        assert_eq!(map.bindings().len(), 49);
+        assert_eq!(map.bindings().len(), ActionId::ALL.len());
         for id in ActionId::ALL {
-            assert!(Keystroke::parse(map.key(id)).is_ok(), "{}", map.key(id));
+            assert!(Keystroke::parse(map.key(*id)).is_ok(), "{}", map.key(*id));
         }
+    }
+
+    #[test]
+    fn key_bindings_are_built_from_the_action_table() {
+        use gpui::AsKeystroke;
+
+        let bindings = Keymap::default().bindings();
+        assert_eq!(bindings.len(), ActionId::ALL.len(), "one binding per table row");
+        for (id, binding) in ActionId::ALL.iter().zip(&bindings) {
+            assert_eq!(binding.action().name(), id.action_name(), "binding order follows the table");
+            let expected = Keystroke::parse(id.default_key()).unwrap();
+            let actual = binding.keystrokes()[0].as_keystroke();
+            assert_eq!(actual, &expected, "{:?} is bound to {:?} but the table says {:?}", id, actual, id.default_key());
+        }
+    }
+
+    #[test]
+    fn shortcut_labels_are_the_documented_form() {
+        assert_eq!(shortcut_label("secondary-t"), "⌘T");
+        assert_eq!(shortcut_label("secondary-shift-s"), "⌘⇧S");
+        assert_eq!(shortcut_label("secondary-alt-i"), "⌘⌥I");
+        assert_eq!(shortcut_label("ctrl-tab"), "⌃Tab");
+        assert_eq!(shortcut_label("secondary--"), "⌘-");
+        for id in ActionId::ALL {
+            let label = shortcut_label(id.default_key());
+            assert!(label.starts_with(['⌘', '⌃', '⌥', '⇧']), "{id:?}: {label}");
+        }
+    }
+
+    #[test]
+    fn design_keyboard_map_matches_the_action_table() {
+        const START: &str = "<!-- keymap:start -->";
+        const END: &str = "<!-- keymap:end -->";
+        let doc = include_str!("../../../docs/design.md");
+        let block = doc
+            .split_once(START)
+            .and_then(|(_, rest)| rest.split_once(END))
+            .map(|(block, _)| block)
+            .expect("docs/design.md has a keymap block between the keymap markers");
+        let actual: Vec<&str> = block.lines().map(str::trim_end).filter(|line| !line.is_empty()).collect();
+
+        let mut expected = vec!["| Keys | Action |".to_string(), "|---|---|".to_string()];
+        expected.extend(ActionId::ALL.iter().map(|id| {
+            format!("| {} | {} |", shortcut_label(id.default_key()), id.label())
+        }));
+        assert_eq!(
+            actual,
+            expected,
+            "docs/design.md keyboard map drifted from the action table; copy the lines above"
+        );
     }
 
     #[test]

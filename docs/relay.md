@@ -653,14 +653,28 @@ tab-strip placement (top/left/right) and does not cover native views.
 
 ## Keyboard shortcuts
 
-`keymap.rs` is the one action table: 46 defaults, stable ids, labels, and
-GPUI bindings. Settings → Keyboard shortcuts lists every action; **Change**
-clears bindings and menus, captures the next keystroke, and rejects bare keys,
-conflicts (including `secondary` vs `Ctrl` on Linux), and `⌘Q` for anything but
-Quit. Overrides persist as `id=keystroke;…` in `settings.keybindings`, reload
-at startup, and rebuild menus immediately so macOS key equivalents match.
-`app::key_bindings()` delegates to the default map, so the old duplicate table
-is gone.
+`keymap.rs` owns one action table: the `action_table!` invocation lists each
+action once (stable id, Settings label, default keystroke, GPUI action type)
+and expands to `ActionId`, `ALL`, every accessor, and the GPUI bindings, so a
+new shortcut is one row. 49 actions have defaults. Settings → Keyboard
+shortcuts lists every action; **Change** clears bindings and menus, captures
+the next keystroke, and rejects bare keys, conflicts (including `secondary` vs
+`Ctrl` on Linux), and `⌘Q` for anything but Quit. Overrides persist as
+`id=keystroke;…` in `settings.keybindings`, reload at startup, and rebuild
+menus immediately so macOS key equivalents match. `app::key_bindings()`
+delegates to the default map, and `.agents/keymap-actions.txt` (the MCP's
+allowed-id list) is checked against the same table.
+
+`palette.rs` owns one command table for the ⌘K rows: `command_table!` lists
+each command once with its palette title and, when it has one, the keymap
+action behind it. `Command::keys()` is derived from that action's default, so
+the palette cannot advertise a shortcut that no binding uses; the nine
+palette-only commands (Import, Copy MCP setup, close duplicates, the two
+per-site toggles, install / remove web app, theme and accent cycles)
+deliberately have no action and show no key. Tests assert unique labels and
+ids, every command mapped, exactly 28 commands bound to actions, bindings
+built from the table, and that the keyboard map in
+[`docs/design.md`](./design.md) matches the action table row for row.
 
 ## Appearance
 

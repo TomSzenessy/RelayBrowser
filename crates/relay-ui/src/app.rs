@@ -3211,7 +3211,7 @@ impl RelayApp {
         for (i, item) in p.items.iter().enumerate() {
             let on = i == p.selected;
             let custom_key = match item {
-                Item::Command(c) => c.action().map(|a| self.keymap.key(a).to_string()).unwrap_or_default(),
+                Item::Command(c) => c.action().map(|a| keymap::shortcut_label(self.keymap.key(a))).unwrap_or_default(),
                 _ => item.detail(),
             };
             let item_c = item.clone();
@@ -3727,7 +3727,7 @@ impl RelayApp {
     fn render_shortcuts(&self, editor: &ShortcutEditor, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut list = div().id("shortcuts-list").flex().flex_col().max_h(px(460.)).overflow_y_scroll();
-        for (i, id) in ActionId::ALL.into_iter().enumerate() {
+        for (i, id) in ActionId::ALL.iter().copied().enumerate() {
             let recording = editor.recording == Some(id);
             list = list.child(
                 div()
@@ -4882,61 +4882,10 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 49);
+        assert_eq!(bindings.len(), ActionId::ALL.len());
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 49] = [
-            OpenPalette.name(),
-            OpenLocation.name(),
-            NewTab.name(),
-            CloseTab.name(),
-            ReopenClosedTab.name(),
-            Reload.name(),
-            Back.name(),
-            Forward.name(),
-            NextTab.name(),
-            PrevTab.name(),
-            ToggleInspector.name(),
-            WebInspector.name(),
-            ToggleSplit.name(),
-            ToggleSettings.name(),
-            LinkHints.name(),
-            CopyCleanUrl.name(),
-            CopyMarkdown.name(),
-            ToggleBookmark.name(),
-            TogglePin.name(),
-            Find.name(),
-            ZoomIn.name(),
-            ZoomOut.name(),
-            ZoomReset.name(),
-            Quit.name(),
-            SelectTab1.name(),
-            SelectTab2.name(),
-            SelectTab3.name(),
-            SelectTab4.name(),
-            SelectTab5.name(),
-            SelectTab6.name(),
-            SelectTab7.name(),
-            SelectTab8.name(),
-            SelectTab9.name(),
-            ToggleTabStrip.name(),
-            NextTabStripPosition.name(),
-            Cut.name(),
-            Copy.name(),
-            Paste.name(),
-            SelectAll.name(),
-            Undo.name(),
-            Redo.name(),
-            Minimize.name(),
-            ShowHistory.name(),
-            ShowBookmarks.name(),
-            ToggleAgents.name(),
-            CycleAgentPolicy.name(),
-            ToggleReader.name(),
-            TogglePictureInPicture.name(),
-            ShowDownloads.name(),
-        ];
-        for name in required {
-            assert!(bound.contains(name), "missing key binding for {name}");
+        for id in ActionId::ALL {
+            assert!(bound.contains(id.action_name()), "missing key binding for {}", id.action_name());
         }
     }
 

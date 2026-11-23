@@ -2,6 +2,7 @@
 //! history and bookmarks, and runs commands. Pure logic; the GPUI view only
 //! renders `Palette::items`.
 
+use crate::keymap::{self, ActionId};
 use relay_bridge::TabId;
 
 pub const DEFAULT_SEARCH: &str = "https://duckduckgo.com/?q=%s";
@@ -19,216 +20,91 @@ pub fn search_label(template: &str) -> &'static str {
 
 const MAX_ITEMS: usize = 12;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Command {
-    NewTab,
-    CloseTab,
-    ReopenClosedTab,
-    Reload,
-    Back,
-    Forward,
-    ToggleInspector,
-    WebInspector,
-    ToggleSplit,
-    LinkHints,
-    Settings,
-    ImportChrome,
-    CopyMcpSetup,
-    CopyCleanUrl,
-    CopyMarkdown,
-    CloseDuplicateTabs,
-    ToggleBookmark,
-    TogglePin,
-    Find,
-    ZoomIn,
-    ZoomOut,
-    ZoomReset,
-    ToggleSiteBlocking,
-    ToggleCompatMode,
-    ToggleTabStrip,
-    NextTabPlacement,
-    InstallWebApp,
-    RemoveWebApp,
-    ShowHistory,
-    ShowBookmarks,
-    ToggleAgents,
-    CycleAgentPolicy,
-    CycleTheme,
-    CycleAccent,
-    ToggleReader,
-    TogglePictureInPicture,
-    ShowDownloads,
+/// One row per ⌘K command: its identity, palette label, and the keymap action
+/// (if any) that carries its shortcut. `command_table!` expands this list into
+/// `Command`, `ALL`, and every accessor; `keymap.rs` owns the shortcut itself.
+struct CommandSpec {
+    command: Command,
+    action: Option<ActionId>,
+    title: &'static str,
 }
 
-impl Command {
-    pub const ALL: [Command; 37] = [
-        Command::NewTab,
-        Command::CloseTab,
-        Command::ReopenClosedTab,
-        Command::Reload,
-        Command::Back,
-        Command::Forward,
-        Command::ToggleInspector,
-        Command::WebInspector,
-        Command::ToggleSplit,
-        Command::LinkHints,
-        Command::Settings,
-        Command::ImportChrome,
-        Command::CopyMcpSetup,
-        Command::CopyCleanUrl,
-        Command::CopyMarkdown,
-        Command::CloseDuplicateTabs,
-        Command::ToggleBookmark,
-        Command::TogglePin,
-        Command::Find,
-        Command::ZoomIn,
-        Command::ZoomOut,
-        Command::ZoomReset,
-        Command::ToggleSiteBlocking,
-        Command::ToggleCompatMode,
-        Command::ToggleTabStrip,
-        Command::NextTabPlacement,
-        Command::InstallWebApp,
-        Command::RemoveWebApp,
-        Command::ShowHistory,
-        Command::ShowBookmarks,
-        Command::ToggleAgents,
-        Command::CycleAgentPolicy,
-        Command::CycleTheme,
-        Command::CycleAccent,
-        Command::ToggleReader,
-        Command::TogglePictureInPicture,
-        Command::ShowDownloads,
-    ];
+macro_rules! command_table {
+    ($($variant:ident => $title:literal, $action:expr;)*) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum Command { $($variant),* }
 
-    /// The keymap action behind a palette command, when one exists. A `None`
-    /// command is palette-only (import, copy setup, per-site toggles, theme).
-    pub fn action(self) -> Option<crate::keymap::ActionId> {
-        use crate::keymap::ActionId as A;
-        Some(match self {
-            Command::NewTab => A::NewTab,
-            Command::CloseTab => A::CloseTab,
-            Command::ReopenClosedTab => A::ReopenClosedTab,
-            Command::Reload => A::Reload,
-            Command::Back => A::Back,
-            Command::Forward => A::Forward,
-            Command::ToggleInspector => A::ToggleInspector,
-            Command::WebInspector => A::WebInspector,
-            Command::ToggleSplit => A::ToggleSplit,
-            Command::LinkHints => A::LinkHints,
-            Command::Settings => A::ToggleSettings,
-            Command::CopyCleanUrl => A::CopyCleanUrl,
-            Command::CopyMarkdown => A::CopyMarkdown,
-            Command::ToggleBookmark => A::ToggleBookmark,
-            Command::TogglePin => A::TogglePin,
-            Command::Find => A::Find,
-            Command::ZoomIn => A::ZoomIn,
-            Command::ZoomOut => A::ZoomOut,
-            Command::ZoomReset => A::ZoomReset,
-            Command::ToggleTabStrip => A::ToggleTabStrip,
-            Command::NextTabPlacement => A::NextTabStripPosition,
-            Command::ShowHistory => A::ShowHistory,
-            Command::ShowBookmarks => A::ShowBookmarks,
-            Command::ToggleAgents => A::ToggleAgents,
-            Command::CycleAgentPolicy => A::CycleAgentPolicy,
-            Command::ToggleReader => A::ToggleReader,
-            Command::TogglePictureInPicture => A::TogglePictureInPicture,
-            Command::ShowDownloads => A::ShowDownloads,
-            Command::ImportChrome
-            | Command::CopyMcpSetup
-            | Command::CloseDuplicateTabs
-            | Command::ToggleSiteBlocking
-            | Command::ToggleCompatMode
-            | Command::InstallWebApp
-            | Command::RemoveWebApp
-            | Command::CycleTheme
-            | Command::CycleAccent => return None,
-        })
-    }
+        impl Command {
+            /// Every palette command, in the order an empty query lists them.
+            pub const ALL: &'static [Command] = &[$(Command::$variant),*];
 
-    pub fn title(self) -> &'static str {
-        match self {
-            Command::NewTab => "New Tab",
-            Command::CloseTab => "Close Tab",
-            Command::ReopenClosedTab => "Reopen Closed Tab",
-            Command::Reload => "Reload Page",
-            Command::Back => "Go Back",
-            Command::Forward => "Go Forward",
-            Command::ToggleInspector => "Toggle Inspector",
-            Command::WebInspector => "Open WebKit Web Inspector",
-            Command::ToggleSplit => "Toggle Split View",
-            Command::LinkHints => "Link Hints",
-            Command::Settings => "Settings",
-            Command::ImportChrome => "Import from Chrome",
-            Command::CopyMcpSetup => "Copy MCP Setup Command",
-            Command::CopyCleanUrl => "Copy Clean URL",
-            Command::CopyMarkdown => "Copy Page as Markdown",
-            Command::CloseDuplicateTabs => "Close Duplicate Tabs",
-            Command::ToggleBookmark => "Bookmark This Page",
-            Command::TogglePin => "Pin / Unpin Tab",
-            Command::Find => "Find in Page",
-            Command::ZoomIn => "Zoom In",
-            Command::ZoomOut => "Zoom Out",
-            Command::ZoomReset => "Actual Size",
-            Command::ToggleSiteBlocking => "Toggle Blocking on This Site",
-            Command::ToggleCompatMode => "Toggle Compatibility Mode on This Site",
-            Command::ToggleTabStrip => "Fold / Unfold Tab Strip",
-            Command::NextTabPlacement => "Move Tab Strip",
-            Command::InstallWebApp => "Install This Site as an App",
-            Command::RemoveWebApp => "Remove This Site's App",
-            Command::ShowHistory => "Show History",
-            Command::ShowBookmarks => "Show Bookmarks",
-            Command::ToggleAgents => "Pause / Resume Agents",
-            Command::CycleAgentPolicy => "Cycle Agent Access on This Site",
-            Command::CycleTheme => "Cycle Appearance (System / Light / Dark)",
-            Command::CycleAccent => "Cycle Accent Colour",
-            Command::ToggleReader => "Reading Mode",
-            Command::TogglePictureInPicture => "Picture in Picture",
-            Command::ShowDownloads => "Show Downloads",
+            fn spec(self) -> &'static CommandSpec {
+                static SPECS: &[CommandSpec] = &[$(
+                    CommandSpec {
+                        command: Command::$variant,
+                        title: $title,
+                        action: $action,
+                    }
+                ),*];
+                SPECS.iter().find(|spec| spec.command == self).expect("every Command has a spec row")
+            }
+
+            /// The keymap action behind this command, `None` when palette-only.
+            pub fn action(self) -> Option<ActionId> {
+                self.spec().action
+            }
+
+            pub fn title(self) -> &'static str {
+                self.spec().title
+            }
+
+            /// The shortcut shown next to the command, derived from the action
+            /// table so a palette row can never advertise a stale key.
+            pub fn keys(self) -> String {
+                self.action().map(|action| keymap::shortcut_label(action.default_key())).unwrap_or_default()
+            }
         }
-    }
+    };
+}
 
-    pub fn keys(self) -> &'static str {
-        match self {
-            Command::NewTab => "⌘T",
-            Command::CloseTab => "⌘W",
-            Command::ReopenClosedTab => "⌘⇧T",
-            Command::Reload => "⌘R",
-            Command::Back => "⌘[",
-            Command::Forward => "⌘]",
-            Command::ToggleInspector => "⌘⌥I",
-            Command::WebInspector => "⌘⌥U",
-            Command::ToggleSplit => "⌘\\",
-            Command::LinkHints => "⌘J",
-            Command::Settings => "⌘,",
-            Command::CopyCleanUrl => "⌘⇧C",
-            Command::CopyMarkdown => "⌘⇧M",
-            Command::ToggleBookmark => "⌘D",
-            Command::TogglePin => "⌘⌥P",
-            Command::Find => "⌘F",
-            Command::ZoomIn => "⌘=",
-            Command::ZoomOut => "⌘-",
-            Command::ZoomReset => "⌘0",
-            Command::ToggleTabStrip => "⌘S",
-            Command::NextTabPlacement => "⇧⌘S",
-            Command::ImportChrome
-            | Command::CopyMcpSetup
-            | Command::CloseDuplicateTabs
-            | Command::ToggleSiteBlocking
-            | Command::ToggleCompatMode
-            | Command::InstallWebApp
-            | Command::RemoveWebApp => "",
-            Command::ShowHistory => "⌘Y",
-            Command::ShowBookmarks => "⇧⌘B",
-            Command::ToggleAgents => "⇧⌘.",
-            Command::CycleAgentPolicy => "⌘⌥A",
-            Command::CycleTheme => "",
-            Command::CycleAccent => "",
-            Command::ToggleReader => "⇧⌘R",
-            Command::TogglePictureInPicture => "⇧⌘P",
-            Command::ShowDownloads => "⇧⌘J",
-        }
-    }
+command_table! {
+    NewTab => "New Tab", Some(ActionId::NewTab);
+    CloseTab => "Close Tab", Some(ActionId::CloseTab);
+    ReopenClosedTab => "Reopen Closed Tab", Some(ActionId::ReopenClosedTab);
+    Reload => "Reload Page", Some(ActionId::Reload);
+    Back => "Go Back", Some(ActionId::Back);
+    Forward => "Go Forward", Some(ActionId::Forward);
+    ToggleInspector => "Toggle Inspector", Some(ActionId::ToggleInspector);
+    WebInspector => "Open WebKit Web Inspector", Some(ActionId::WebInspector);
+    ToggleSplit => "Toggle Split View", Some(ActionId::ToggleSplit);
+    LinkHints => "Link Hints", Some(ActionId::LinkHints);
+    Settings => "Settings", Some(ActionId::ToggleSettings);
+    ImportChrome => "Import from Chrome", None;
+    CopyMcpSetup => "Copy MCP Setup Command", None;
+    CopyCleanUrl => "Copy Clean URL", Some(ActionId::CopyCleanUrl);
+    CopyMarkdown => "Copy Page as Markdown", Some(ActionId::CopyMarkdown);
+    CloseDuplicateTabs => "Close Duplicate Tabs", None;
+    ToggleBookmark => "Bookmark This Page", Some(ActionId::ToggleBookmark);
+    TogglePin => "Pin / Unpin Tab", Some(ActionId::TogglePin);
+    Find => "Find in Page", Some(ActionId::Find);
+    ZoomIn => "Zoom In", Some(ActionId::ZoomIn);
+    ZoomOut => "Zoom Out", Some(ActionId::ZoomOut);
+    ZoomReset => "Actual Size", Some(ActionId::ZoomReset);
+    ToggleSiteBlocking => "Toggle Blocking on This Site", None;
+    ToggleCompatMode => "Toggle Compatibility Mode on This Site", None;
+    ToggleTabStrip => "Fold / Unfold Tab Strip", Some(ActionId::ToggleTabStrip);
+    NextTabPlacement => "Move Tab Strip", Some(ActionId::NextTabStripPosition);
+    InstallWebApp => "Install This Site as an App", None;
+    RemoveWebApp => "Remove This Site's App", None;
+    ShowHistory => "Show History", Some(ActionId::ShowHistory);
+    ShowBookmarks => "Show Bookmarks", Some(ActionId::ShowBookmarks);
+    ToggleAgents => "Pause / Resume Agents", Some(ActionId::ToggleAgents);
+    CycleAgentPolicy => "Cycle Agent Access on This Site", Some(ActionId::CycleAgentPolicy);
+    CycleTheme => "Cycle Appearance (System / Light / Dark)", None;
+    CycleAccent => "Cycle Accent Colour", None;
+    ToggleReader => "Reading Mode", Some(ActionId::ToggleReader);
+    TogglePictureInPicture => "Picture in Picture", Some(ActionId::TogglePictureInPicture);
+    ShowDownloads => "Show Downloads", Some(ActionId::ShowDownloads);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -266,7 +142,7 @@ impl Item {
             Item::Tab { url, .. } => format!("Tab · {}", short_url(url)),
             Item::History { url, .. } => format!("History · {}", short_url(url)),
             Item::Bookmark { url, .. } => format!("Bookmark · {}", short_url(url)),
-            Item::Command(c) => c.keys().to_string(),
+            Item::Command(c) => c.keys(),
         }
     }
 }
@@ -539,7 +415,7 @@ impl Palette {
                 scored.push((s + 100 - rank as i32, Item::History { title: title.clone(), url: url.clone() }));
             }
         }
-        for c in Command::ALL {
+        for c in Command::ALL.iter().copied() {
             if q.is_empty() {
                 continue;
             }
@@ -719,6 +595,58 @@ mod tests {
     }
 
     #[test]
+    fn command_table_rows_are_unique_and_complete() {
+        let mut titles = std::collections::HashSet::new();
+        let mut actions = std::collections::HashSet::new();
+        let mut mapped = 0;
+        for command in Command::ALL {
+            assert!(!command.title().is_empty(), "{command:?}");
+            assert!(titles.insert(command.title()), "duplicate palette title {:?}", command.title());
+            match command.action() {
+                Some(action) => {
+                    mapped += 1;
+                    assert!(
+                        crate::keymap::ActionId::ALL.contains(&action),
+                        "{command:?} points at {action:?}, which is not in the action table"
+                    );
+                    assert!(actions.insert(action), "two commands share {action:?}");
+                    assert!(!command.keys().is_empty(), "{command:?} has an action but no displayed key");
+                }
+                None => assert_eq!(command.keys(), "", "palette-only {command:?} must not advertise a shortcut"),
+            }
+        }
+        assert_eq!(Command::ALL.len(), 37);
+        assert_eq!(mapped, 28, "28 commands run a keymap action; 9 are palette-only");
+    }
+
+    #[test]
+    fn command_shortcuts_are_derived_from_the_action_table() {
+        for command in Command::ALL {
+            let expected = command
+                .action()
+                .map(|action| crate::keymap::shortcut_label(action.default_key()))
+                .unwrap_or_default();
+            assert_eq!(command.keys(), expected, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn commands_without_a_shortcut_are_representable() {
+        let palette_only: Vec<Command> =
+            Command::ALL.iter().copied().filter(|command| command.action().is_none()).collect();
+        assert_eq!(palette_only.len(), 9);
+        for command in [Command::ImportChrome, Command::CopyMcpSetup, Command::CloseDuplicateTabs] {
+            assert!(palette_only.contains(&command), "{command:?} is palette-only");
+            assert_eq!(command.keys(), "", "{command:?} shows no key");
+            assert!(!command.title().is_empty());
+        }
+        // Bindings are built from action-table rows only, so a palette-only
+        // command has no path into the keymap.
+        assert_eq!(crate::keymap::Keymap::default().bindings().len(), ActionId::ALL.len());
+        assert!(Command::ALL.iter().all(|command| command.action().is_none() || !command.keys().is_empty()));
+    }
+
+    #[test]
     fn empty_query_lists_commands() {
         let mut p = Palette::default();
         p.refresh(&Sources::default(), DEFAULT_SEARCH);
@@ -784,7 +712,7 @@ mod tests {
         assert_eq!(Command::ToggleBookmark.keys(), "⌘D");
         assert_eq!(Command::TogglePin.keys(), "⌘⌥P");
         assert_eq!(Command::ToggleTabStrip.keys(), "⌘S");
-        assert_eq!(Command::NextTabPlacement.keys(), "⇧⌘S");
+        assert_eq!(Command::NextTabPlacement.keys(), "⌘⇧S");
         assert_eq!(Command::InstallWebApp.keys(), "");
         assert_eq!(Command::RemoveWebApp.keys(), "");
         let mut p = Palette { query: "duplicate".into(), ..Default::default() };

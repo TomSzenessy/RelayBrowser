@@ -88,40 +88,89 @@ none under Reduce Motion.
 
 ## Keyboard map
 
+Every shortcut below is one row of the action table in
+`crates/relay-ui/src/keymap.rs`; `design_keyboard_map_matches_the_action_table`
+fails when this block and the table disagree. The palette (`palette.rs`) has
+its own one-row-per-command table joined to these actions, so command labels
+and displayed shortcuts cannot drift either.
+
+<!-- keymap:start -->
 | Keys | Action |
 |---|---|
-| Settings → Agent shell changes | off by default; a global switch or per-client grant under Connected agents or the Agent sidebar lets an agent plan/apply theme, accent, start sections, allowlisted settings, validated shortcuts, the sidebar, and one capped plain-text start-page note; revoke applies on the next tool call; the shell applies changes live |
-| ⌘K | palette; each command shows its current custom shortcut; ←/→/Home/End move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, click places the caret |
-| ⌘L | palette prefilled with the current URL |
-| ⇧⌘J | Downloads panel: ↑/↓ select, ↩ cancel/retry/reveal, byte progress, buttons, Clear finished |
-| ⌘T / ⌘W / ⌘⇧T | new tab / close tab / reopen closed tab |
-| ⌘1–⌘8, ⌘9 (last tab), ⌃Tab / ⌃⇧Tab | switch tab |
-| ⌘Q | quit |
-| ⌘[ / ⌘] / ⌘R | back / forward / reload |
-| ⌘⌥I | toggle the native Inspector |
-| ⌘⌥U | WebKit Web Inspector (fallback) |
-| ⌘, | toggle Settings (search engine, blocking, sleep timeout, MCP, clear data) |
-| ⌘\ | split / unsplit the content area |
-| ⌘J, or f with the page focused (not in a text field) | link hints |
-| ⌘⇧C | copy the current URL without tracking parameters |
-| ⌘⇧M | copy the page's main content as Markdown |
-| ⌘D | bookmark the page, or remove its bookmark |
-| ⌘F | find in page (↩ next, ⇧↩ previous, Esc closes) |
-| ⌥⌘I | open / close the right sidebar; × collapses it, Agent / Inspector tabs switch panes |
-| ⇧⌘. | pause / resume every agent tool call; a tinted banner with Resume appears |
-| ⌘⌥A | cycle agent access on this site: Allow → Read only → Block |
-| Settings → Keyboard shortcuts | click Change, press a new shortcut; conflicts, bare keys, and ⌘Q are refused; Reset all restores defaults; changes apply without restart |
-| ⇧⌘R | reading mode: a clean article overlay; second press closes |
-| ⇧⌘P | picture-in-picture for the page's first video (WebKit/standard API) |
-| ⌘Y / ⇧⌘B | History / Bookmarks overlay (type to filter, ↑↓, ↩ opens, × deletes, move sets a folder) |
-| ⌘= / ⌘- / ⌘0 | zoom in / out / actual size, remembered per site |
-| ⌘S | fold / unfold the tab strip |
-| ⇧⌘S | move the tab strip left → top → right |
-| ⌘X / ⌘C / ⌘V / ⌘A, ⇧⌘Z | the page's cut / copy / paste / select all, undo / redo |
-| ⌘M | minimize the window |
-| (tab bar) | `×` closes (hover/active), middle click closes, `♪` playing audio, `pin` pinned, `zz` asleep |
-| ⌘⌥P | pin / unpin the tab; pinned tabs sit at the top, show `pin`, never auto-sleep, and ⌘W sleeps them instead of closing |
-| Esc | close palette / settings / hints |
+| ⌘K | Command palette |
+| ⌘L | Open location |
+| ⌘T | New tab |
+| ⌘W | Close tab |
+| ⌘⇧T | Reopen closed tab |
+| ⌘R | Reload page |
+| ⌘[ | Go back |
+| ⌘] | Go forward |
+| ⌃Tab | Next tab |
+| ⌃⇧Tab | Previous tab |
+| ⌘⌥I | Toggle Inspector |
+| ⌘⌥U | WebKit Web Inspector |
+| ⌘\ | Toggle split view |
+| ⌘, | Settings |
+| ⌘J | Link hints |
+| ⌘⇧C | Copy clean URL |
+| ⌘⇧M | Copy page as Markdown |
+| ⌘D | Bookmark this page |
+| ⌘⌥P | Pin / unpin tab |
+| ⌘F | Find in page |
+| ⌘= | Zoom in |
+| ⌘- | Zoom out |
+| ⌘0 | Actual size |
+| ⌘Q | Quit Relay |
+| ⌘1 | Select tab 1 |
+| ⌘2 | Select tab 2 |
+| ⌘3 | Select tab 3 |
+| ⌘4 | Select tab 4 |
+| ⌘5 | Select tab 5 |
+| ⌘6 | Select tab 6 |
+| ⌘7 | Select tab 7 |
+| ⌘8 | Select tab 8 |
+| ⌘9 | Select tab 9 |
+| ⌘S | Fold / unfold tab strip |
+| ⌘⇧S | Move tab strip |
+| ⌘X | Cut |
+| ⌘C | Copy |
+| ⌘V | Paste |
+| ⌘A | Select all |
+| ⌘Z | Undo |
+| ⌘⇧Z | Redo |
+| ⌘M | Minimize window |
+| ⌘Y | Show history |
+| ⌘⇧B | Show bookmarks |
+| ⌘⇧. | Pause / resume agents |
+| ⌘⌥A | Cycle agent access on this site |
+| ⌘⇧R | Reading mode |
+| ⌘⇧P | Picture in Picture |
+| ⌘⇧J | Show downloads |
+<!-- keymap:end -->
+
+Behaviour that is not a single action:
+
+- **⌘K palette:** each command shows its current custom shortcut; ←/→/Home/End
+  move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, and a click
+  places the caret. ⌘L opens it prefilled with the current URL.
+- **Find:** ↩ goes to the next hit, ⇧↩ to the previous, Esc closes.
+- **Sidebar:** ⌘⌥I opens / closes it; × collapses it, and the Agent / Inspector
+  tabs switch panes.
+- **Paused agents:** ⇧⌘. pauses or resumes every agent tool call and shows a
+  tinted banner with Resume.
+- **Tab bar:** `×` closes (hover/active), a middle click closes, `♪` marks
+  playing audio, `pin` a pinned tab, and `zz` a sleeping one. Pinned tabs sit
+  at the top, never auto-sleep, and ⌘W sleeps them instead of closing.
+- **Esc** closes the palette, Settings, or link hints.
+- **Settings → Agent shell changes:** off by default; a global switch or
+  per-client grant under Connected agents or the Agent sidebar lets an agent
+  plan/apply theme, accent, start sections, allowlisted settings, validated
+  shortcuts, the sidebar, and one capped plain-text start-page note; revoke
+  applies on the next tool call; the shell applies changes live.
+- **Settings → Keyboard shortcuts:** click Change, press a new shortcut;
+  conflicts, bare keys, and ⌘Q are refused; Reset all restores defaults;
+  changes apply without restart.
+- **Zoom** (`⌘=`, `⌘-`, `⌘0`) is remembered per site.
 
 On Linux development builds, ⌘ is Ctrl (GPUI's `secondary` modifier).
 
