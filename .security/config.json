@@ -1,7 +1,9 @@
 {
   "security_reviewed_on": "",
   "security_reviewer": "",
-  "security_team_contacts": [],
+  "security_team_contacts": [
+    "https://github.com/TomSzenessy/RelayBrowser/security/advisories/new"
+  ],
   "review_owner": "TomSzenessy",
   "review_status": "pending independent security review; private reporting route is #17"
 }

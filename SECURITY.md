@@ -2,20 +2,18 @@
 
 <!-- index: design | Vulnerability disclosure and security contact | A vulnerability or security-sensitive change is involved. -->
 
-This repository is a template, not a hosted service. **Initialization gate:**
-replace the contact and response expectations below before public launch.
+Relay is a local macOS browser. Do not open a public issue for an unpatched
+vulnerability, exposed secret, personal-data incident, or exploitable dependency.
 
-- **Private security contact:** `[REQUIRED: monitored email or private channel]`
-- **Private reporting route:** `[REQUIRED: platform private advisory URL or contact]`
-- **Response owner:** `[REQUIRED: person/team]`
+- **Private reporting route:** [GitHub private vulnerability reporting](https://github.com/TomSzenessy/RelayBrowser/security/advisories/new)
+- **Private security contact:** the same GitHub advisory form (owner notifications)
+- **Response owner:** TomSzenessy (repository owner)
 
 ## Reporting a vulnerability
 
-Do not open a public issue for an unpatched vulnerability, exposed secret,
-personal-data incident, or exploitable dependency. Use the repository owner's
-private security contact or the hosting platform's private vulnerability
-reporting channel. If no private channel exists, ask the owner to establish one
-before public launch.
+Use the GitHub private advisory form linked above. It is enabled on this
+repository and notifies the owner; do not post exploit details in a public
+issue or pull request.
 
 Include a minimal description, affected version/commit, reproduction only in a
 private channel, impact, and suggested mitigation. Do not include real secrets,
