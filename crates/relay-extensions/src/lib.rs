@@ -3,6 +3,7 @@
 
 pub mod chrome_import;
 pub mod crx;
+pub mod login;
 pub mod manifest;
 pub mod store;
 
