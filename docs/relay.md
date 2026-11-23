@@ -198,6 +198,14 @@ arrives. A failed after-load navigation therefore cannot leave stale page
 state under a load error; the shell's existing error pane and Retry button show
 because the DOM is empty.
 
+## Extension install limits
+
+`relay install-extension` bounds every read: the HTTPS fetch has a 30 s
+timeout and 256 MiB compressed cap, CRX2/3 headers are checked without
+panicking and must be followed by a zip payload, and unpack refuses more than
+256 MiB decompressed total and removes its staging directory on any failure.
+CRX3 signatures are still not verified (residual).
+
 ## Downloads
 
 A navigation WebKit cannot display is accepted as a `WKDownload`; the delegate
