@@ -532,6 +532,7 @@ test("picture_in_picture toggles a video or reports no support", async () => {
   await p.evaluate(() => {
     const v = document.getElementById("v");
     v.requestPictureInPicture = () => { window.pip = (window.pip || 0) + 1; return Promise.resolve(); };
+    v.webkitSetPresentationMode = (mode) => { window.pipMode = mode; window.pip = (window.pip || 0) + 1; };
   });
   let on;
   await p.evaluate(() => window.__relay.exec({ id: 180, op: "picture_in_picture" }));
