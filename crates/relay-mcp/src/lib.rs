@@ -956,10 +956,37 @@ pub async fn stdio_proxy(path: &Path) -> anyhow::Result<()> {
     let stream = tokio::net::UnixStream::connect(path).await.map_err(|e| {
         anyhow::anyhow!("Relay is not running (no socket at {}): {e}. Start Relay first.", path.display())
     })?;
-    let (mut r, mut w) = stream.into_split();
-    let up = async { tokio::io::copy(&mut tokio::io::stdin(), &mut w).await };
-    let down = async { tokio::io::copy(&mut r, &mut tokio::io::stdout()).await };
-    tokio::select! { r = up => { r?; } r = down => { r?; } }
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (mut r, w) = stream.into_split();
+    // Keep one Arc clone of the write half alive after stdin EOF, so the
+    // server does not see a half-close before answering the last request.
+    let w = std::sync::Arc::new(tokio::sync::Mutex::new(w));
+    let w_for_up = w.clone();
+    let up = async move {
+        let mut stdin = tokio::io::stdin();
+        let mut buf = [0u8; 16 * 1024];
+        loop {
+            let n = stdin.read(&mut buf).await?;
+            if n == 0 {
+                break Ok::<(), std::io::Error>(());
+            }
+            let mut guard = w_for_up.lock().await;
+            guard.write_all(&buf[..n]).await?;
+            guard.flush().await?;
+        }
+    };
+    let mut down = tokio::spawn(async move { tokio::io::copy(&mut r, &mut tokio::io::stdout()).await });
+    tokio::select! {
+        result = up => {
+            result?;
+            // stdin ended; keep the write half open and read the last reply.
+            let _ = tokio::time::timeout(Duration::from_secs(5), &mut down).await;
+        }
+        result = &mut down => {
+            result??;
+        }
+    }
+    let _ = w;
     Ok(())
 }
 
