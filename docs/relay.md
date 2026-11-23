@@ -183,6 +183,14 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## Reading mode
+
+`⇧⌘R` (View → Reading Mode, palette) asks the page for a reader overlay built
+from `<article>`/`[role=main]`/`<main>`/`<body>`. Scripts, styles, forms,
+nav/aside/footer, inline handlers, and copied Relay ids are removed; images and
+links remain. A second press removes it, and a page load clears the per-tab
+state. PiP for video is not built yet.
+
 ## MCP install board
 
 `relay mcp-config [claude-code|codex|opencode|cursor|zed]` prints the exact

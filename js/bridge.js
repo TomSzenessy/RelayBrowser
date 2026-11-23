@@ -587,6 +587,7 @@
       return { key: key, tag: target.tagName ? target.tagName.toLowerCase() : "", prevented: down.defaultPrevented };
     },
     storage: storageSummary,
+    reader: reader,
     set_cookie: function (c) {
       var name = String(c.name || "");
       var value = String(c.value || "");
@@ -737,6 +738,42 @@
       return { values: values, truncated: truncated, redacted: redacted };
     }
     return { local: dump(localStorage), session: dump(sessionStorage), url: location.href };
+  }
+
+  function reader(c) {
+    var existing = document.getElementById("relay-reader");
+    if (!c.on) {
+      if (existing) existing.remove();
+      delete document.documentElement.dataset.relayReader;
+      return false;
+    }
+    if (existing) return true;
+    var source = document.querySelector("article") || document.querySelector("[role=main]") || document.querySelector("main") || document.body;
+    var clone = source.cloneNode(true);
+    clone.querySelectorAll("script, style, noscript, iframe, form, button, input, select, textarea, nav, aside, footer, [aria-hidden=true]").forEach(function (el) { el.remove(); });
+    clone.querySelectorAll("*").forEach(function (el) {
+      for (var i = el.attributes.length - 1; i >= 0; i--) {
+        var name = el.attributes[i].name;
+        if (/^on/i.test(name) || name === "data-relay-id" || name === "style") el.removeAttribute(name);
+      }
+    });
+    var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var overlay = document.createElement("div");
+    overlay.id = "relay-reader";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:2147483647;overflow:auto;padding:48px 24px;" +
+      (dark ? "background:#1b1c1f;color:#e6e6e9;" : "background:#fff;color:#1a1a1a;") +
+      "font:18px/1.6 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;";
+    var inner = document.createElement("div");
+    inner.style.cssText = "max-width:680px;margin:0 auto;";
+    inner.innerHTML = '<div style="font:11px/1.4 ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;opacity:.55;margin-bottom:24px">Relay reader</div>';
+    var content = document.createElement("div");
+    content.innerHTML = clone.innerHTML;
+    content.querySelectorAll("img,video,svg").forEach(function (el) { el.style.maxWidth = "100%"; el.style.height = "auto"; });
+    inner.appendChild(content);
+    overlay.appendChild(inner);
+    document.documentElement.appendChild(overlay);
+    document.documentElement.dataset.relayReader = "1";
+    return true;
   }
 
   var maxFaviconBytes = 256 * 1024;
