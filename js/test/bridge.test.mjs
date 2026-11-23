@@ -397,3 +397,45 @@ test("web_app explains a page without a manifest", async () => {
   assert.match(r.reason, /does not declare/);
   await p.close();
 });
+
+test("favicon returns a supported image and refuses non-images", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU2l4wAAAABJRU5ErkJggg==",
+    "base64");
+  await p.route(`${ORIGIN}/**`, async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/icon/") return route.fulfill({ contentType: "text/html", body: '<link rel="icon" href="/icon.png"><h1>Icon</h1>' });
+    if (url.pathname === "/icon.png") return route.fulfill({ contentType: "image/png", body: png });
+    if (url.pathname === "/bad/") return route.fulfill({ contentType: "text/html", body: '<link rel="icon" href="/icon.txt"><h1>Bad</h1>' });
+    if (url.pathname === "/icon.txt") return route.fulfill({ contentType: "text/plain", body: "not an icon" });
+    return route.fulfill({ status: 404, body: "" });
+  });
+  await p.goto(`${ORIGIN}/icon/`);
+  let result;
+  await p.evaluate(() => window.__relay.exec({ id: 130, op: "favicon" }));
+  for (let i = 0; i < 100 && !result; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    result = msgs.find(m => m.kind === "result" && m.id === 130);
+    if (!result) await p.waitForTimeout(25);
+  }
+  assert.ok(result, "favicon replied");
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.value.available, true, JSON.stringify(result.value));
+  assert.equal(result.value.mime, "image/png");
+  assert.match(result.value.data, /^data:image\/png;base64,/);
+
+  await p.goto(`${ORIGIN}/bad/`);
+  result = null;
+  await p.evaluate(() => window.__relay.exec({ id: 131, op: "favicon" }));
+  for (let i = 0; i < 100 && !result; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    result = msgs.find(m => m.kind === "result" && m.id === 131);
+    if (!result) await p.waitForTimeout(25);
+  }
+  assert.ok(result, "bad favicon replied");
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.value.available, false, "text/plain and ICO are refused");
+  await p.close();
+});

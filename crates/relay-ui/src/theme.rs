@@ -129,13 +129,6 @@ pub struct Theme {
 }
 
 impl Theme {
-    pub fn for_appearance(a: WindowAppearance) -> Self {
-        match a {
-            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::light(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::dark(),
-        }
-    }
-
     pub fn for_choice(appearance: WindowAppearance, choice: ThemeChoice, accent: AccentChoice) -> Self {
         let dark = match choice {
             ThemeChoice::System => matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark),

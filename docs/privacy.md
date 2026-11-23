@@ -71,6 +71,11 @@ telemetry pipeline, crash-upload endpoint, or analytics SDK.
   the GUI; a directory that already exists with a wider mode is tightened.
   The temporary copy of Chrome's History is created `0600` in one step and
   removed on both success and failure.
+- **Favicons:** while a page is open, Relay asks the page itself for its icon
+  (`<link rel=icon>` or `/favicon.ico`) with `same-origin` credentials, a 3 s
+  timeout, and a 256 KB cap; cross-origin icon URLs receive no cookies.
+  Accepted PNG/JPEG/WebP/GIF bytes are cached 0600 in
+  `relay_home()/favicons` (sanitized host names) and never sent to an agent.
 - **Local profile storage:** History, bookmarks, settings, saved session tabs (http/https URL, title, pinned, scroll offset; max 200; replaced on every save; erased by `relay clear-data` and Settings → Clear history; not written at all with `restore_session off`), per-site preferences (zoom, compat, blocking, hidden selectors), installed
   extension metadata, and installed web app records (name, start URL, bundle
   path, install time) live in `$RELAY_HOME/profile.sqlite` (default

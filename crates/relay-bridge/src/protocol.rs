@@ -172,6 +172,9 @@ pub enum Op {
     /// untrusted data: `relay-ui` validates origin, size, and image format
     /// before it writes anything to disk.
     WebApp,
+    /// Read the page's icon as a small PNG/JPEG/WebP/GIF data URL. Same
+    /// untrusted-data rules as `WebApp`; SVG/ICO are refused.
+    Favicon,
 }
 
 fn yes() -> bool {
@@ -262,6 +265,11 @@ mod tests {
         assert!(!op.mutates());
         let s = Command { id: 5, op }.to_script();
         assert!(s.contains(r#""op":"web_app""#), "{s}");
+        let op: Op = serde_json::from_str(r#"{"op":"favicon"}"#).unwrap();
+        assert_eq!(op, Op::Favicon);
+        assert!(!op.mutates());
+        let s = Command { id: 6, op }.to_script();
+        assert!(s.contains(r#""op":"favicon""#), "{s}");
     }
 
     #[test]

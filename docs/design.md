@@ -36,6 +36,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 - **Agent stop:** while an agent is paused, a tinted line above the status bar
   says page automation is stopped and offers Resume. The state lives in the
   shared hub, so every MCP tool fails fast before touching a page.
+- **Tab icon:** a 14 px favicon, decoded from the page's own icon link
+  (PNG/JPEG/WebP/GIF under 256 KB); a dot is the fallback while loading,
+  after a refusal, and for sites without an icon. Active tabs keep the accent
+  ring/background.
 - **Library:** a modal over the page for History (`⌘Y`) or Bookmarks
   (`⇧⌘B`): one query line, wrapped selection, row click opens, × deletes, and
   Bookmarks rows have a move prompt for the folder path. Esc or click-outside
