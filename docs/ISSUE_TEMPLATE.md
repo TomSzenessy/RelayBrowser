@@ -83,8 +83,9 @@ Use exactly one label from each required family:
 full numbered `How to reproduce` section is required; in `agent-first`, the
 compact contract may put the validation evidence in `Evidence`. External
 work remains `blocked` with its gate and named owner. The public `repoctl issue`
-adapter refuses `type: security`; use the private route in
-[`../SECURITY.md`](../SECURITY.md), then file a redacted follow-up only after
+adapter refuses `type: security`; use the private route named in
+[`../SECURITY.md`](../SECURITY.md) (GitHub private vulnerability reporting),
+then file a redacted follow-up only after
 coordinated disclosure. A unit test never proves deployment, provider
 propagation, hardware behavior, or legal approval.
 

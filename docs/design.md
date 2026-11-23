@@ -1,6 +1,7 @@
 # Design
 
 <!-- index: design | Visual direction, layout, keyboard map, and UX principles | before any UI work -->
+<!-- covers: crates/relay-ui/src/theme.rs crates/relay-ui/src/tabstrip.rs crates/relay-ui/src/startpage.rs crates/relay-ui/src/app.rs -->
 
 Direction (owner brief, 2026-11-22): **minimal, keyboard-first, native macOS**.
 The look is closer to Zed than to Chrome. The page gets almost the whole window,

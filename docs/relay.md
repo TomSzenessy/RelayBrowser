@@ -482,7 +482,7 @@ modules the palette calls before its normal URL/search item:
 
 Six layers, cheapest first:
 
-1. **Portable tests** (`cargo test --workspace`) run anywhere: protocol, hub,
+1. **Portable tests** (`cargo test --workspace`, 177 test functions) run anywhere: protocol, hub,
    MCP round-trip with a real client, Chrome import, CRX, content rules, sleep,
    palette, inspector filters, hints, WCAG AA theme contrast, key bindings, and
    CLI subcommands (`doctor`, `config`, `export`, `clear-data`). The stdio
@@ -492,7 +492,7 @@ Six layers, cheapest first:
    `Store::in_memory`, gated behind the `test-support` feature enabled only by
    dev-dependencies; it is not in the production API.
 2. **The injected bridge runs in Playwright's WebKit 26.0** in Linux CI
-   (`js/`, 12 tests): DOM snapshots and patches, fetch/XHR status and bodies,
+   (`js/`, 23 tests): DOM snapshots and patches, fetch/XHR status and bodies,
    console and uncaught errors, click/type/highlight, hints, 2FA detection, and
    the async `web_app` manifest/icon read with its failure reasons.
    CI installs WebKit and its host libraries on ubuntu-24.04.

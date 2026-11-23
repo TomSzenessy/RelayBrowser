@@ -1,7 +1,7 @@
 # Documentation index
 
 The navigation layer for humans and agents. Durable knowledge lives beside its
-owner; live work and acceptance live in GitHub Issues, not a Markdown backlog.
+owner; live work lives in GitHub Issues.
 
 ## Machine-readable sources
 
@@ -10,9 +10,6 @@ owner; live work and acceptance live in GitHub Issues, not a Markdown backlog.
 - [`../resources.toml`](../resources.toml): read-only resource routes.
 - [`../.agents/`](../.agents/): every capability, one file each.
 - [`handoffs/`](./handoffs/README.md): continuation records, linked from there.
-- Dated research notes beside the baseline:
-  [MCP boundaries](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/mcp-production-boundaries-2026-09-25.md),
-  [hardening](https://github.com/TomSzenessy/AI_TEMPLATE/blob/main/docs/research/primary-source-hardening-2026-09-25.md).
 
 ## Documents
 
