@@ -48,6 +48,9 @@ pub struct Cookie {
 pub struct DomStore {
     root: Option<NodeId>,
     nodes: HashMap<NodeId, StoredNode>,
+    /// Parent of every stored id, so a removal can unlink it directly instead
+    /// of scanning every node's children.
+    parents: HashMap<NodeId, NodeId>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +99,7 @@ impl DomStore {
             return false;
         }
         self.nodes.clear();
+        self.parents.clear();
         self.root = Some(self.insert(root));
         true
     }
@@ -117,17 +121,15 @@ impl DomStore {
             self.remove_subtree(*id);
         }
         for node in nodes {
-            if let Some(old) = self.nodes.get(&node.id) {
-                for child in old.children.clone() {
-                    self.remove_subtree(child);
-                }
-            }
+            // Replace the old subtree; remember the parent because
+            // remove_subtree unlinks the node, then reattach the new root.
+            let id = node.id;
+            let parent = self.parents.get(&id).copied();
+            self.remove_subtree(id);
             self.insert(node);
-        }
-        // Children lists may reference ids removed above.
-        let live: std::collections::HashSet<NodeId> = self.nodes.keys().copied().collect();
-        for n in self.nodes.values_mut() {
-            n.children.retain(|c| live.contains(c));
+            if let Some(parent) = parent {
+                self.attach(id, parent);
+            }
         }
         true
     }
@@ -169,7 +171,10 @@ impl DomStore {
 
     fn insert(&mut self, node: DomNode) -> NodeId {
         let id = node.id;
-        let children = node.children.into_iter().map(|c| self.insert(c)).collect();
+        let children: Vec<NodeId> = node.children.into_iter().map(|c| self.insert(c)).collect();
+        for child in &children {
+            self.attach(*child, id);
+        }
         self.nodes.insert(
             id,
             StoredNode { tag: node.tag, attrs: node.attrs, text: node.text, interactive: node.interactive, children },
@@ -177,7 +182,29 @@ impl DomStore {
         id
     }
 
+    /// Point `child` at `parent`, removing it from a previous parent's child
+    /// list if the patch moved it.
+    fn attach(&mut self, child: NodeId, parent: NodeId) {
+        if let Some(old) = self.parents.insert(child, parent) {
+            if old != parent {
+                if let Some(old_parent) = self.nodes.get_mut(&old) {
+                    old_parent.children.retain(|c| *c != child);
+                }
+            }
+        }
+        if let Some(p) = self.nodes.get_mut(&parent) {
+            if !p.children.contains(&child) {
+                p.children.push(child);
+            }
+        }
+    }
+
     fn remove_subtree(&mut self, id: NodeId) {
+        if let Some(parent) = self.parents.remove(&id) {
+            if let Some(p) = self.nodes.get_mut(&parent) {
+                p.children.retain(|c| *c != id);
+            }
+        }
         if let Some(n) = self.nodes.remove(&id) {
             for c in n.children {
                 self.remove_subtree(c);
@@ -892,6 +919,22 @@ mod tests {
 
     fn node(id: NodeId, tag: &str, text: &str, children: Vec<DomNode>) -> DomNode {
         DomNode { id, tag: tag.into(), attrs: BTreeMap::new(), text: text.into(), interactive: tag == "button", children }
+    }
+
+    #[test]
+    fn dom_patch_removes_exactly_the_replaced_subtree_without_a_live_set() {
+        let mut d = DomStore::default();
+        // A wide tree makes the old full-store scan visible; the patch touches one branch.
+        let kids: Vec<DomNode> = (10..110).map(|id| node(id, "span", "leaf", vec![])).collect();
+        d.replace_all(Some(node(1, "body", "", vec![node(2, "div", "", kids)])));
+        let before = d.len();
+        assert_eq!(before, 102);
+        assert!(d.patch(vec![node(2, "div", "", vec![node(3, "button", "new", vec![])])], &[10, 11]));
+        assert_eq!(d.len(), 3, "only the patched root, its new child, and body survive");
+        assert!(!d.contains(10) && !d.contains(11) && d.contains(3));
+        let tree = d.tree(1, 10).unwrap();
+        assert_eq!(tree.children[0].children.len(), 1);
+        assert!(!d.patch(vec![node(2, "div", "", vec![node(3, "div", "", vec![node(2, "div", "", vec![])])])], &[]), "cycle rejected");
     }
 
     #[test]
