@@ -156,6 +156,9 @@ known slow German legal site with a documented manual-review exception; a 403,
 - **Agent audit:** each MCP tool writes tool/host/tab/outcome/time to the
   local profile, capped at 5,000 rows, with no typed text, cookie values, or
   page content. The write is best-effort; `relay clear-data --audit`.
+- **Downloads:** WebKit downloads are saved to `~/Downloads/Relay` with a
+  sanitized basename and collision suffix; `../`, separators, control bytes,
+  and absolute paths cannot escape the folder. Relay never executes the file.
 - **Reading mode:** the overlay is a sanitized clone (no scripts, inline
   handlers, forms, or copied Relay ids); it is not addressable by agent
   commands.

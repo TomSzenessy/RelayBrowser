@@ -454,7 +454,27 @@ pub struct Hub {
     active: Option<TabId>,
     next_tab: TabId,
     next_cmd: u64,
+    next_download: u64,
+    downloads: BTreeMap<u64, Download>,
     pending: HashMap<u64, (TabId, oneshot::Sender<CommandResult>)>,
+}
+
+/// One user-initiated download. The file lives outside the profile; this is
+/// metadata for the Downloads panel only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Download {
+    pub id: u64,
+    pub url: String,
+    pub filename: String,
+    pub path: Option<String>,
+    pub state: DownloadState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadState {
+    Downloading,
+    Done,
+    Failed(String),
 }
 
 /// Thread-safe handle shared by the UI, the WebKit layer, and the MCP server.
@@ -481,7 +501,7 @@ impl SharedHub {
     pub fn new() -> Self {
         let (tx, _) = watch::channel(0);
         Self {
-            inner: Arc::new(Mutex::new(Hub { next_tab: 1, next_cmd: 1, ..Default::default() })),
+            inner: Arc::new(Mutex::new(Hub { next_tab: 1, next_cmd: 1, next_download: 1, ..Default::default() })),
             changed: Arc::new(tx),
             agents_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             agent_policies: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -648,6 +668,45 @@ impl Hub {
 
     pub fn tab_ids(&self) -> &[TabId] {
         &self.order
+    }
+
+    pub fn begin_download(&mut self, url: &str, filename: &str) -> u64 {
+        let id = self.next_download;
+        self.next_download += 1;
+        self.downloads.insert(
+            id,
+            Download { id, url: url.to_string(), filename: filename.to_string(), path: None, state: DownloadState::Downloading },
+        );
+        id
+    }
+
+    pub fn set_download_destination(&mut self, id: u64, filename: &str, path: &str) {
+        if let Some(d) = self.downloads.get_mut(&id) {
+            d.filename = filename.to_string();
+            d.path = Some(path.to_string());
+        }
+    }
+
+    pub fn finish_download(&mut self, id: u64) {
+        if let Some(d) = self.downloads.get_mut(&id) {
+            d.state = DownloadState::Done;
+        }
+    }
+
+    pub fn fail_download(&mut self, id: u64, error: &str) {
+        if let Some(d) = self.downloads.get_mut(&id) {
+            d.state = DownloadState::Failed(error.to_string());
+        }
+    }
+
+    pub fn downloads(&self) -> Vec<Download> {
+        self.downloads.values().cloned().collect()
+    }
+
+    pub fn clear_finished_downloads(&mut self) -> usize {
+        let before = self.downloads.len();
+        self.downloads.retain(|_, d| d.state == DownloadState::Downloading);
+        before - self.downloads.len()
     }
 
     /// Small view models in display order, safe to build every frame.
@@ -845,6 +904,23 @@ mod tests {
         let out = d.outline(None, 10, true, 100);
         assert_eq!(out.trim(), "[5] button \"New\"");
         assert_eq!(d.interactive_ids(10), vec![5]);
+    }
+
+    #[test]
+    fn downloads_track_destination_and_clear_only_finished() {
+        let hub = SharedHub::new();
+        let a = hub.update(|h| h.begin_download("https://x.test/a.zip", "a.zip"));
+        let b = hub.update(|h| h.begin_download("https://x.test/b.zip", "b.zip"));
+        hub.update(|h| h.set_download_destination(a, "a.zip", "/tmp/a.zip"));
+        hub.update(|h| h.finish_download(a));
+        hub.update(|h| h.fail_download(b, "network"));
+        let rows = hub.lock().downloads();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].path.as_deref(), Some("/tmp/a.zip"));
+        assert_eq!(rows[0].state, DownloadState::Done);
+        assert_eq!(rows[1].state, DownloadState::Failed("network".into()));
+        assert_eq!(hub.update(|h| h.clear_finished_downloads()), 2);
+        assert!(hub.lock().downloads().is_empty());
     }
 
     #[test]

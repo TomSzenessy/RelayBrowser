@@ -11,11 +11,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
-use objc2_foundation::{NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURLRequest, NSURL};
+use objc2_foundation::{
+    NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest, NSURLResponse,
+};
 use objc2_web_kit::{
-    WKContentRuleList, WKContentRuleListStore, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction, WKNavigationDelegate, WKScriptMessage,
-    WKScriptMessageHandler, WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime,
-    WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
+    WKContentRuleList, WKContentRuleListStore, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction,
+    WKNavigationDelegate, WKNavigationResponse, WKNavigationResponsePolicy, WKScriptMessage, WKScriptMessageHandler, WKUIDelegate,
+    WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::RefCell;
@@ -35,10 +37,62 @@ pub enum EngineEvent {
     Slept(TabId),
 }
 
+struct DownloadIvars {
+    hub: SharedHub,
+    id: u64,
+    path: RefCell<Option<String>>,
+}
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements; we do not implement Drop.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RelayDownloadHandler"]
+    #[ivars = DownloadIvars]
+    struct DownloadHandler;
+
+    unsafe impl NSObjectProtocol for DownloadHandler {}
+
+    unsafe impl WKDownloadDelegate for DownloadHandler {
+        #[unsafe(method(download:decideDestinationUsingResponse:suggestedFilename:completionHandler:))]
+        fn decide_destination(
+            &self,
+            _download: &WKDownload,
+            _response: &NSURLResponse,
+            suggested_filename: &NSString,
+            completion_handler: &block2::DynBlock<dyn Fn(*mut NSURL)>,
+        ) {
+            let (filename, path) = download_destination(&suggested_filename.to_string());
+            *self.ivars().path.borrow_mut() = Some(path.clone());
+            self.ivars().hub.update(|h| h.set_download_destination(self.ivars().id, &filename, &path));
+            let url = NSURL::fileURLWithPath(&NSString::from_str(&path));
+            completion_handler.call((&*url as *const NSURL as *mut NSURL,));
+        }
+
+        #[unsafe(method(downloadDidFinish:))]
+        fn did_finish(&self, _download: &WKDownload) {
+            self.ivars().hub.update(|h| h.finish_download(self.ivars().id));
+        }
+
+        #[unsafe(method(download:didFailWithError:resumeData:))]
+        fn did_fail(&self, _download: &WKDownload, error: &NSError, _resume_data: Option<&objc2_foundation::NSData>) {
+            self.ivars().hub.update(|h| h.fail_download(self.ivars().id, &error.localizedDescription().to_string()));
+        }
+    }
+);
+
+impl DownloadHandler {
+    fn new(mtm: MainThreadMarker, ivars: DownloadIvars) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(ivars);
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 pub struct HandlerIvars {
     tab: TabId,
     hub: SharedHub,
     events: Rc<dyn Fn(EngineEvent)>,
+    downloads: RefCell<Vec<Retained<DownloadHandler>>>,
 }
 
 define_class!(
@@ -66,6 +120,36 @@ define_class!(
     }
 
     unsafe impl WKNavigationDelegate for BridgeHandler {
+        #[unsafe(method(webView:decidePolicyForNavigationResponse:decisionHandler:))]
+        fn decide_response(
+            &self,
+            _web_view: &WKWebView,
+            response: &WKNavigationResponse,
+            decision_handler: &block2::DynBlock<dyn Fn(WKNavigationResponsePolicy)>,
+        ) {
+            let policy = if unsafe { response.canShowMIMEType() } {
+                WKNavigationResponsePolicy::Allow
+            } else {
+                WKNavigationResponsePolicy::Download
+            };
+            decision_handler.call((policy,));
+        }
+
+        #[unsafe(method(webView:navigationResponse:didBecomeDownload:))]
+        fn did_become_download(&self, _web_view: &WKWebView, _response: &WKNavigationResponse, download: &WKDownload) {
+            let url = unsafe { download.originalRequest() }
+                .and_then(|r| unsafe { r.URL() })
+                .and_then(|u| u.absoluteString())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let filename = url.split(['/', '?']).next_back().filter(|s| !s.is_empty()).unwrap_or("download").to_string();
+            let id = self.ivars().hub.update(|h| h.begin_download(&url, &filename));
+            let mtm = MainThreadMarker::new().expect("download callback is on the main thread");
+            let handler = DownloadHandler::new(mtm, DownloadIvars { hub: self.ivars().hub.clone(), id, path: RefCell::new(None) });
+            unsafe { download.setDelegate(Some(ProtocolObject::from_ref(&*handler))) };
+            self.ivars().downloads.borrow_mut().push(handler);
+        }
+
         #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
         fn did_fail_provisional(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
             self.note_error(error);
@@ -245,7 +329,7 @@ impl Engine {
     pub fn create(&mut self, tab: TabId, url: &str) -> &Retained<WKWebView> {
         self.clear_error(tab);
         let mtm = self.mtm;
-        let handler = BridgeHandler::new(mtm, HandlerIvars { tab, hub: self.hub.clone(), events: self.events.clone() });
+        let handler = BridgeHandler::new(mtm, HandlerIvars { tab, hub: self.hub.clone(), events: self.events.clone(), downloads: RefCell::new(Vec::new()) });
         let ucc = unsafe { WKUserContentController::new(mtm) };
         let script = unsafe {
             WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
@@ -619,6 +703,35 @@ fn teardown(t: &WebTab) {
     }
     t.view.removeFromSuperview();
     let _ = &t.handler;
+}
+
+/// Put downloads in `~/Downloads/Relay`, sanitize the suggested name, and
+/// add a numeric suffix rather than overwrite an existing file.
+fn download_destination(suggested: &str) -> (String, String) {
+    let raw = suggested.rsplit(['/', '\\']).next().unwrap_or("download");
+    let mut name: String = raw.chars().map(|c| if c.is_control() || c == ':' { '_' } else { c }).collect();
+    name = name.trim_matches('.').to_string();
+    if name.is_empty() {
+        name = "download".into();
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let dir = std::path::PathBuf::from(home).join("Downloads").join("Relay");
+    let _ = std::fs::create_dir_all(&dir);
+    let mut path = dir.join(&name);
+    if path.exists() {
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+            _ => (name.clone(), String::new()),
+        };
+        for n in 1..10_000 {
+            let candidate = dir.join(format!("{stem} ({n}){ext}"));
+            if !candidate.exists() {
+                path = candidate;
+                break;
+            }
+        }
+    }
+    (path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name), path.to_string_lossy().into_owned())
 }
 
 fn jpeg_from_image(img: &NSImage) -> Option<Vec<u8>> {

@@ -71,6 +71,10 @@ telemetry pipeline, crash-upload endpoint, or analytics SDK.
   the GUI; a directory that already exists with a wider mode is tightened.
   The temporary copy of Chrome's History is created `0600` in one step and
   removed on both success and failure.
+- **Downloads:** Relay stores download URL, filename, destination, and state
+  in memory for the panel; the file itself is written only to
+  `~/Downloads/Relay` and is outside the profile. No download metadata is
+  exported or sent.
 - **Screenshots:** `screenshot` returns a JPEG of the visible tab to the local
   agent in memory; Relay does not write it to disk or include it in the audit.
 - **Agent JavaScript:** when enabled, `eval_js` returns the expression's JSON
