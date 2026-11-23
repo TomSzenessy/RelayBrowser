@@ -293,6 +293,7 @@ pub struct RelayApp {
     palette_new_tab: bool,
     settings_open: bool,
     blocking: bool,
+    agent_eval: bool,
     sleep_minutes: u64,
     mcp_enabled: bool,
     confirm_clear_history: bool,
@@ -374,6 +375,8 @@ impl RelayApp {
         let web = WebHost::new(hub.clone(), window);
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
+        let agent_eval = setting_enabled(store.as_ref().and_then(|s| s.setting("agent_eval").ok().flatten()).as_deref());
+        hub.set_agent_eval(agent_eval);
         let custom_bangs = store
             .as_ref()
             .and_then(|s| s.setting("bangs").ok().flatten())
@@ -436,6 +439,7 @@ impl RelayApp {
             palette_new_tab: false,
             settings_open: false,
             blocking,
+            agent_eval,
             sleep_minutes,
             mcp_enabled,
             confirm_clear_history: false,
@@ -2499,6 +2503,7 @@ impl RelayApp {
                     .child(format!("MCP: {}", if self.mcp_enabled { "on (restart to apply)" } else { "off" }))
                     .child(format!("Socket: {}", self.mcp_socket))
                     .child(format!("Status: {}", if paused { "paused" } else { "accepting tool calls" }))
+                    .child(format!("eval_js: {}", if self.agent_eval { "on (Allow sites only)" } else { "off" }))
                     .child(format!("This site: {host} · {}", policy.label())),
             )
             .child(
@@ -3272,6 +3277,16 @@ impl RelayApp {
                 cx.notify();
             }))
             .into_any_element();
+        let eval_btn = pill("settings-agent-eval", if self.agent_eval { "On" } else { "Off" }.into(), self.agent_eval)
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.agent_eval = !app.agent_eval;
+                app.hub.set_agent_eval(app.agent_eval);
+                if let Some(store) = &app.store {
+                    let _ = store.set_setting("agent_eval", if app.agent_eval { "on" } else { "off" });
+                }
+                cx.notify();
+            }))
+            .into_any_element();
         let strip_position = pill("settings-tabs-position", self.strip.placement.label().into(), false)
             .on_click(cx.listener(|app, _, _, cx| {
                 app.rotate_tab_strip(cx);
@@ -3380,6 +3395,7 @@ impl RelayApp {
                 .child(row("Tab sleep timeout", None, sleep_btn))
                 .child(row("Tab strip", Some("⌘S folds · ⇧⌘S moves"), strip_control))
                 .child(row("Local MCP server", Some("(restart to apply)"), mcp_btn))
+                .child(row("Agent JavaScript (eval_js)", Some("On only for Allow sites; agents can read page data"), eval_btn))
                 .child(
                     div()
                         .flex()

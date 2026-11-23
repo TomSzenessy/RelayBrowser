@@ -180,6 +180,9 @@ pub enum Op {
     PressKey { key: String, #[serde(default)] modifiers: Vec<String> },
     /// Read localStorage/sessionStorage with size and secret-name caps.
     Storage,
+    /// Evaluate one JavaScript expression in the page and return its JSON
+    /// value. Gated by the shell's `agent_eval` setting and the Allow policy.
+    Eval { script: String },
 }
 
 fn yes() -> bool {
@@ -189,7 +192,7 @@ fn yes() -> bool {
 impl Op {
     /// Ops that change the page; refused while a tab waits for a human.
     pub fn mutates(&self) -> bool {
-        matches!(self, Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. })
+        matches!(self, Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. } | Op::Eval { .. })
     }
 }
 

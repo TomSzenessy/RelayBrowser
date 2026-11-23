@@ -467,6 +467,8 @@ pub struct SharedHub {
     agents_paused: Arc<std::sync::atomic::AtomicBool>,
     /// Per-host Allow / ReadOnly / Block, loaded from the profile by the shell.
     agent_policies: Arc<Mutex<std::collections::HashMap<String, AgentPolicy>>>,
+    /// `eval_js` is off until the user enables it in Settings.
+    agent_eval: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for SharedHub {
@@ -483,6 +485,7 @@ impl SharedHub {
             changed: Arc::new(tx),
             agents_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             agent_policies: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            agent_eval: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -499,6 +502,14 @@ impl SharedHub {
 
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.changed.subscribe()
+    }
+
+    pub fn agent_eval(&self) -> bool {
+        self.agent_eval.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn set_agent_eval(&self, enabled: bool) {
+        self.agent_eval.store(enabled, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn set_agent_policy(&self, host: &str, policy: AgentPolicy) {
