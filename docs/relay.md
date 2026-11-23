@@ -183,6 +183,14 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## Navigation failures
+
+`webView:didStartProvisionalNavigation:` clears the tab's previous DOM, title,
+console, network, error, challenge, and hotkeys before the new document
+arrives. A failed after-load navigation therefore cannot leave stale page
+state under a load error; the shell's existing error pane and Retry button show
+because the DOM is empty.
+
 ## Downloads
 
 A navigation WebKit cannot display is accepted as a `WKDownload`; the delegate
