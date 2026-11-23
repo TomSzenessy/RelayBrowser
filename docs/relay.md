@@ -183,6 +183,15 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## MCP install board
+
+`relay mcp-config [claude-code|codex|opencode|cursor|zed]` prints the exact
+snippet and target path for each client; without a client it prints all five.
+Settings → Connect an agent has the same five rows with a Copy button. Relay
+only copies text and changes no client file, so a stale format cannot corrupt
+a config. `--install` is deliberately not offered until each format is
+verified against a live client.
+
 ## MCP tool: set_cookie
 
 `set_cookie {tab_id?, name, value}` writes one cookie on the tab's own origin

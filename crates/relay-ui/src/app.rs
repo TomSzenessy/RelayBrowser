@@ -6,6 +6,7 @@
 use crate::inspector::{self, ConsoleRow, ElementRow, NetworkRow, Panel, Tree};
 use crate::keymap::{self, ActionId, Keymap};
 use crate::library::{Library, Mode};
+use crate::mcp_config;
 use crate::palette::{self, Command, Item, Palette, Sources};
 use crate::startpage::{Section, StartItem, StartPage};
 use crate::tabstrip;
@@ -300,6 +301,7 @@ pub struct RelayApp {
     sources: Sources,
     inspector_open: bool,
     sidebar_tab: SidebarTab,
+    connect_open: bool,
     /// History/Bookmarks modal; `None` when closed.
     library: Option<Library>,
     panel: Panel,
@@ -446,6 +448,7 @@ impl RelayApp {
             sources: Sources::default(),
             inspector_open: false,
             sidebar_tab: SidebarTab::Inspector,
+            connect_open: false,
             library: None,
             panel: Panel::Elements,
             tree: Tree::default(),
@@ -1262,6 +1265,7 @@ impl RelayApp {
             Ok(lib) => {
                 self.palette = None;
                 self.settings_open = false;
+                self.connect_open = false;
                 self.find = None;
                 self.end_hints();
                 self.library = Some(lib);
@@ -1359,6 +1363,7 @@ impl RelayApp {
         let Some(tab) = self.active() else { return };
         self.palette = None;
         self.library = None;
+        self.connect_open = false;
         self.end_hints();
         let query = self.find.take().map(|f| f.query).unwrap_or_default();
         self.find = Some(FindBar { tab, query, found: None });
@@ -1425,6 +1430,7 @@ impl RelayApp {
 
     fn open_palette(&mut self, prefill: Option<String>, new_tab: bool) {
         self.library = None;
+        self.connect_open = false;
         self.settings_open = false;
         self.find = None;
         self.confirm_clear_history = false;
@@ -1458,6 +1464,7 @@ impl RelayApp {
         } else {
             self.palette = None;
             self.library = None;
+            self.connect_open = false;
             self.confirm_clear_history = false;
             self.settings_open = true;
             self.web.borrow().focus_shell();
@@ -1724,6 +1731,14 @@ impl RelayApp {
                 }
             } else if k.key == "escape" {
                 self.close_shortcuts();
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.connect_open {
+            if k.key == "escape" {
+                self.close_connect();
             }
             cx.stop_propagation();
             cx.notify();
@@ -3019,10 +3034,28 @@ impl RelayApp {
         )
     }
 
+    fn open_connect(&mut self, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.settings_open = false;
+        self.library = None;
+        self.shortcuts = None;
+        self.find = None;
+        self.end_hints();
+        self.connect_open = true;
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_connect(&mut self) {
+        self.connect_open = false;
+        self.focus_active_page();
+    }
+
     fn open_shortcuts(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.settings_open = false;
         self.library = None;
+        self.connect_open = false;
         self.find = None;
         self.end_hints();
         self.shortcuts = Some(ShortcutEditor { recording: None });
@@ -3102,6 +3135,81 @@ impl RelayApp {
         self.set_accent_choice(next);
         self.toast(format!("Accent: {}", next.label()));
         cx.notify();
+    }
+
+    fn render_connect(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mut rows = div().flex().flex_col();
+        for client in mcp_config::Client::ALL {
+            rows = rows.child(
+                div()
+                    .id(SharedString::from(format!("connect-{}", client.id())))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .min_h(px(46.))
+                    .px_4()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(div().text_size(px(13.)).text_color(t.text).child(client.name()))
+                            .child(div().text_size(px(10.)).text_color(t.muted).child(client.target())),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("connect-copy-{}", client.id())))
+                            .px_2()
+                            .py_1()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(t.border)
+                            .text_size(px(11.))
+                            .text_color(t.text)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                let command = mcp_config::relay_command();
+                                cx.write_to_clipboard(ClipboardItem::new_string(client.snippet(&command)));
+                                app.toast(format!("Copied the {} config", client.name()));
+                                cx.notify();
+                            }))
+                            .child("Copy config"),
+                    ),
+            );
+        }
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(80.)).bg(t.scrim).child(
+            div()
+                .id("connect")
+                .w(px(620.))
+                .flex()
+                .flex_col()
+                .rounded(px(10.))
+                .bg(t.surface)
+                .border_1()
+                .border_color(t.border)
+                .shadow_lg()
+                .overflow_hidden()
+                .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_connect()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(44.))
+                        .px_4()
+                        .border_b_1()
+                        .border_color(t.border)
+                        .child(div().text_size(px(15.)).text_color(t.text).child("Connect an agent"))
+                        .child(div().text_size(px(11.)).text_color(t.muted).child("Copy the text; Relay changes no files")),
+                )
+                .child(rows),
+        )
     }
 
     fn render_shortcuts(&self, editor: &ShortcutEditor, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3287,6 +3395,9 @@ impl RelayApp {
                 cx.notify();
             }))
             .into_any_element();
+        let connect_btn = pill("settings-connect", "Set up…".into(), false)
+            .on_click(cx.listener(|app, _, _, cx| app.open_connect(cx)))
+            .into_any_element();
         let strip_position = pill("settings-tabs-position", self.strip.placement.label().into(), false)
             .on_click(cx.listener(|app, _, _, cx| {
                 app.rotate_tab_strip(cx);
@@ -3396,6 +3507,7 @@ impl RelayApp {
                 .child(row("Tab strip", Some("⌘S folds · ⇧⌘S moves"), strip_control))
                 .child(row("Local MCP server", Some("(restart to apply)"), mcp_btn))
                 .child(row("Agent JavaScript (eval_js)", Some("On only for Allow sites; agents can read page data"), eval_btn))
+                .child(row("Connect an agent", Some("Claude Code, Codex, OpenCode, Cursor, Zed"), connect_btn))
                 .child(
                     div()
                         .flex()
@@ -3545,7 +3657,7 @@ impl Render for RelayApp {
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
-        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some() || self.shortcuts.is_some();
+        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some() || self.shortcuts.is_some() || self.connect_open;
         if overlay_open {
             // Keep native views from covering the palette or settings overlay.
             self.web.borrow().layout(&[]);
@@ -3738,6 +3850,9 @@ impl Render for RelayApp {
         }
         if let Some(editor) = &self.shortcuts {
             root = root.child(self.render_shortcuts(editor, cx));
+        }
+        if self.connect_open {
+            root = root.child(self.render_connect(cx));
         }
         root
     }

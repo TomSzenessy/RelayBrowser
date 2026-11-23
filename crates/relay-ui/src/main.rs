@@ -7,6 +7,7 @@ mod clean_url;
 mod inspector;
 mod keymap;
 mod library;
+mod mcp_config;
 mod palette;
 mod startpage;
 mod tabstrip;
@@ -32,6 +33,7 @@ USAGE:
   relay clear-data [--history] [--session] [--bookmarks] [--audit] --yes
                                     delete stored history/session/bookmarks and/or the agent audit log
   relay audit [--limit N]           show the lean log of agent tool calls
+  relay mcp-config [CLIENT]         print the MCP config for claude-code, codex, opencode, cursor, or zed
   relay import-chrome [--dry-run] [--profile DIR]
                                     import Chrome bookmarks + history into Relay's profile
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
@@ -59,6 +61,7 @@ fn main() -> anyhow::Result<()> {
         Some("export") => export_profile(args.get(1).map(String::as_str)),
         Some("clear-data") => clear_data(&args[1..]),
         Some("audit") => audit(&args[1..]),
+        Some("mcp-config") => mcp_config(&args[1..]),
         Some("import-chrome") => import_chrome(&args[1..]),
         Some("import-passwords") => import_passwords(args.get(1).map(String::as_str)),
         Some("install-extension") => install_extension(args.get(1).map(String::as_str)),
@@ -412,6 +415,41 @@ fn format_unix(seconds: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}Z", rem / 3600, (rem % 3600) / 60, rem % 60)
+}
+
+fn mcp_config(args: &[String]) -> anyhow::Result<()> {
+    const USAGE: &str = "usage: relay mcp-config [claude-code|codex|opencode|cursor|zed]";
+    let mut wanted = None;
+    for arg in args {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                return Ok(());
+            }
+            other if other.starts_with('-') => bail!("unknown option {other}\n{USAGE}"),
+            other => {
+                if wanted.is_some() {
+                    bail!("pass one client\n{USAGE}");
+                }
+                wanted = Some(mcp_config::Client::parse(other).with_context(|| format!("unknown client {other:?}\n{USAGE}"))?);
+            }
+        }
+    }
+    let command = mcp_config::relay_command();
+    match wanted {
+        Some(client) => {
+            println!("# {} — {}", client.name(), client.target());
+            print!("{}", client.snippet(&command));
+        }
+        None => {
+            for client in mcp_config::Client::ALL {
+                println!("# {} — {}", client.name(), client.target());
+                print!("{}", client.snippet(&command));
+                println!();
+            }
+        }
+    }
+    Ok(())
 }
 
 fn audit(args: &[String]) -> anyhow::Result<()> {
