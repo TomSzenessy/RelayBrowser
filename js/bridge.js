@@ -565,7 +565,8 @@
     page_info: function () {
       return { url: location.href, title: document.title, scroll_x: window.scrollX, scroll_y: window.scrollY };
     },
-    web_app: webApp
+    web_app: webApp,
+    favicon: favicon
   };
 
   var maxIconBytes = 2 * 1024 * 1024;
@@ -667,6 +668,57 @@
       .catch(function (e) {
         return { available: false, reason: "Could not read the web app manifest: " + String(e && e.message || e) };
       });
+  }
+
+  var maxFaviconBytes = 256 * 1024;
+  function blobToIcon(blob) {
+    return new Promise(function (resolve, reject) {
+      if (blob.size > maxFaviconBytes) return reject(new Error("icon is too large"));
+      var type = String(blob.type || "").toLowerCase();
+      if (!/^image\/(png|jpeg|webp|gif)$/.test(type)) return reject(new Error("icon format is not supported"));
+      var reader = new FileReader();
+      reader.onload = function () {
+        var url = String(reader.result || "");
+        if (url.indexOf("data:" + type + ";base64,") !== 0) return reject(new Error("icon could not be encoded"));
+        resolve({ data: url, mime: type });
+      };
+      reader.onerror = function () { reject(reader.error || new Error("could not read the icon")); };
+      reader.readAsDataURL(blob);
+    });
+  }
+  function faviconData(url) {
+    var data = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(url);
+    if (data) {
+      if (data[2].length > maxFaviconBytes * 4 / 3) return Promise.reject(new Error("icon is too large"));
+      return Promise.resolve({ data: url, mime: data[1].toLowerCase() });
+    }
+    var abs = absoluteUrl(url);
+    if (!abs) return Promise.reject(new Error("icon is not an http(s) URL"));
+    return fetchWithTimeout(abs, 3000)
+      .then(function (r) { return r.blob(); })
+      .then(blobToIcon);
+  }
+  function favicon() {
+    var seen = Object.create(null);
+    var urls = [];
+    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(function (link) {
+      if (!link.href || seen[link.href]) return;
+      seen[link.href] = true;
+      urls.push(link.href);
+    });
+    try {
+      var fallback = new URL("/favicon.ico", location.href).href;
+      if (!seen[fallback]) urls.push(fallback);
+    } catch (e) {}
+    urls = urls.slice(0, 5);
+    var chain = Promise.reject(new Error("no icon candidates"));
+    urls.forEach(function (url) {
+      chain = chain.catch(function () { return faviconData(url); });
+    });
+    return chain.then(
+      function (icon) { return { available: true, data: icon.data, mime: icon.mime }; },
+      function () { return { available: false }; }
+    );
   }
 
   function exec(cmd) {

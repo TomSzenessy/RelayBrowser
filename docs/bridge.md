@@ -40,7 +40,7 @@ ordinary text/search fields keep their values for debugging.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`, `markdown`, `web_app`. Element ids are
+`hide_hints`, `markdown`, `web_app`, `favicon`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
 `markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub; an MCP tool for it is Tier 2.
@@ -53,6 +53,13 @@ theme_color, background_color, manifest_url, icon}` or
 `{available: false, reason}`. Rust validates the origin, URL scheme, icon
 signature, and sizes again before writing an installed `.app`; the page is
 untrusted, so a manifest can never point the installer at another site. The
+`favicon` is async too: it tries the page's `<link rel=icon>` /
+`apple-touch-icon` URLs, then `/favicon.ico`, with `same-origin` credentials,
+a 3 s timeout, a 256 KB cap, and a PNG/JPEG/WebP/GIF whitelist. It replies
+`{available: true, data: "data:<mime>;base64,…", mime}` or
+`{available: false}`; SVG, ICO, and text are refused. The shell validates the
+prefix, mime, and decoded size before caching and painting it.
+
 `exec` reply is a placeholder (`value: null`) for an async op; wait for the
 `result` message.
 
@@ -105,7 +112,7 @@ so `sidePanel.open` currently rejects.
 
 `js/test/bridge.test.mjs` runs the real script in Playwright's WebKit build
 with routed fake pages. It covers the DOM ids, console, fetch/XHR, mutation
-patches, commands, async `web_app` manifest/icon reads and their failure
+patches, commands, async `web_app` manifest/icon and `favicon` reads and their failure
 reasons, 2FA detection, link hints and hotkey forwarding, and bridge
 immutability, and pipes every message through `relay-bridge`'s
 `examples/validate.rs`.

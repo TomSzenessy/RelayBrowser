@@ -403,6 +403,17 @@ discard the rest of the preview. `relay install-extension` prints the
 manifest's requested APIs, optional APIs, and host match patterns from one
 `PermissionReport`; installing grants all of them, and the CLI says so.
 
+## Favicons
+
+`Op::Favicon` asks the page for its largest `<link rel=icon>` (or
+`apple-touch-icon`), then `/favicon.ico`; the bridge fetches with
+`credentials: "same-origin"`, a 3 s timeout, a 256 KB cap, and a
+PNG/JPEG/WebP/GIF mime whitelist. SVG/ICO/text are refused. The shell decodes
+at most one icon per host, caches it in memory and 0600 files under
+`relay_home()/favicons/` (sanitized host names), and shows it in tab rows and
+start-page rows. Starts with no icon get the deterministic dot/empty fallback;
+a failed fetch is not retried for that host this session.
+
 ## Appearance
 
 Settings → Appearance offers System / Light / Dark and a Blue / Purple /

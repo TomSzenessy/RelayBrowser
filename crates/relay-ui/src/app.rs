@@ -15,11 +15,11 @@ use gpui::{
     actions, canvas, div, img, prelude::*, px, Bounds, ClipboardItem, Context, FocusHandle, Image, ImageFormat,
     KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, Pixels, SharedString, Window,
 };
-use relay_bridge::{is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
+use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
 use relay_extensions::store::{SessionTab, Store, WebAppRecord};
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -323,6 +323,10 @@ pub struct RelayApp {
     theme: Theme,
     theme_choice: ThemeChoice,
     accent_choice: AccentChoice,
+    /// Decoded tab icons by host; `None` means the fetch failed and retrying
+    /// the same host this session is pointless.
+    favicons: HashMap<String, Option<Arc<Image>>>,
+    favicon_pending: HashSet<String>,
     palette: Option<Palette>,
     /// ⌘T opens the palette for a new tab; ⌘K/⌘L target the current tab.
     palette_new_tab: bool,
@@ -461,6 +465,8 @@ impl RelayApp {
             theme: Theme::for_choice(window.appearance(), theme_choice, accent_choice),
             theme_choice,
             accent_choice,
+            favicons: cached_favicons(),
+            favicon_pending: HashSet::new(),
             palette: None,
             palette_new_tab: false,
             settings_open: false,
@@ -659,7 +665,7 @@ impl RelayApp {
         if version != self.seen_version {
             self.seen_version = version;
             changed = true;
-            self.after_hub_change();
+            self.after_hub_change(cx);
         }
         if self.last_sleep_check.elapsed() > Duration::from_secs(30) {
             self.last_sleep_check = Instant::now();
@@ -689,7 +695,7 @@ impl RelayApp {
         }
     }
 
-    fn after_hub_change(&mut self) {
+    fn after_hub_change(&mut self, cx: &mut Context<Self>) {
         let hotkeys = self.hub.take_hotkeys();
         let mut loads = vec![];
         let mut ready = vec![];
@@ -738,6 +744,45 @@ impl RelayApp {
         if visited {
             self.refresh_start_page();
         }
+        self.request_favicons(cx);
+    }
+
+    /// Fetch at most one icon per host from the page itself. Cross-origin
+    /// icons without CORS fail closed to the letter/dot fallback.
+    fn request_favicons(&mut self, cx: &mut Context<Self>) {
+        let mut fetch: Vec<(TabId, String)> = vec![];
+        {
+            let h = self.hub.lock();
+            for t in h.tabs() {
+                let Some(host) = host_of(&t.url) else { continue };
+                if !self.favicons.contains_key(&host) && !self.favicon_pending.contains(&host) {
+                    fetch.push((t.id, host));
+                }
+            }
+        }
+        for (tab, host) in fetch {
+            let Ok((script, rx)) = self.hub.begin_command(tab, Op::Favicon) else { continue };
+            self.favicon_pending.insert(host.clone());
+            self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
+            cx.spawn(async move |this, cx| {
+                let reply = futures_timeout(rx, Duration::from_secs(4), cx).await;
+                let _ = this.update(cx, |app, cx| {
+                    app.finish_favicon(host, reply);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+
+    fn finish_favicon(&mut self, host: String, reply: Option<serde_json::Value>) {
+        self.favicon_pending.remove(&host);
+        let payload = reply.as_ref().and_then(favicon_payload);
+        if let Some((bytes, ext)) = &payload {
+            cache_favicon_file(&host, bytes, ext);
+        }
+        let image = payload.as_ref().map(|(bytes, ext)| Arc::new(favicon_decode(bytes, ext)));
+        self.favicons.insert(host, image);
     }
 
     /// Rebuild the new-tab cache after a profile change. Cheap: a few
@@ -1977,8 +2022,16 @@ impl RelayApp {
             .on_mouse_down(MouseButton::Middle, cx.listener(move |app, _, _, cx| {
                 app.close_tab(id, cx);
                 cx.notify();
-            }))
-            .child(div().size(px(8.)).rounded_full().bg(if agent { t.agent } else if is_active { t.accent } else { t.border }));
+            }));
+        let icon = host_of(&tab.url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone());
+        row = row.child(match icon {
+            Some(icon) => img(icon).size(px(14.)).rounded(px(3.)).into_any_element(),
+            None => div()
+                .size(px(8.))
+                .rounded_full()
+                .bg(if agent { t.agent } else if is_active { t.accent } else { t.border })
+                .into_any_element(),
+        });
         let title_el = if vertical {
             div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
         } else {
@@ -2287,6 +2340,10 @@ impl RelayApp {
                         app.open_url(url.clone(), false);
                         cx.notify();
                     }))
+                    .child(match host_of(&item.url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone()) {
+                        Some(icon) => img(icon).size(px(14.)).rounded(px(3.)).into_any_element(),
+                        None => div().size(px(14.)).into_any_element(),
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -3531,6 +3588,89 @@ fn byte_size(n: usize) -> String {
 }
 
 /// What the saved session keeps (matches `Store::save_session`).
+/// Decode the bridge's untrusted `favicon` reply. Only PNG/JPEG/WebP/GIF
+/// under 256 KB is accepted; the data URL prefix and the mime must agree.
+fn favicon_payload(value: &serde_json::Value) -> Option<(Vec<u8>, &'static str)> {
+    if value.get("available")?.as_bool()? != true {
+        return None;
+    }
+    let data = value.get("data")?.as_str()?;
+    let mime = value.get("mime")?.as_str()?;
+    let ext = match mime {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => return None,
+    };
+    let prefix = format!("data:{mime};base64,");
+    let payload = data.strip_prefix(&prefix)?;
+    if payload.len() > 256 * 1024 * 4 / 3 {
+        return None;
+    }
+    let bytes = webapp::base64_decode(payload)?;
+    (bytes.len() <= 256 * 1024).then_some((bytes, ext))
+}
+
+fn favicon_decode(bytes: &[u8], ext: &str) -> Image {
+    let format = match ext {
+        "jpg" => ImageFormat::Jpeg,
+        "webp" => ImageFormat::Webp,
+        "gif" => ImageFormat::Gif,
+        _ => ImageFormat::Png,
+    };
+    Image::from_bytes(format, bytes.to_vec())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn favicon_image(value: &serde_json::Value) -> Option<Image> {
+    let (bytes, ext) = favicon_payload(value)?;
+    Some(favicon_decode(&bytes, ext))
+}
+
+fn favicon_file_name(host: &str) -> String {
+    host.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect::<String>().trim_matches('.').to_string()
+}
+
+/// Write the icon 0600 so the start page shows it on later launches.
+fn cache_favicon_file(host: &str, bytes: &[u8], ext: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let name = favicon_file_name(host);
+    if name.is_empty() {
+        return;
+    }
+    let dir = relay_bridge::paths::relay_home().join("favicons");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    let path = dir.join(format!("{name}.{ext}"));
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(path) {
+        let _ = file.write_all(bytes);
+    }
+}
+
+fn cached_favicons() -> HashMap<String, Option<Arc<Image>>> {
+    let dir = relay_bridge::paths::relay_home().join("favicons");
+    let mut out = HashMap::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    for entry in entries.flatten().take(512) {
+        let path = entry.path();
+        let (Some(ext), Some(stem)) = (path.extension().and_then(|e| e.to_str()), path.file_stem().and_then(|s| s.to_str())) else { continue };
+        let ext = ext.to_ascii_lowercase();
+        if !matches!(ext.as_str(), "png" | "jpg" | "webp" | "gif") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        if bytes.len() > 256 * 1024 {
+            continue;
+        }
+        out.insert(stem.to_string(), Some(Arc::new(favicon_decode(&bytes, &ext))));
+    }
+    out
+}
+
 pub fn mcp_setup_command() -> String {
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "relay".into());
     format!("claude mcp add relay -- {exe} mcp")
@@ -3680,6 +3820,20 @@ mod tests {
         assert_eq!(byte_size(820), "820 B");
         assert_eq!(byte_size(1024), "1 KB");
         assert_eq!(byte_size(14_000), "14 KB");
+    }
+
+    #[test]
+    fn favicon_reply_is_validated_before_decoding() {
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU2l4wAAAABJRU5ErkJggg==";
+        assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": format!("data:image/png;base64,{png}")})).is_some());
+        assert!(favicon_image(&serde_json::json!({"available": false, "mime": "image/png", "data": format!("data:image/png;base64,{png}")})).is_none());
+        assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/svg+xml", "data": "data:image/svg+xml;base64,PHN2Zz4="})).is_none());
+        assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": "data:image/jpeg;base64,AAAA"})).is_none());
+        assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": "not-a-data-url"})).is_none());
+        let huge = format!("data:image/png;base64,{}", "A".repeat(400 * 1024));
+        assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": huge})).is_none());
+        assert!(!favicon_file_name("evil/../x").contains('/'));
+        assert!(favicon_file_name("../../etc").chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_'));
     }
 
     #[test]
