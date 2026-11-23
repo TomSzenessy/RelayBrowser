@@ -160,7 +160,7 @@ on this repository); never use a public issue for an unpatched report.
   agent is attached.
 - **Shell writes:** theme/accent/start-section and an allowlist of settings
   are off by default, require an explicit plan id (single-use, 60 s), reject
-  `mcp`/`shell_control`/`keybindings`/`agent_eval`, and push bounded hub
+  `mcp`/`shell_control`/`agent_eval`, re-validate shortcut conflicts, and push bounded hub
   changes; `shell_apply` is audited. No arbitrary code or shortcut writes.
 - **Shell read tools:** `shell_*` tools return a bounded allowlist of settings,
   shortcut overrides, section order, installed apps, and version. They cannot
