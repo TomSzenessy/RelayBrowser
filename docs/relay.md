@@ -431,7 +431,9 @@ Six layers, cheapest first:
    CLI subcommands (`doctor`, `config`, `export`, `clear-data`). The stdio
    transport itself is covered by `crates/relay-ui/tests/mcp_proxy.rs`, which
    spawns the real `relay mcp` binary, connects it to a socket-backed hub, and
-   performs the initialize / tools list / list_tabs handshake.
+   performs the initialize / tools list / list_tabs handshake. Test code uses
+   `Store::in_memory`, gated behind the `test-support` feature enabled only by
+   dev-dependencies; it is not in the production API.
 2. **The injected bridge runs in Playwright's WebKit 26.0** in Linux CI
    (`js/`, 12 tests): DOM snapshots and patches, fetch/XHR status and bodies,
    console and uncaught errors, click/type/highlight, hints, 2FA detection, and

@@ -17,6 +17,7 @@ ureq = { version = "3.5", default-features = false, features = ["native-tls", "g
 
 [features]
 default = ["bundled-sqlite"]
+test-support = []
 bundled-sqlite = ["rusqlite/bundled"]
 
 [dev-dependencies]

@@ -34,17 +34,13 @@ pub struct ElementRow {
     pub expanded: bool,
 }
 
-/// Which element nodes are expanded. Nodes start expanded down to `auto_depth`.
-#[derive(Debug, Clone)]
+/// Which element nodes are expanded. Nodes start expanded down to
+/// [`AUTO_DEPTH`]; the user toggles from there.
+const AUTO_DEPTH: usize = 3;
+
+#[derive(Debug, Clone, Default)]
 pub struct Tree {
     pub toggled: HashSet<NodeId>,
-    pub auto_depth: usize,
-}
-
-impl Default for Tree {
-    fn default() -> Self {
-        Self { toggled: HashSet::new(), auto_depth: 3 }
-    }
 }
 
 impl Tree {
@@ -55,7 +51,7 @@ impl Tree {
     }
 
     fn expanded(&self, id: NodeId, depth: usize) -> bool {
-        (depth < self.auto_depth) != self.toggled.contains(&id)
+        (depth < AUTO_DEPTH) != self.toggled.contains(&id)
     }
 
     pub fn rows(&self, tab: &TabState, limit: usize) -> Vec<ElementRow> {

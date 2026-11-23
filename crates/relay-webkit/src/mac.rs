@@ -230,10 +230,6 @@ impl Engine {
         }
     }
 
-    pub fn view(&self, tab: TabId) -> Option<&Retained<WKWebView>> {
-        self.tabs.get(&tab).map(|t| &t.view)
-    }
-
     pub fn is_awake(&self, tab: TabId) -> bool {
         self.tabs.contains_key(&tab)
     }
