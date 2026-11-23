@@ -134,8 +134,10 @@ known slow German legal site with a documented manual-review exception; a 403,
   agents. A second instance refuses to take over a live socket.
 - **Pages are untrusted:** bridge output is data written by the website. The
   MCP instructions tell agents so, subframe messages are dropped, and replies
-  resolve only for their own tab. Agents may open only `http(s)`/`about:blank`,
-  and close only their own tabs.
+  resolve only for their own tab. Pages and agents share
+  `relay_bridge::is_openable_url`: `http(s)` or exactly `about:blank`; the
+  prefix form `about:blankx`, `file:`, `javascript:`, `data:`, and
+  `view-source:` are refused. Agents close only their own tabs.
 - **Extensions:** `relay install-extension` prints the requested API
   permissions, optional permissions, and host match patterns from the manifest,
   then states plainly that installing grants every requested permission and

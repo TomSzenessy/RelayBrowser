@@ -64,7 +64,7 @@ fn main() -> anyhow::Result<()> {
         Some("--app") => launch_app(&args[1..]),
         Some(other) if other.starts_with("--app=") => {
             let url = &other["--app=".len()..];
-            if !is_web_url(url) {
+            if !webapp::is_http_url(url) {
                 bail!("--app needs an http(s) URL, got {url:?}");
             }
             run_browser(Some(url.to_string()), true, None, None);
@@ -84,7 +84,7 @@ fn main() -> anyhow::Result<()> {
 /// shares the browser's cookies, WebKit store, and updates.
 fn launch_app(args: &[String]) -> anyhow::Result<()> {
     let url = args.first().context("--app needs a URL")?;
-    if !is_web_url(url) {
+    if !webapp::is_http_url(url) {
         bail!("--app needs an http(s) URL, got {url:?}");
     }
     let mut name = None;
@@ -102,10 +102,6 @@ fn launch_app(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// The only URLs an installed app window may start on.
-fn is_web_url(url: &str) -> bool {
-    webapp::is_http_url(url)
-}
-
 fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
     Ok(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?)
 }

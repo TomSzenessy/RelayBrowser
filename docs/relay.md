@@ -195,7 +195,10 @@ back rather than hiding it.
   If a tab is already asleep, the next MCP call wakes it and waits for the
   reload.
 - Agent tabs are kept out of the user's history.
-- Pages can only open `http(s)` URLs in new tabs.
+- Pages can only open `http(s)` URLs or exactly `about:blank` in new tabs.
+  Pages and agents share `relay_bridge::is_openable_url`, the single policy
+  predicate; `about:blankx`, `file:`, `javascript:`, `data:`, and
+  `view-source:` are refused by both.
 - Agents may open only `http(s)`/`about:blank` URLs and may close only their own
   tabs.
 - The MCP tools are `list_tabs`, `open_tab`, `navigate`, `go_back`,

@@ -15,7 +15,7 @@ use gpui::{
     actions, canvas, div, img, prelude::*, px, Bounds, ClipboardItem, Context, FocusHandle, Image, ImageFormat,
     KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, Pixels, SharedString, Window,
 };
-use relay_bridge::{BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
+use relay_bridge::{is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
 use relay_extensions::store::{SessionTab, Store, WebAppRecord};
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
@@ -591,7 +591,7 @@ impl RelayApp {
             changed = true;
             match e {
                 WebEvent::OpenInNewTab { opener, url } => {
-                    if !is_web_url(&url) {
+                    if !is_openable_url(&url) {
                         continue; // window.open("file:///…") and friends stay closed
                     }
                     // A web app window has no tab strip; a popup navigates the
@@ -3368,16 +3368,6 @@ fn byte_size(n: usize) -> String {
 }
 
 /// What the saved session keeps (matches `Store::save_session`).
-fn is_http_url(url: &str) -> bool {
-    let l = url.to_ascii_lowercase();
-    l.starts_with("https://") || l.starts_with("http://")
-}
-
-fn is_web_url(url: &str) -> bool {
-    let l = url.to_ascii_lowercase();
-    l.starts_with("https://") || l.starts_with("http://") || l == "about:blank"
-}
-
 pub fn mcp_setup_command() -> String {
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "relay".into());
     format!("claude mcp add relay -- {exe} mcp")

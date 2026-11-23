@@ -279,11 +279,10 @@ impl RelayMcp {
 }
 
 fn check_url(url: &str) -> Result<(), HubError> {
-    let lower = url.to_ascii_lowercase();
-    if ["http://", "https://", "about:blank"].iter().any(|p| lower.starts_with(p)) {
+    if relay_bridge::is_openable_url(url) {
         Ok(())
     } else {
-        Err(HubError::Browser(format!("refusing {url:?}: only http(s) URLs may be opened by agents")))
+        Err(HubError::Browser(format!("refusing {url:?}: only http(s) URLs or exactly about:blank may be opened by agents")))
     }
 }
 
@@ -586,4 +585,19 @@ pub async fn stdio_proxy(path: &Path) -> anyhow::Result<()> {
     let down = async { tokio::io::copy(&mut r, &mut tokio::io::stdout()).await };
     tokio::select! { r = up => { r?; } r = down => { r?; } }
     Ok(())
+}
+
+#[cfg(test)]
+mod url_policy_tests {
+    use super::check_url;
+
+    #[test]
+    fn agents_use_the_shared_policy() {
+        for ok in ["http://example.com", "https://example.com", "about:blank"] {
+            assert!(check_url(ok).is_ok(), "{ok}");
+        }
+        for bad in ["about:blankx", "about:blank/", "file:///etc/hosts", "javascript:alert(1)", ""] {
+            assert!(check_url(bad).is_err(), "{bad}");
+        }
+    }
 }
