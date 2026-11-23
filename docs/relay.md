@@ -510,6 +510,11 @@ APIs, partial support (for example `downloads`/`nativeMessaging`), missing
 APIs, host match patterns, and MV2/background warnings. `installable()` was
 removed; install still proceeds after printing the full list.
 
+`read_history` copies Chrome's `History` and its `-wal`/`-shm` sidecars
+together into a 0600 temp database, reads the same snapshot (including rows
+not yet checkpointed), and removes every copy. A writer can still be racing
+the copy, but committed WAL rows are no longer silently missed.
+
 `read_extensions` orders version directories numerically (`1.10` after `1.9`)
 and falls back to the next readable manifest, so one corrupt extension cannot
 discard the rest of the preview. `relay install-extension` prints the

@@ -114,6 +114,23 @@ pub fn read_history(profile: &Path, limit: usize) -> Result<Vec<HistoryEntry>, E
     // The copy holds the user's browsing history: create it 0600 in one step.
     // If anything fails, the copy is removed before the error leaves here.
     copy_private(&src, &tmp)?;
+    // Chrome may leave committed rows only in the WAL. Copy the sidecars
+    // beside the temp database so SQLite sees the same snapshot.
+    let tmp_wal = std::path::PathBuf::from(format!("{}-wal", tmp.display()));
+    let tmp_shm = std::path::PathBuf::from(format!("{}-shm", tmp.display()));
+    let mut copied_sidecars = vec![];
+    for (suffix, dst) in [("-wal", &tmp_wal), ("-shm", &tmp_shm)] {
+        let sidecar = std::path::PathBuf::from(format!("{}{suffix}", src.display()));
+        if sidecar.is_file() {
+            if let Err(e) = copy_private(&sidecar, dst) {
+                let _ = std::fs::remove_file(&tmp);
+                let _ = std::fs::remove_file(&tmp_wal);
+                let _ = std::fs::remove_file(&tmp_shm);
+                return Err(e);
+            }
+            copied_sidecars.push(dst.clone());
+        }
+    }
     let result = (|| {
         let conn = rusqlite::Connection::open_with_flags(&tmp, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mut stmt = conn.prepare(
@@ -130,6 +147,9 @@ pub fn read_history(profile: &Path, limit: usize) -> Result<Vec<HistoryEntry>, E
         rows.collect::<Result<Vec<_>, _>>().map_err(Error::from)
     })();
     let _ = std::fs::remove_file(&tmp);
+    for path in copied_sidecars {
+        let _ = std::fs::remove_file(path);
+    }
     result
 }
 
@@ -311,6 +331,24 @@ mod tests {
         // 13390000000000000 µs since 1601 = 2025-04-24.
         assert_eq!(h[0].last_visit, 1_745_526_400);
         assert!(d.path().join("History").exists(), "Chrome's file is untouched");
+    }
+
+    #[test]
+    fn history_reads_uncheckpointed_wal_rows() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("History");
+        let conn = rusqlite::Connection::open(&p).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             CREATE TABLE urls(id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER, typed_count INTEGER, last_visit_time INTEGER, hidden INTEGER);
+             INSERT INTO urls VALUES(1,'https://wal.test/','From WAL',1,0,13390000000000000,0);",
+        )
+        .unwrap();
+        // Keep the writer open so the row stays in the WAL, not the main file.
+        let h = read_history(d.path(), 10).unwrap();
+        assert_eq!(h.len(), 1, "{h:?}");
+        assert_eq!(h[0].url, "https://wal.test/");
+        drop(conn);
     }
 
     #[test]
