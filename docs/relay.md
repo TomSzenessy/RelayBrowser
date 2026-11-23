@@ -183,6 +183,15 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## MCP tool: eval_js
+
+`eval_js {tab_id?, script}` evaluates one JavaScript expression in the page and
+returns its JSON value. It is off by default: Settings → Agent JavaScript
+(`agent_eval`) must be on and the site policy must be Allow; Stop/Block/Read-
+only and the disabled state all fail before evaluation. Results are capped at
+100 KB, the script at 50 KB, and the audit row contains only tool/host/tab/
+outcome/time.
+
 ## MCP tools: batch actions
 
 `batch_actions {tab_id?, actions:[…]}` runs sequential `click`, `type`,

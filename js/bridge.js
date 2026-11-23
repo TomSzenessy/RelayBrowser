@@ -586,7 +586,26 @@
       target.dispatchEvent(new KeyboardEvent("keyup", opts));
       return { key: key, tag: target.tagName ? target.tagName.toLowerCase() : "", prevented: down.defaultPrevented };
     },
-    storage: storageSummary
+    storage: storageSummary,
+    eval_js: function (c) {
+      var script = typeof c.script === "string" ? c.script.trim() : "";
+      if (!script) throw new Error("script is empty");
+      if (script.length > 50000) throw new Error("script is too long");
+      var value = (new Function('"use strict"; return (' + script + ');'))();
+      var seen = [];
+      var text = JSON.stringify(value, function (k, v) {
+        if (typeof v === "function") return "[function]";
+        if (typeof v === "bigint") return String(v);
+        if (v && typeof v === "object") {
+          if (seen.indexOf(v) !== -1) return "[cycle]";
+          seen.push(v);
+        }
+        return v;
+      });
+      if (typeof text !== "string") text = "null";
+      if (text.length > 100000) throw new Error("result is too large");
+      return { result: JSON.parse(text) };
+    }
   };
 
   var maxIconBytes = 2 * 1024 * 1024;

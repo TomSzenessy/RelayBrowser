@@ -461,3 +461,18 @@ test("press_key dispatches a key and storage redacts secret names", async () => 
   assert.equal(storage.value.local.redacted, 1);
   await p.close();
 });
+
+test("eval_js returns a JSON expression and refuses empty/oversized input", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: "<body><h1>Eval</h1></body>" }));
+  await p.goto(`${ORIGIN}/eval/`);
+  const ok = await p.evaluate(() => window.__relay.exec({ id: 150, op: "eval_js", script: "({sum: 1 + 2, title: document.title})" }));
+  assert.equal(ok.ok, true, ok.error);
+  assert.deepEqual(ok.value.result, { sum: 3, title: "" });
+  const empty = await p.evaluate(() => window.__relay.exec({ id: 151, op: "eval_js", script: "  " }));
+  assert.equal(empty.ok, false);
+  const big = await p.evaluate(() => window.__relay.exec({ id: 152, op: "eval_js", script: "x".repeat(50001) }));
+  assert.equal(big.ok, false);
+  await p.close();
+});

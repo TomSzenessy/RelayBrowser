@@ -72,6 +72,14 @@ pub struct StorageArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalArgs {
+    /// Tab id; defaults to the active tab.
+    pub tab_id: Option<TabId>,
+    /// One JavaScript expression, evaluated in the page (max 50 KB).
+    pub script: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct BatchArgs {
     /// Tab id; defaults to the active tab. Every action runs in this tab.
     pub tab_id: Option<TabId>,
@@ -407,6 +415,7 @@ fn op_tool(op: &Op) -> &'static str {
         Op::Favicon => "favicon",
         Op::PressKey { .. } => "press_key",
         Op::Storage => "get_storage",
+        Op::Eval { .. } => "eval_js",
         _ => "op",
     }
 }
@@ -540,6 +549,25 @@ impl RelayMcp {
         }.await);
         self.audit("wait_for", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
         result
+    }
+
+    #[tool(description = "Evaluate one JavaScript expression in a tab and return its JSON value. Disabled unless the user enables agent JavaScript in Settings and the site policy is Allow.")]
+    async fn eval_js(&self, Parameters(a): Parameters<EvalArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        reply(async {
+            if !self.hub.agent_eval() {
+                return Err(HubError::Browser("eval_js is disabled; enable agent JavaScript in Settings".into()));
+            }
+            let tab = self.tab(a.tab_id)?;
+            let (host, policy) = self.tab_policy(tab)?;
+            if policy != relay_bridge::AgentPolicy::Allow {
+                return Err(if policy == relay_bridge::AgentPolicy::Block { HubError::Blocked(host) } else { HubError::ReadOnly(host) });
+            }
+            if a.script.trim().is_empty() || a.script.len() > 50_000 {
+                return Err(HubError::Browser("script is empty or longer than 50 KB".into()));
+            }
+            Ok(json(&self.op(tab, Op::Eval { script: a.script }).await?))
+        }.await)
     }
 
     #[tool(description = "Run sequential click/type/press_key/scroll/wait actions in one tab; stops at the first failure and reports how many ran.")]
