@@ -92,6 +92,7 @@ none under Reduce Motion.
 | Settings → Agent shell changes | off by default; with it on, an agent can plan/apply theme, accent, start sections, and allowlisted settings; the shell applies them live |
 | ⌘K | palette; ←/→/Home/End move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, click places the caret |
 | ⌘L | palette prefilled with the current URL |
+| ⇧⌘J | Downloads panel: Cancel running, Retry failed, Reveal, Clear finished |
 | ⌘T / ⌘W / ⌘⇧T | new tab / close tab / reopen closed tab |
 | ⌘1–⌘8, ⌘9 (last tab), ⌃Tab / ⌃⇧Tab | switch tab |
 | ⌘Q | quit |

@@ -170,7 +170,8 @@ on this repository); never use a public issue for an unpatched report.
   page content. The write is best-effort; `relay clear-data --audit`.
 - **Downloads:** WebKit downloads are saved to `~/Downloads/Relay` with a
   sanitized basename and collision suffix; the panel's Cancel calls the native
-  `WKDownload.cancel` for a running row; `../`, separators, control bytes,
+  `WKDownload.cancel` for a running row, and Retry only re-navigates the owning
+  tab to the recorded URL; `../`, separators, control bytes,
   and absolute paths cannot escape the folder. Relay never executes the file.
 - **Reading mode:** the overlay is a sanitized clone (no scripts, inline
   handlers, forms, or copied Relay ids); it is not addressable by agent

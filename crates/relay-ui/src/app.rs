@@ -3361,6 +3361,27 @@ impl RelayApp {
                     )
                     .child(
                         div()
+                            .when(matches!(d.state, relay_bridge::DownloadState::Failed(_)), |el| {
+                                el.child(
+                                    div()
+                                        .id(SharedString::from(format!("download-retry-{}", d.id)))
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(4.))
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .text_size(px(10.))
+                                        .text_color(t.text)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover))
+                                        .on_click(cx.listener(move |app, _, _, cx| {
+                                            app.web.borrow_mut().apply(BrowserRequest::Navigate { tab: d.tab, url: d.url.clone() });
+                                            app.toast("Retrying download");
+                                            cx.notify();
+                                        }))
+                                        .child("Retry"),
+                                )
+                            })
                             .when(d.state == relay_bridge::DownloadState::Downloading, |el| {
                                 el.child(
                                     div()
