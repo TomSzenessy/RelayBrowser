@@ -60,7 +60,7 @@ fn relay_mcp_stdio_proxy_reaches_a_running_browser() {
     let server_socket = socket.clone();
     let server_hub = hub.clone();
     runtime.spawn(async move {
-        let _ = relay_mcp::serve_socket(&server_socket, server_hub, Arc::new(NullBrowser)).await;
+        let _ = relay_mcp::serve_socket(&server_socket, server_hub, Arc::new(NullBrowser), None).await;
     });
     let deadline = Instant::now() + Duration::from_secs(5);
     while !socket.exists() {
