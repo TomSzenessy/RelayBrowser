@@ -5,7 +5,7 @@
 
 The current feature matrix is [`features.csv`](./features.csv); the
 shell-write row covers plan/apply for theme and allowlisted settings; the
-Downloads row covers cancel/retry. These sources
+Downloads row covers cancel/retry and native byte progress. These sources
 come from the owner's brief (2026-11-22) plus the primary docs
 for the APIs Relay uses. The owner named the three GitHub projects and asked
 for Search's daily-driver feel in particular. What Relay borrowed from Search

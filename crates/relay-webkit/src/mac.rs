@@ -12,7 +12,8 @@ use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
 use objc2_foundation::{
-    NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest, NSURLResponse,
+    NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize, NSString, NSURL, NSURLRequest,
+    NSURLResponse,
 };
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction,
@@ -93,6 +94,15 @@ impl DownloadHandler {
         if let Some(download) = self.ivars().download.borrow().as_ref() {
             unsafe { download.cancel(None) };
         }
+    }
+
+    fn progress(&self) -> Option<(u64, u64)> {
+        let download = self.ivars().download.borrow();
+        let download = download.as_ref()?;
+        let progress = download.progress();
+        let total = progress.totalUnitCount().max(0) as u64;
+        let received = progress.completedUnitCount().max(0) as u64;
+        (total > 0).then_some((received.min(total), total))
     }
 }
 
@@ -213,6 +223,15 @@ impl BridgeHandler {
         if let Some(handler) = self.ivars().downloads.borrow().get(&id) {
             handler.cancel();
         }
+    }
+
+    fn download_progress(&self) -> Vec<(u64, u64, u64)> {
+        self.ivars()
+            .downloads
+            .borrow()
+            .iter()
+            .filter_map(|(id, handler)| handler.progress().map(|(received, total)| (*id, received, total)))
+            .collect()
     }
 
     /// A failed main-frame load: WebKit renders its own blank error page, so
@@ -618,6 +637,29 @@ impl Engine {
         });
         let view = tab_holder.borrow().as_ref().unwrap().view.clone();
         unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
+    }
+
+    /// Push WKDownload progress into the hub. Called by the shell pump at a
+    /// low frequency; each retained download reports an NSProgress.
+    pub fn poll_download_progress(&self) {
+        let active: HashSet<u64> = self
+            .hub
+            .lock()
+            .downloads()
+            .into_iter()
+            .filter(|d| d.state == relay_bridge::DownloadState::Downloading)
+            .map(|d| d.id)
+            .collect();
+        if active.is_empty() {
+            return;
+        }
+        for t in self.tabs.values() {
+            for (id, received, total) in t.handler.download_progress() {
+                if active.contains(&id) {
+                    self.hub.update(|h| h.set_download_progress(id, received, total));
+                }
+            }
+        }
     }
 
     /// Cancel one of the tab's downloads; the bridge handler owns the native
