@@ -200,6 +200,13 @@ only copies text and changes no client file, so a stale format cannot corrupt
 a config. `--install` is deliberately not offered until each format is
 verified against a live client.
 
+## MCP tool: screenshot
+
+`screenshot {tab_id?}` captures the visible tab through WKWebView's snapshot API
+as a JPEG (5 s timeout) and returns it as MCP image content. It is read-only,
+obeys Block/Stop, and writes one audit row; the image itself is not stored or
+audited.
+
 ## MCP tool: set_cookie
 
 `set_cookie {tab_id?, name, value}` writes one cookie on the tab's own origin

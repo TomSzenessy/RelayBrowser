@@ -801,6 +801,12 @@ pub trait Browser: Send + Sync + 'static {
     fn refresh_cookies(&self, tab: TabId);
     /// Open WebKit's own Web Inspector (the 5% fallback).
     fn open_web_inspector(&self, tab: TabId);
+    /// Capture the visible tab as JPEG bytes. The default reports that the
+    /// backend has no screenshot support.
+    fn screenshot(&self, tab: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let _ = tab;
+        done(Err("screenshots need macOS WebKit".into()));
+    }
 }
 
 /// Run one agent op end to end: register, evaluate, await the reply.

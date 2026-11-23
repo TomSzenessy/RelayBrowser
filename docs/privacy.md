@@ -71,6 +71,8 @@ telemetry pipeline, crash-upload endpoint, or analytics SDK.
   the GUI; a directory that already exists with a wider mode is tightened.
   The temporary copy of Chrome's History is created `0600` in one step and
   removed on both success and failure.
+- **Screenshots:** `screenshot` returns a JPEG of the visible tab to the local
+  agent in memory; Relay does not write it to disk or include it in the audit.
 - **Agent JavaScript:** when enabled, `eval_js` returns the expression's JSON
   value to the local agent; results are capped at 100 KB. The feature is off
   by default and only runs on Allow sites.

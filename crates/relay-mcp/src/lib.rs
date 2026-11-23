@@ -72,6 +72,12 @@ pub struct StorageArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScreenshotArgs {
+    /// Tab id; defaults to the active tab.
+    pub tab_id: Option<TabId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetCookieArgs {
     /// Tab id; defaults to the active tab.
     pub tab_id: Option<TabId>,
@@ -562,6 +568,33 @@ impl RelayMcp {
         result
     }
 
+    #[tool(description = "Capture the visible tab as a JPEG image (5 s timeout).")]
+    async fn screenshot(&self, Parameters(a): Parameters<ScreenshotArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let tab = match self.tab(a.tab_id) {
+            Ok(tab) => tab,
+            Err(e) => return Err(ErrorData::internal_error(e.to_string(), None)),
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.browser.screenshot(tab, Box::new(move |r| {
+            let _ = tx.send(r);
+        }));
+        let result = match tokio::time::timeout(Duration::from_secs(5), rx).await {
+            Ok(Ok(Ok(bytes))) => Ok(bytes),
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(_)) => Err("browser dropped the screenshot request".to_string()),
+            Err(_) => Err("screenshot timed out".to_string()),
+        };
+        self.audit("screenshot", &self.host_for(tab), Some(tab), if result.is_ok() { "ok" } else { "error" });
+        match result {
+            Ok(bytes) if !bytes.is_empty() => {
+                Ok(CallToolResult::success(vec![ContentBlock::image(base64_encode(&bytes), "image/jpeg")]))
+            }
+            Ok(_) => Err(ErrorData::internal_error("the screenshot was empty", None)),
+            Err(e) => Err(ErrorData::internal_error(e, None)),
+        }
+    }
+
     #[tool(description = "Set one cookie on the tab's own origin (path /, SameSite=Lax, Secure on https). Cannot set HttpOnly or another domain.")]
     async fn set_cookie(&self, Parameters(a): Parameters<SetCookieArgs>) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
@@ -928,6 +961,21 @@ pub async fn stdio_proxy(path: &Path) -> anyhow::Result<()> {
     let down = async { tokio::io::copy(&mut r, &mut tokio::io::stdout()).await };
     tokio::select! { r = up => { r?; } r = down => { r?; } }
     Ok(())
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = chunk.get(1).copied().unwrap_or(0);
+        let c = chunk.get(2).copied().unwrap_or(0);
+        out.push(TABLE[(a >> 2) as usize] as char);
+        out.push(TABLE[(((a & 3) << 4) | (b >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 { TABLE[(((b & 15) << 2) | (c >> 6)) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[(c & 63) as usize] as char } else { '=' });
+    }
+    out
 }
 
 #[cfg(test)]
