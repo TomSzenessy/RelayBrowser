@@ -546,6 +546,7 @@ pub struct Hub {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Download {
     pub id: u64,
+    pub tab: TabId,
     pub url: String,
     pub filename: String,
     pub path: Option<String>,
@@ -812,14 +813,24 @@ impl Hub {
         }
     }
 
-    pub fn begin_download(&mut self, url: &str, filename: &str) -> u64 {
+    pub fn begin_download(&mut self, tab: TabId, url: &str, filename: &str) -> u64 {
         let id = self.next_download;
         self.next_download += 1;
         self.downloads.insert(
             id,
-            Download { id, url: url.to_string(), filename: filename.to_string(), path: None, state: DownloadState::Downloading },
+            Download { id, tab, url: url.to_string(), filename: filename.to_string(), path: None, state: DownloadState::Downloading },
         );
         id
+    }
+
+    /// Record a user cancellation; the native delegate also cancels the
+    /// WKDownload, but the row updates immediately even if the callback lags.
+    pub fn cancel_download(&mut self, id: u64) {
+        if let Some(d) = self.downloads.get_mut(&id) {
+            if d.state == DownloadState::Downloading {
+                d.state = DownloadState::Failed("cancelled by the user".into());
+            }
+        }
     }
 
     pub fn set_download_destination(&mut self, id: u64, filename: &str, path: &str) {
@@ -1045,6 +1056,10 @@ pub trait Browser: Send + Sync + 'static {
         let _ = tab;
         done(Err("screenshots need macOS WebKit".into()));
     }
+    /// Cancel a native download; default does nothing.
+    fn cancel_download(&self, tab: TabId, id: u64) {
+        let _ = (tab, id);
+    }
 }
 
 /// Run one agent op end to end: register, evaluate, await the reply.
@@ -1159,6 +1174,19 @@ mod tests {
     }
 
     #[test]
+    fn cancelling_a_download_marks_only_the_active_row() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://x.test/", Owner::User));
+        let (a, b) = hub.update(|h| (h.begin_download(tab, "https://x.test/a", "a"), h.begin_download(tab, "https://x.test/b", "b")));
+        hub.update(|h| h.finish_download(b));
+        hub.update(|h| h.cancel_download(a));
+        hub.update(|h| h.cancel_download(b));
+        let h = hub.lock();
+        assert!(matches!(h.downloads().into_iter().find(|d| d.id == a).unwrap().state, DownloadState::Failed(ref e) if e.contains("cancelled")));
+        assert_eq!(h.downloads().into_iter().find(|d| d.id == b).unwrap().state, DownloadState::Done, "finished rows are not cancelled");
+    }
+
+    #[test]
     fn shell_changes_are_drained_once() {
         let hub = SharedHub::new();
         hub.push_shell_change(ShellChange::Theme { theme: "dark".into(), accent: "purple".into() });
@@ -1169,8 +1197,8 @@ mod tests {
     #[test]
     fn downloads_track_destination_and_clear_only_finished() {
         let hub = SharedHub::new();
-        let a = hub.update(|h| h.begin_download("https://x.test/a.zip", "a.zip"));
-        let b = hub.update(|h| h.begin_download("https://x.test/b.zip", "b.zip"));
+        let a = hub.update(|h| h.begin_download(1, "https://x.test/a.zip", "a.zip"));
+        let b = hub.update(|h| h.begin_download(1, "https://x.test/b.zip", "b.zip"));
         hub.update(|h| h.set_download_destination(a, "a.zip", "/tmp/a.zip"));
         hub.update(|h| h.finish_download(a));
         hub.update(|h| h.fail_download(b, "network"));

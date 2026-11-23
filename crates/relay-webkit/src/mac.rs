@@ -41,6 +41,7 @@ struct DownloadIvars {
     hub: SharedHub,
     id: u64,
     path: RefCell<Option<String>>,
+    download: RefCell<Option<Retained<WKDownload>>>,
 }
 
 define_class!(
@@ -86,13 +87,20 @@ impl DownloadHandler {
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
     }
+
+    fn cancel(&self) {
+        self.ivars().hub.update(|h| h.cancel_download(self.ivars().id));
+        if let Some(download) = self.ivars().download.borrow().as_ref() {
+            unsafe { download.cancel(None) };
+        }
+    }
 }
 
 pub struct HandlerIvars {
     tab: TabId,
     hub: SharedHub,
     events: Rc<dyn Fn(EngineEvent)>,
-    downloads: RefCell<Vec<Retained<DownloadHandler>>>,
+    downloads: RefCell<HashMap<u64, Retained<DownloadHandler>>>,
 }
 
 define_class!(
@@ -151,11 +159,19 @@ define_class!(
                 .map(|s| s.to_string())
                 .unwrap_or_default();
             let filename = url.split(['/', '?']).next_back().filter(|s| !s.is_empty()).unwrap_or("download").to_string();
-            let id = self.ivars().hub.update(|h| h.begin_download(&url, &filename));
+            let id = self.ivars().hub.update(|h| h.begin_download(self.ivars().tab, &url, &filename));
             let mtm = MainThreadMarker::new().expect("download callback is on the main thread");
-            let handler = DownloadHandler::new(mtm, DownloadIvars { hub: self.ivars().hub.clone(), id, path: RefCell::new(None) });
+            let handler = DownloadHandler::new(
+                mtm,
+                DownloadIvars {
+                    hub: self.ivars().hub.clone(),
+                    id,
+                    path: RefCell::new(None),
+                    download: RefCell::new(unsafe { Retained::retain(download as *const WKDownload as *mut WKDownload) }),
+                },
+            );
             unsafe { download.setDelegate(Some(ProtocolObject::from_ref(&*handler))) };
-            self.ivars().downloads.borrow_mut().push(handler);
+            self.ivars().downloads.borrow_mut().insert(id, handler);
         }
 
         #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
@@ -191,6 +207,12 @@ impl BridgeHandler {
     fn new(mtm: MainThreadMarker, ivars: HandlerIvars) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
+    }
+
+    fn cancel_download(&self, id: u64) {
+        if let Some(handler) = self.ivars().downloads.borrow().get(&id) {
+            handler.cancel();
+        }
     }
 
     /// A failed main-frame load: WebKit renders its own blank error page, so
@@ -337,7 +359,7 @@ impl Engine {
     pub fn create(&mut self, tab: TabId, url: &str) -> &Retained<WKWebView> {
         self.clear_error(tab);
         let mtm = self.mtm;
-        let handler = BridgeHandler::new(mtm, HandlerIvars { tab, hub: self.hub.clone(), events: self.events.clone(), downloads: RefCell::new(Vec::new()) });
+        let handler = BridgeHandler::new(mtm, HandlerIvars { tab, hub: self.hub.clone(), events: self.events.clone(), downloads: RefCell::new(HashMap::new()) });
         let ucc = unsafe { WKUserContentController::new(mtm) };
         let script = unsafe {
             WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
@@ -596,6 +618,14 @@ impl Engine {
         });
         let view = tab_holder.borrow().as_ref().unwrap().view.clone();
         unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
+    }
+
+    /// Cancel one of the tab's downloads; the bridge handler owns the native
+    /// WKDownload object.
+    pub fn cancel_download(&self, tab: TabId, id: u64) {
+        if let Some(t) = self.tabs.get(&tab) {
+            t.handler.cancel_download(id);
+        }
     }
 
     /// Capture the visible tab as JPEG for the MCP `screenshot` tool.

@@ -17,6 +17,7 @@ pub enum BrowserRequest {
     RefreshCookies(TabId),
     OpenWebInspector(TabId),
     Screenshot { tab: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> },
+    CancelDownload { tab: TabId, id: u64 },
 }
 
 #[derive(Clone)]
@@ -49,5 +50,9 @@ impl Browser for ChannelBrowser {
     fn open_web_inspector(&self, tab: TabId) { self.send(BrowserRequest::OpenWebInspector(tab)) }
     fn screenshot(&self, tab: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let _ = self.tx.send(BrowserRequest::Screenshot { tab, done });
+    }
+
+    fn cancel_download(&self, tab: TabId, id: u64) {
+        self.send(BrowserRequest::CancelDownload { tab, id });
     }
 }

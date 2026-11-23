@@ -110,6 +110,7 @@ mod imp {
                 BrowserRequest::RefreshCookies(tab) => self.engine.refresh_cookies(tab),
                 BrowserRequest::OpenWebInspector(tab) => self.engine.open_web_inspector(tab),
                 BrowserRequest::Screenshot { tab, done } => self.engine.screenshot(tab, done),
+                BrowserRequest::CancelDownload { tab, id } => self.engine.cancel_download(tab, id),
             }
         }
 
