@@ -132,6 +132,8 @@ known slow German legal site with a documented manual-review exception; a 403,
 
 ## Relay-specific boundaries
 
+The full STRIDE model is [`../.security/threat-model.md`](../.security/threat-model.md).
+
 - **MCP socket:** `relay_home()/mcp.sock`, mode 0600 inside a 0700 directory.
   Any process running as the user can drive the browser, including the user's
   logged-in sessions; this is the intended trust level for local coding
