@@ -68,7 +68,7 @@ hosts = ["claude"]
 # preview_kinds = ["web", "app", "site", "pwa"]
 project_mode = "new"
 # project_mode = "new"   # "adopt" when the product already existed; `make adopt` writes it
-# playwright_version = "1.63.0"
+playwright_version = "1.65.1"
 # eval_model = "haiku"   # model for `make eval` on Claude (cheap by default)
 
 [packs]

@@ -24,7 +24,7 @@ The owner's brief chose this stack. Versions were checked on crates.io on
   passwords in the macOS Keychain through `security-framework` 3.7.
 - Extensions: `zip` 9 plus `ureq` 3 (native TLS) for the Chrome Web Store
   `.crx` installer.
-- Bridge tests: Node 22 `node:test` + Playwright 1.56 WebKit.
+- Bridge tests: Node 22 `node:test` + Playwright 1.65 WebKit.
 
 ## Why this, and what else was considered
 
