@@ -439,6 +439,71 @@ fn op_tool(op: &Op) -> &'static str {
 
 #[tool_router]
 impl RelayMcp {
+    #[tool(description = "Read a bounded allowlist of shell settings (search, blocking, sleep, MCP, eval, theme/accent, start sections, tabs). Read-only.")]
+    async fn shell_settings(&self) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let store = self.shell_store()?;
+        let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
+        let keys = [
+            "search", "blocking", "sleep_minutes", "mcp", "agent_eval", "theme", "accent", "start_sections", "tabs_position",
+            "tabs_folded", "restore_session",
+        ];
+        let mut out = serde_json::Map::new();
+        for key in keys {
+            if let Ok(Some(value)) = store.setting(key) {
+                out.insert(key.into(), value.chars().take(1024).collect::<String>().into());
+            }
+        }
+        Ok(json(&serde_json::Value::Object(out)))
+    }
+
+    #[tool(description = "Read the shell shortcut overrides string (settings.keybindings) and its length. Read-only.")]
+    async fn shell_shortcuts(&self) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let store = self.shell_store()?;
+        let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
+        let raw = store.setting("keybindings").ok().flatten().unwrap_or_default();
+        Ok(json(&serde_json::json!({
+            "overrides": raw.chars().take(4096).collect::<String>(),
+            "length": raw.len(),
+            "defaults": "See docs/design.md; shell writes are not enabled."
+        })))
+    }
+
+    #[tool(description = "Read the configured start-page section order. Read-only.")]
+    async fn shell_start_page(&self) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let store = self.shell_store()?;
+        let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
+        let sections = store.setting("start_sections").ok().flatten().unwrap_or_else(|| "recent,frequent,apps,bookmarks".into());
+        Ok(json(&serde_json::json!({ "sections": sections.chars().take(512).collect::<String>() })))
+    }
+
+    #[tool(description = "List installed web apps (id, name, start URL, install time), capped at 50. Read-only.")]
+    async fn shell_apps(&self) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let store = self.shell_store()?;
+        let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
+        let apps: Vec<_> = store
+            .web_apps()
+            .unwrap_or_default()
+            .into_iter()
+            .take(50)
+            .map(|a| serde_json::json!({ "id": a.id, "name": a.name.chars().take(200).collect::<String>(), "start_url": a.start_url, "installed_at": a.installed_at }))
+            .collect();
+        Ok(json(&serde_json::json!({ "apps": apps })))
+    }
+
+    #[tool(description = "Return Relay's package name and version. Read-only.")]
+    async fn shell_version(&self) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        Ok(json(&serde_json::json!({ "name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION") })))
+    }
+
+    fn shell_store(&self) -> Result<Arc<Mutex<relay_extensions::store::Store>>, ErrorData> {
+        self.audit.clone().ok_or_else(|| ErrorData::internal_error("shell store is attached only while the browser is running", None))
+    }
+
     #[tool(description = "List open tabs with id, url, title, owner (user/agent), and error counts.")]
     async fn list_tabs(&self) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;

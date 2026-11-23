@@ -257,6 +257,14 @@ only and the disabled state all fail before evaluation. Results are capped at
 100 KB, the script at 50 KB, and the audit row contains only tool/host/tab/
 outcome/time.
 
+## Shell read tools
+
+The MCP also exposes read-only shell state: `shell_settings` (a bounded
+allowlist), `shell_shortcuts` (the raw `keybindings` override plus length),
+`shell_start_page` (section order), `shell_apps` (installed web apps, ≤50), and
+`shell_version`. They never read page content and cannot write anything;
+plan/apply shell writes and grants remain #46.
+
 ## MCP tools: batch actions
 
 `batch_actions {tab_id?, actions:[…]}` runs sequential `click`, `type`,

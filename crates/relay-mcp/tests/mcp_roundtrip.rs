@@ -95,6 +95,8 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let hub = SharedHub::new();
     let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
     let audit = Arc::new(Mutex::new(Store::in_memory().unwrap()));
+    audit.lock().unwrap().set_setting("blocking", "on").unwrap();
+    audit.lock().unwrap().set_setting("start_sections", "frequent,recent").unwrap();
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let server = RelayMcp::new(hub.clone(), page.clone()).with_audit(audit.clone());
     tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
@@ -103,7 +105,8 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let tools: Vec<String> = client.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
     for t in [
         "navigate", "click_element", "type_text", "read_dom", "get_console_logs", "get_network_requests", "list_tabs", "open_tab", "wait_for",
-        "get_page_info", "press_key", "get_storage", "batch_actions", "eval_js", "set_cookie", "screenshot",
+        "get_page_info", "press_key", "get_storage", "batch_actions", "eval_js", "set_cookie", "screenshot", "shell_settings",
+        "shell_shortcuts", "shell_start_page", "shell_apps", "shell_version",
     ] {
         assert!(tools.contains(&t.to_string()), "missing tool {t}: {tools:?}");
     }
