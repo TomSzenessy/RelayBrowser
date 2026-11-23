@@ -175,6 +175,10 @@ known slow German legal site with a documented manual-review exception; a 403,
   `relay_bridge::is_openable_url`: `http(s)` or exactly `about:blank`; the
   prefix form `about:blankx`, `file:`, `javascript:`, `data:`, and
   `view-source:` are refused. Agents close only their own tabs.
+- **CRX installs:** download has a 30 s global timeout and 256 MiB
+  compressed cap; parsing bounds-checks every header and requires a zip
+  payload; unpack refuses >256 MiB decompressed total (and cleans staging on
+  any failure). CRX3 signatures are still not verified.
 - **Extensions:** `relay install-extension` prints the requested API
   permissions, optional permissions, host match patterns, and every
   compatibility class (shimmed/partial/missing) from one `report_lines()` call,

@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 /// modern versions only).
 pub const PROD_VERSION: &str = "131.0.0.0";
 const MAX_CRX_BYTES: u64 = 256 * 1024 * 1024;
+/// Total decompressed bytes an extension may unpack to; also the per-entry
+/// ceiling. Compressed CRX size is capped separately.
+const MAX_UNPACK_BYTES: u64 = 256 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub fn is_extension_id(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| (b'a'..=b'p').contains(&b))
@@ -29,10 +33,26 @@ pub fn download_url(id: &str) -> Result<String, Error> {
 }
 
 pub fn download(id: &str) -> Result<Vec<u8>, Error> {
-    let url = download_url(id)?;
-    let mut res = ureq::get(&url).call().map_err(|e| Error::Http(e.to_string()))?;
+    download_from(&download_url(id)?, DOWNLOAD_TIMEOUT)
+}
+
+fn download_from(url: &str, timeout: std::time::Duration) -> Result<Vec<u8>, Error> {
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(timeout))
+            .build(),
+    );
+    let mut res = agent.get(url).call().map_err(|e| Error::Http(format!("{url}: {e}")))?;
+    if let Some(len) = res.body().content_length() {
+        if len > MAX_CRX_BYTES {
+            return Err(Error::Invalid(format!("package is {len} bytes, over the {MAX_CRX_BYTES}-byte cap")));
+        }
+    }
     let mut buf = vec![];
-    res.body_mut().as_reader().take(MAX_CRX_BYTES).read_to_end(&mut buf)?;
+    res.body_mut().as_reader().take(MAX_CRX_BYTES + 1).read_to_end(&mut buf).map_err(|e| Error::Http(format!("{url}: {e}")))?;
+    if buf.len() as u64 > MAX_CRX_BYTES {
+        return Err(Error::Invalid(format!("package exceeds the {MAX_CRX_BYTES}-byte cap")));
+    }
     Ok(buf)
 }
 
@@ -53,19 +73,25 @@ pub fn parse(bytes: &[u8]) -> Result<Crx<'_>, Error> {
         }
         return Err(bad("missing Cr24 magic"));
     }
-    let u32_at = |i: usize| u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap());
-    let version = u32_at(4);
+    let u32_at = |i: usize| bytes.get(i..i + 4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes);
+    let version = u32_at(4).ok_or_else(|| bad("missing version"))?;
     match version {
         3 => {
-            let header_len = u32_at(8) as usize;
+            let header_len = u32_at(8).ok_or_else(|| bad("missing header length"))? as usize;
             let start = 12usize.checked_add(header_len).filter(|e| *e <= bytes.len()).ok_or_else(|| bad("header overruns file"))?;
+            if start >= bytes.len() || !bytes[start..].starts_with(b"PK\x03\x04") {
+                return Err(bad("missing zip payload"));
+            }
             let crx_id = crx3_id(&bytes[12..start]);
             Ok(Crx { version, crx_id, zip: &bytes[start..] })
         }
         2 => {
-            let key_len = u32_at(8) as usize;
-            let sig_len = u32_at(12) as usize;
+            let key_len = u32_at(8).ok_or_else(|| bad("missing key length"))? as usize;
+            let sig_len = u32_at(12).ok_or_else(|| bad("missing signature length"))? as usize;
             let start = 16usize.checked_add(key_len).and_then(|s| s.checked_add(sig_len)).filter(|e| *e <= bytes.len()).ok_or_else(|| bad("header overruns file"))?;
+            if start >= bytes.len() || !bytes[start..].starts_with(b"PK\x03\x04") {
+                return Err(bad("missing zip payload"));
+            }
             Ok(Crx { version, crx_id: None, zip: &bytes[start..] })
         }
         v => Err(bad(&format!("unsupported version {v}"))),
@@ -124,6 +150,10 @@ fn proto_field(buf: &[u8], want: u64) -> Option<&[u8]> {
 /// Unpack into `dest/<id>` (replacing an older copy). Entries that would
 /// escape the directory are rejected.
 pub fn unpack(bytes: &[u8], expected_id: &str, dest: &Path) -> Result<PathBuf, Error> {
+    unpack_limited(bytes, expected_id, dest, MAX_UNPACK_BYTES)
+}
+
+fn unpack_limited(bytes: &[u8], expected_id: &str, dest: &Path, limit: u64) -> Result<PathBuf, Error> {
     let crx = parse(bytes)?;
     // The Web Store serves CRX3, which always declares its id; anything else
     // (CRX2, a bare zip, a header without an id) cannot be tied to the request.
@@ -135,33 +165,44 @@ pub fn unpack(bytes: &[u8], expected_id: &str, dest: &Path) -> Result<PathBuf, E
     let out = dest.join(expected_id);
     let staging = dest.join(format!(".{expected_id}.partial"));
     let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging)?;
-    let mut zip = zip::ZipArchive::new(Cursor::new(crx.zip))?;
-    for i in 0..zip.len() {
-        let mut f = zip.by_index(i)?;
-        let Some(rel) = f.enclosed_name() else {
-            return Err(Error::Invalid(format!("unsafe path in package: {}", f.name().map(|n| n.into_owned()).unwrap_or_default())));
-        };
-        let path = staging.join(rel);
-        if f.is_dir() {
-            std::fs::create_dir_all(&path)?;
-            continue;
+    let result = (|| -> Result<PathBuf, Error> {
+        std::fs::create_dir_all(&staging)?;
+        let mut zip = zip::ZipArchive::new(Cursor::new(crx.zip))?;
+        let mut total = 0u64;
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i)?;
+            let Some(rel) = f.enclosed_name() else {
+                return Err(Error::Invalid(format!("unsafe path in package: {}", f.name().map(|n| n.into_owned()).unwrap_or_default())));
+            };
+            let size = f.size();
+            if size > limit || total.saturating_add(size) > limit {
+                return Err(Error::Invalid(format!("package decompresses over the {limit}-byte cap")));
+            }
+            total += size;
+            let path = staging.join(rel);
+            if f.is_dir() {
+                std::fs::create_dir_all(&path)?;
+                continue;
+            }
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut w = std::fs::File::create(&path)?;
+            std::io::copy(&mut f, &mut w)?;
         }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        // Chrome-only metadata that WebKit rejects.
+        let _ = std::fs::remove_dir_all(staging.join("_metadata"));
+        if !staging.join("manifest.json").is_file() {
+            return Err(Error::Invalid("package has no manifest.json".into()));
         }
-        let mut w = std::fs::File::create(&path)?;
-        std::io::copy(&mut f, &mut w)?;
-    }
-    // Chrome-only metadata that WebKit rejects.
-    let _ = std::fs::remove_dir_all(staging.join("_metadata"));
-    if !staging.join("manifest.json").is_file() {
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::rename(&staging, &out)?;
+        Ok(out)
+    })();
+    if result.is_err() {
         let _ = std::fs::remove_dir_all(&staging);
-        return Err(Error::Invalid("package has no manifest.json".into()));
     }
-    let _ = std::fs::remove_dir_all(&out);
-    std::fs::rename(&staging, &out)?;
-    Ok(out)
+    result
 }
 
 #[cfg(test)]
@@ -230,6 +271,47 @@ mod tests {
         let evil = crx3(id_bytes(), &zip_with(&[("manifest.json", "{}"), ("../../escape.txt", "x")]));
         assert!(unpack(&evil, ID, d.path()).unwrap_err().to_string().contains("unsafe path"));
         assert!(!d.path().parent().unwrap().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn truncated_crx_headers_are_errors_not_panics() {
+        for len in 11..=16 {
+            for version in [2u32, 3] {
+                let mut bytes = vec![0u8; len];
+                bytes[..4].copy_from_slice(b"Cr24");
+                bytes[4..8].copy_from_slice(&version.to_le_bytes());
+                assert!(parse(&bytes).is_err(), "len {len} version {version}");
+            }
+        }
+    }
+
+    #[test]
+    fn unpack_limit_cleans_staging_and_rejects_a_bomb() {
+        let d = tempfile::tempdir().unwrap();
+        let payload = "x".repeat(50_000);
+        let bytes = crx3(id_bytes(), &zip_with(&[("manifest.json", "{\"name\":\"x\"}"), ("big.bin", &payload)]));
+        let err = unpack_limited(&bytes, ID, d.path(), 1024).unwrap_err().to_string();
+        assert!(err.contains("cap"), "{err}");
+        assert!(!d.path().join(format!(".{ID}.partial")).exists(), "partial staging must be removed");
+        assert!(!d.path().join(ID).exists());
+    }
+
+    #[test]
+    fn download_timeout_names_the_url() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 999999\r\n\r\n");
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        });
+        let url = format!("http://127.0.0.1:{port}/stall");
+        let started = std::time::Instant::now();
+        let err = download_from(&url, std::time::Duration::from_millis(500)).unwrap_err();
+        assert!(err.to_string().contains(&url), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(3), "download did not time out");
+        server.join().unwrap();
     }
 
     #[test]
