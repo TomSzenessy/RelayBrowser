@@ -403,6 +403,14 @@ discard the rest of the preview. `relay install-extension` prints the
 manifest's requested APIs, optional APIs, and host match patterns from one
 `PermissionReport`; installing grants all of them, and the CLI says so.
 
+## Appearance
+
+Settings → Appearance offers System / Light / Dark and a Blue / Purple /
+Green / Orange accent (`theme::Theme::for_choice`). Both choices are stored in
+`settings` (`theme`, `accent`) and apply immediately; the palette also has
+Cycle Appearance and Cycle Accent commands. Contrast tests cover every accent
+against both surfaces.
+
 ## CLI safety
 
 `relay import-chrome` parses `--dry-run`, `--profile DIR`, and `--help`

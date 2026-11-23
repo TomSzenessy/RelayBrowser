@@ -2,6 +2,113 @@
 
 use gpui::{rgb, rgba, Hsla, WindowAppearance};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeChoice {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "system" | "auto" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AccentChoice {
+    #[default]
+    Blue,
+    Purple,
+    Green,
+    Orange,
+}
+
+impl AccentChoice {
+    pub const ALL: [AccentChoice; 4] = [Self::Blue, Self::Purple, Self::Green, Self::Orange];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "blue" => Some(Self::Blue),
+            "purple" => Some(Self::Purple),
+            "green" => Some(Self::Green),
+            "orange" => Some(Self::Orange),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Purple => "purple",
+            Self::Green => "green",
+            Self::Orange => "orange",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Blue => "Blue",
+            Self::Purple => "Purple",
+            Self::Green => "Green",
+            Self::Orange => "Orange",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Blue => Self::Purple,
+            Self::Purple => Self::Green,
+            Self::Green => Self::Orange,
+            Self::Orange => Self::Blue,
+        }
+    }
+
+    fn color(self, dark: bool) -> (Hsla, Hsla) {
+        let (accent, overlay) = match (self, dark) {
+            (Self::Blue, true) => (0x5b8cff, 0x5b8cff33),
+            (Self::Blue, false) => (0x2f6bff, 0x2f6bff24),
+            (Self::Purple, true) => (0xb07cff, 0xb07cff38),
+            (Self::Purple, false) => (0x7a3cff, 0x7a3cff24),
+            (Self::Green, true) => (0x4ecb8d, 0x4ecb8d38),
+            (Self::Green, false) => (0x1f7a4d, 0x1f7a4d24),
+            (Self::Orange, true) => (0xffb84d, 0xffb84d38),
+            (Self::Orange, false) => (0xa35f00, 0xa35f0029),
+        };
+        (rgb(accent).into(), rgba(overlay).into())
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub background: Hsla,
@@ -27,6 +134,19 @@ impl Theme {
             WindowAppearance::Light | WindowAppearance::VibrantLight => Self::light(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::dark(),
         }
+    }
+
+    pub fn for_choice(appearance: WindowAppearance, choice: ThemeChoice, accent: AccentChoice) -> Self {
+        let dark = match choice {
+            ThemeChoice::System => matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark),
+            ThemeChoice::Light => false,
+            ThemeChoice::Dark => true,
+        };
+        let mut theme = if dark { Self::dark() } else { Self::light() };
+        let (color, active) = accent.color(dark);
+        theme.accent = color;
+        theme.active = active;
+        theme
     }
 
     pub fn dark() -> Self {
@@ -121,5 +241,24 @@ mod tests {
     fn dark_and_light_meet_wcag_aa_contrast() {
         assert_wcag_aa("dark", Theme::dark());
         assert_wcag_aa("light", Theme::light());
+        for choice in [ThemeChoice::Light, ThemeChoice::Dark] {
+            for accent in AccentChoice::ALL {
+                assert_wcag_aa(&format!("{choice:?}/{accent:?}"), Theme::for_choice(WindowAppearance::Light, choice, accent));
+            }
+        }
+    }
+
+    #[test]
+    fn choices_round_trip_and_system_follows_appearance() {
+        for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
+            assert_eq!(ThemeChoice::parse(choice.as_str()), Some(choice));
+        }
+        for accent in AccentChoice::ALL {
+            assert_eq!(AccentChoice::parse(accent.as_str()), Some(accent));
+        }
+        assert_eq!(ThemeChoice::Light.next(), ThemeChoice::Dark);
+        assert_eq!(AccentChoice::Orange.next(), AccentChoice::Blue);
+        assert_eq!(Theme::for_choice(WindowAppearance::Dark, ThemeChoice::System, AccentChoice::Blue).background, Theme::dark().background);
+        assert_eq!(Theme::for_choice(WindowAppearance::Light, ThemeChoice::Dark, AccentChoice::Blue).background, Theme::dark().background);
     }
 }

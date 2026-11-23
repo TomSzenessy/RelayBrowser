@@ -53,10 +53,12 @@ pub enum Command {
     ShowBookmarks,
     ToggleAgents,
     CycleAgentPolicy,
+    CycleTheme,
+    CycleAccent,
 }
 
 impl Command {
-    pub const ALL: [Command; 32] = [
+    pub const ALL: [Command; 34] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -89,6 +91,8 @@ impl Command {
         Command::ShowBookmarks,
         Command::ToggleAgents,
         Command::CycleAgentPolicy,
+        Command::CycleTheme,
+        Command::CycleAccent,
     ];
 
     pub fn title(self) -> &'static str {
@@ -125,6 +129,8 @@ impl Command {
             Command::ShowBookmarks => "Show Bookmarks",
             Command::ToggleAgents => "Pause / Resume Agents",
             Command::CycleAgentPolicy => "Cycle Agent Access on This Site",
+            Command::CycleTheme => "Cycle Appearance (System / Light / Dark)",
+            Command::CycleAccent => "Cycle Accent Colour",
         }
     }
 
@@ -162,6 +168,8 @@ impl Command {
             Command::ShowBookmarks => "⇧⌘B",
             Command::ToggleAgents => "⇧⌘.",
             Command::CycleAgentPolicy => "⌘⌥A",
+            Command::CycleTheme => "",
+            Command::CycleAccent => "",
         }
     }
 }
@@ -531,8 +539,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 32);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents, Command::CycleAgentPolicy] {
+        assert_eq!(Command::ALL.len(), 34);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents, Command::CycleAgentPolicy, Command::CycleTheme, Command::CycleAccent] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }
