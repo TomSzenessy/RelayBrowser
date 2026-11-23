@@ -3104,6 +3104,10 @@ impl RelayApp {
         let mut list = div().flex().flex_col().py_1();
         for (i, item) in p.items.iter().enumerate() {
             let on = i == p.selected;
+            let custom_key = match item {
+                Item::Command(c) => c.action().map(|a| self.keymap.key(a).to_string()).unwrap_or_default(),
+                _ => item.detail(),
+            };
             let item_c = item.clone();
             list = list.child(
                 div()
@@ -3124,7 +3128,7 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(13.)).child(SharedString::from(item.title())))
-                    .child(div().text_size(px(12.)).text_color(t.muted).child(SharedString::from(item.detail()))),
+                    .child(div().text_size(px(12.)).text_color(t.muted).child(SharedString::from(custom_key))),
             );
         }
         let cursor_el = || div().w(px(1.5)).h(px(18.)).bg(t.accent);

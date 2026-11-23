@@ -101,6 +101,51 @@ impl Command {
         Command::ShowDownloads,
     ];
 
+    /// The keymap action behind a palette command, when one exists. A `None`
+    /// command is palette-only (import, copy setup, per-site toggles, theme).
+    pub fn action(self) -> Option<crate::keymap::ActionId> {
+        use crate::keymap::ActionId as A;
+        Some(match self {
+            Command::NewTab => A::NewTab,
+            Command::CloseTab => A::CloseTab,
+            Command::ReopenClosedTab => A::ReopenClosedTab,
+            Command::Reload => A::Reload,
+            Command::Back => A::Back,
+            Command::Forward => A::Forward,
+            Command::ToggleInspector => A::ToggleInspector,
+            Command::WebInspector => A::WebInspector,
+            Command::ToggleSplit => A::ToggleSplit,
+            Command::LinkHints => A::LinkHints,
+            Command::Settings => A::ToggleSettings,
+            Command::CopyCleanUrl => A::CopyCleanUrl,
+            Command::CopyMarkdown => A::CopyMarkdown,
+            Command::ToggleBookmark => A::ToggleBookmark,
+            Command::TogglePin => A::TogglePin,
+            Command::Find => A::Find,
+            Command::ZoomIn => A::ZoomIn,
+            Command::ZoomOut => A::ZoomOut,
+            Command::ZoomReset => A::ZoomReset,
+            Command::ToggleTabStrip => A::ToggleTabStrip,
+            Command::NextTabPlacement => A::NextTabStripPosition,
+            Command::ShowHistory => A::ShowHistory,
+            Command::ShowBookmarks => A::ShowBookmarks,
+            Command::ToggleAgents => A::ToggleAgents,
+            Command::CycleAgentPolicy => A::CycleAgentPolicy,
+            Command::ToggleReader => A::ToggleReader,
+            Command::TogglePictureInPicture => A::TogglePictureInPicture,
+            Command::ShowDownloads => A::ShowDownloads,
+            Command::ImportChrome
+            | Command::CopyMcpSetup
+            | Command::CloseDuplicateTabs
+            | Command::ToggleSiteBlocking
+            | Command::ToggleCompatMode
+            | Command::InstallWebApp
+            | Command::RemoveWebApp
+            | Command::CycleTheme
+            | Command::CycleAccent => return None,
+        })
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             Command::NewTab => "New Tab",
@@ -663,6 +708,14 @@ mod tests {
         assert_eq!(p.items.iter().filter(|i| i.detail().contains("docs.rs/gpui")).count(), 1);
         p.move_selection(-1);
         assert_eq!(p.selected, p.items.len() - 1, "selection wraps");
+    }
+
+    #[test]
+    fn palette_commands_link_to_keymap_actions() {
+        assert_eq!(Command::NewTab.action(), Some(crate::keymap::ActionId::NewTab));
+        assert_eq!(Command::Settings.action(), Some(crate::keymap::ActionId::ToggleSettings));
+        assert_eq!(Command::ImportChrome.action(), None);
+        assert_eq!(Command::ALL.iter().filter(|c| c.action().is_some()).count(), 28);
     }
 
     #[test]
