@@ -80,6 +80,9 @@ telemetry pipeline, crash-upload endpoint, or analytics SDK.
 - **Agent JavaScript:** when enabled, `eval_js` returns the expression's JSON
   value to the local agent; results are capped at 100 KB. The feature is off
   by default and only runs on Allow sites.
+- **Chrome history import:** the History database and its WAL/SHM sidecars
+  are copied 0600 into a temp directory for reading, then removed; the WAL is
+  included so uncheckpointed rows are part of the same snapshot.
 - **Agent audit:** when a local MCP client calls a tool, Relay stores the tool
   name, normalized host, tab id, outcome, and time in `agent_audit` (5,000-row
   cap). Typed text, cookie values, and page content are never included.
