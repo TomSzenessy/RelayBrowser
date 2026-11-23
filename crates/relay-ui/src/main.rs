@@ -29,8 +29,9 @@ USAGE:
   relay config [list | get KEY | set KEY VALUE]
                                     inspect or update profile settings
   relay export [FILE]               export bookmarks, history, settings, and extensions as JSON
-  relay clear-data [--history] [--session] [--bookmarks] --yes
-                                    delete stored history (incl. the saved session), the saved session, and/or bookmarks
+  relay clear-data [--history] [--session] [--bookmarks] [--audit] --yes
+                                    delete stored history/session/bookmarks and/or the agent audit log
+  relay audit [--limit N]           show the lean log of agent tool calls
   relay import-chrome [--dry-run] [--profile DIR]
                                     import Chrome bookmarks + history into Relay's profile
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
@@ -57,6 +58,7 @@ fn main() -> anyhow::Result<()> {
         Some("config") => config(&args[1..]),
         Some("export") => export_profile(args.get(1).map(String::as_str)),
         Some("clear-data") => clear_data(&args[1..]),
+        Some("audit") => audit(&args[1..]),
         Some("import-chrome") => import_chrome(&args[1..]),
         Some("import-passwords") => import_passwords(args.get(1).map(String::as_str)),
         Some("install-extension") => install_extension(args.get(1).map(String::as_str)),
@@ -350,21 +352,23 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()
 }
 
 fn clear_data(args: &[String]) -> anyhow::Result<()> {
-    const USAGE: &str = "usage: relay clear-data [--history] [--session] [--bookmarks] --yes";
+    const USAGE: &str = "usage: relay clear-data [--history] [--session] [--bookmarks] [--audit] --yes";
     let mut history = false;
     let mut session = false;
     let mut bookmarks = false;
+    let mut audit_log = false;
     let mut yes = false;
     for arg in args {
         match arg.as_str() {
             "--history" => history = true,
             "--session" => session = true,
             "--bookmarks" => bookmarks = true,
+            "--audit" => audit_log = true,
             "--yes" => yes = true,
             other => bail!("unknown flag {other}\n{USAGE}"),
         }
     }
-    if !history && !session && !bookmarks {
+    if !history && !session && !bookmarks && !audit_log {
         history = true;
     }
     // Saved session tabs are URLs the user visited: clearing history clears them too.
@@ -384,6 +388,60 @@ fn clear_data(args: &[String]) -> anyhow::Result<()> {
     if bookmarks {
         let n = store.clear_bookmarks()?;
         println!("Cleared {n} bookmarks.");
+    }
+    if audit_log {
+        let n = store.clear_agent_audit()?;
+        println!("Cleared {n} agent audit rows.");
+    }
+    Ok(())
+}
+
+/// UTC timestamp without a date library: days since the Unix epoch converted
+/// with the civil-from-days algorithm.
+fn format_unix(seconds: i64) -> String {
+    let days = seconds.div_euclid(86_400);
+    let rem = seconds.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}Z", rem / 3600, (rem % 3600) / 60, rem % 60)
+}
+
+fn audit(args: &[String]) -> anyhow::Result<()> {
+    const USAGE: &str = "usage: relay audit [--limit N]";
+    let mut limit = 100usize;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                return Ok(());
+            }
+            "--limit" => {
+                i += 1;
+                let value = args.get(i).with_context(|| format!("--limit needs a number\n{USAGE}"))?;
+                limit = value.parse::<usize>().with_context(|| format!("--limit needs a number, got {value:?}"))?.clamp(1, 5000);
+            }
+            other => bail!("unknown option {other}\n{USAGE}"),
+        }
+        i += 1;
+    }
+    let rows = open_store()?.agent_audit(limit)?;
+    if rows.is_empty() {
+        println!("No agent calls yet.");
+        return Ok(());
+    }
+    println!("{:<20} {:<18} {:<24} {:<5} {}", "TIME", "TOOL", "HOST", "TAB", "OUTCOME");
+    for r in rows {
+        let tab = r.tab.map(|t| t.to_string()).unwrap_or_else(|| "-".into());
+        println!("{:<20} {:<18} {:<24} {:<5} {}", format_unix(r.at), r.tool, r.host, tab, r.outcome);
     }
     Ok(())
 }
@@ -527,7 +585,8 @@ fn run_browser(initial_url: Option<String>, app_mode: bool, app_name: Option<Str
             .name("relay-mcp".into())
             .spawn(move || match runtime() {
                 Ok(rt) => {
-                    if let Err(e) = rt.block_on(relay_mcp::serve_socket(&socket_for_thread, hub, Arc::new(browser))) {
+                    let audit = open_store().ok().map(|s| Arc::new(std::sync::Mutex::new(s)));
+                    if let Err(e) = rt.block_on(relay_mcp::serve_socket(&socket_for_thread, hub, Arc::new(browser), audit)) {
                         eprintln!("relay: MCP server stopped: {e:#}");
                     }
                 }

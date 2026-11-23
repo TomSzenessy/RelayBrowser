@@ -2,6 +2,7 @@
 //! and a simulated page answers bridge commands exactly as bridge.js does.
 
 use relay_bridge::{AgentPolicy, Browser, Owner, SharedHub, TabId};
+use relay_extensions::store::Store;
 use relay_mcp::RelayMcp;
 use rmcp::{model::CallToolRequestParams, ServiceExt};
 use serde_json::{json, Value};
@@ -85,8 +86,9 @@ async fn call(client: &rmcp::service::RunningService<rmcp::RoleClient, ()>, name
 async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let hub = SharedHub::new();
     let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let audit = Arc::new(Mutex::new(Store::in_memory().unwrap()));
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
-    let server = RelayMcp::new(hub.clone(), page.clone());
+    let server = RelayMcp::new(hub.clone(), page.clone()).with_audit(audit.clone());
     tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
     let client = ().serve(client_io).await.unwrap();
 
@@ -253,13 +255,13 @@ async fn socket_is_private_and_not_stolen() {
     let page: Arc<dyn Browser> = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
     let p = path.clone();
     let (h2, b2) = (hub.clone(), page.clone());
-    tokio::spawn(async move { relay_mcp::serve_socket(&p, h2, b2).await });
+    tokio::spawn(async move { relay_mcp::serve_socket(&p, h2, b2, None).await });
     for _ in 0..100 {
         if path.exists() { break; }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
-    let err = relay_mcp::serve_socket(&path, hub, page).await.unwrap_err();
+    let err = relay_mcp::serve_socket(&path, hub, page, None).await.unwrap_err();
     assert!(err.to_string().contains("another Relay instance"), "{err}");
 }

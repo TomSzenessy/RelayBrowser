@@ -183,6 +183,15 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## Agent audit
+
+Every MCP tool writes one row to `agent_audit`: tool, host, tab, outcome
+(ok/error), and time. It never stores typed text, cookie values, or page
+content. The table keeps the newest 5,000 rows; `relay audit [--limit N]`
+prints them, `relay clear-data --audit --yes` erases them, and `relay export`
+includes the array. The audit write is best-effort and cannot fail a browser
+action.
+
 ## Agent safety (attached mode)
 
 - **Stop:** `⇧⌘.` (or Relay → Pause / Resume Agents) sets one atomic flag in

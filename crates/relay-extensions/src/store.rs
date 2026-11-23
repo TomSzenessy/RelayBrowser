@@ -23,6 +23,18 @@ pub struct Visit {
     pub last_visit: i64,
 }
 
+/// One agent tool call. Deliberately no typed text, cookie values, or page
+/// content: the audit answers "what did the agent do", not "what was on the
+/// page".
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AgentAuditRow {
+    pub tool: String,
+    pub host: String,
+    pub tab: Option<i64>,
+    pub outcome: String,
+    pub at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportCounts {
     pub bookmarks: usize,
@@ -133,7 +145,10 @@ impl Store {
                  id TEXT PRIMARY KEY, name TEXT NOT NULL, start_url TEXT NOT NULL UNIQUE,
                  bundle_path TEXT NOT NULL, installed_at INTEGER NOT NULL DEFAULT 0);
              CREATE TABLE IF NOT EXISTS agent_policies(
-                 host TEXT PRIMARY KEY, policy TEXT NOT NULL);",
+                 host TEXT PRIMARY KEY, policy TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS agent_audit(
+                 id INTEGER PRIMARY KEY, tool TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
+                 tab INTEGER, outcome TEXT NOT NULL, at INTEGER NOT NULL);",
         )?;
         let v: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get::<_, String>(0))
@@ -451,6 +466,7 @@ impl Store {
             session_tab_count: self.load_session()?.len(),
             site_prefs,
             web_apps: self.web_apps()?,
+            agent_audit: self.agent_audit(5000)?,
         };
         Ok(serde_json::to_string_pretty(&export)?)
     }
@@ -469,6 +485,39 @@ impl Store {
         let mut stmt = self.conn.prepare("SELECT id, name, path FROM extensions WHERE enabled = 1 ORDER BY name")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Append one audit row, keeping the newest 5,000 only.
+    pub fn record_agent_call(&self, tool: &str, host: &str, tab: Option<i64>, outcome: &str, at: i64) -> Result<(), Error> {
+        self.conn.execute(
+            "INSERT INTO agent_audit(tool, host, tab, outcome, at) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![tool, host, tab, outcome, at],
+        )?;
+        self.conn.execute(
+            "DELETE FROM agent_audit WHERE id NOT IN (SELECT id FROM agent_audit ORDER BY id DESC LIMIT 5000)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn agent_audit(&self, limit: usize) -> Result<Vec<AgentAuditRow>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tool, host, tab, outcome, at FROM agent_audit ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit.min(5000) as i64], |r| {
+            Ok(AgentAuditRow {
+                tool: r.get(0)?,
+                host: r.get(1)?,
+                tab: r.get(2)?,
+                outcome: r.get(3)?,
+                at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn clear_agent_audit(&self) -> Result<usize, Error> {
+        Ok(self.conn.execute("DELETE FROM agent_audit", [])?)
     }
 
     /// Per-site agent policy. Allow removes the row (the default).
@@ -558,6 +607,7 @@ struct ProfileExport {
     session_tab_count: usize,
     site_prefs: BTreeMap<String, SitePrefs>,
     web_apps: Vec<WebAppRecord>,
+    agent_audit: Vec<AgentAuditRow>,
 }
 
 fn read_prefs(r: &rusqlite::Row<'_>) -> SitePrefs {
@@ -805,6 +855,7 @@ mod tests {
         assert!(!json.contains("password"));
         assert_eq!(v["session_tab_count"], 0);
         assert_eq!(v["site_prefs"], serde_json::json!({}));
+        assert!(v["agent_audit"].is_array());
     }
 
     fn tab(url: &str, active: bool) -> SessionTab {
@@ -870,6 +921,18 @@ mod tests {
         assert!(s.move_bookmark("https://m.test/", &["New".into(), "Sub".into()]).unwrap());
         assert_eq!(s.bookmarks().unwrap()[0].folder, vec!["New".to_string(), "Sub".to_string()]);
         assert!(!s.move_bookmark("https://missing.test/", &[]).unwrap());
+    }
+
+    #[test]
+    fn agent_audit_round_trips_and_clears() {
+        let s = Store::in_memory().unwrap();
+        s.record_agent_call("click_element", "shop.test", Some(2), "ok", 10).unwrap();
+        s.record_agent_call("type_text", "shop.test", Some(2), "error", 11).unwrap();
+        let rows = s.agent_audit(10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], AgentAuditRow { tool: "type_text".into(), host: "shop.test".into(), tab: Some(2), outcome: "error".into(), at: 11 });
+        assert_eq!(s.clear_agent_audit().unwrap(), 2);
+        assert!(s.agent_audit(10).unwrap().is_empty());
     }
 
     #[test]

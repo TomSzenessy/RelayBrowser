@@ -119,6 +119,7 @@ fn export_outputs_valid_json_and_writes_private_file() {
     assert!(parsed["bookmarks"].is_array());
     assert!(parsed["history"].is_array());
     assert!(parsed.get("passwords").is_none());
+    assert!(parsed["agent_audit"].is_array());
     assert!(!raw.to_ascii_lowercase().contains("password"));
 
     let export_path = dir.path().join("backup.json");
@@ -130,6 +131,7 @@ fn export_outputs_valid_json_and_writes_private_file() {
     assert!(file_parsed["bookmarks"].is_array());
     assert!(file_parsed["history"].is_array());
     assert!(file_parsed.get("passwords").is_none());
+    assert!(file_parsed["agent_audit"].is_array());
     assert!(!file_text.to_ascii_lowercase().contains("password"));
 
     #[cfg(unix)]
@@ -147,6 +149,8 @@ fn clear_data_requires_yes_confirmation() {
     let denied = relay(dir.path(), &["clear-data", "--history"]);
     assert!(!denied.status.success(), "clear-data without --yes must fail");
     assert!(String::from_utf8_lossy(&denied.stderr).contains("--yes"));
+    let denied_audit = relay(dir.path(), &["clear-data", "--audit"]);
+    assert!(!denied_audit.status.success(), "clear-data --audit without --yes must fail");
 
     let ok_hist = relay(dir.path(), &["clear-data", "--history", "--yes"]);
     assert!(ok_hist.status.success(), "{}", String::from_utf8_lossy(&ok_hist.stderr));
@@ -155,6 +159,13 @@ fn clear_data_requires_yes_confirmation() {
     let ok_bm = relay(dir.path(), &["clear-data", "--bookmarks", "--yes"]);
     assert!(ok_bm.status.success(), "{}", String::from_utf8_lossy(&ok_bm.stderr));
     assert!(String::from_utf8_lossy(&ok_bm.stdout).contains("Cleared 0 bookmarks"));
+
+    let audit = relay(dir.path(), &["audit"]);
+    assert!(audit.status.success(), "{}", String::from_utf8_lossy(&audit.stderr));
+    assert!(String::from_utf8_lossy(&audit.stdout).contains("No agent calls yet."));
+    let clear_audit = relay(dir.path(), &["clear-data", "--audit", "--yes"]);
+    assert!(clear_audit.status.success(), "{}", String::from_utf8_lossy(&clear_audit.stderr));
+    assert!(String::from_utf8_lossy(&clear_audit.stdout).contains("Cleared 0 agent audit rows."));
 }
 
 #[test]
