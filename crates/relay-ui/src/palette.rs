@@ -338,6 +338,8 @@ pub struct Sources {
 #[derive(Debug, Default)]
 pub struct Palette {
     pub query: String,
+    /// Byte offset of the text cursor in `query`; always on a char boundary.
+    pub cursor: usize,
     pub selected: usize,
     pub items: Vec<Item>,
     /// User-defined `(trigger, template-with-%s)` bangs; override built-ins.
@@ -345,6 +347,57 @@ pub struct Palette {
 }
 
 impl Palette {
+    pub fn set_query(&mut self, query: String) {
+        self.query = query;
+        self.cursor = self.query.len();
+        self.selected = 0;
+    }
+
+    pub fn clear_query(&mut self) {
+        self.query.clear();
+        self.cursor = 0;
+        self.selected = 0;
+    }
+
+    pub fn insert(&mut self, text: &str) {
+        self.query.insert_str(self.cursor, text);
+        self.cursor += text.len();
+        self.selected = 0;
+    }
+
+    pub fn backspace(&mut self) -> bool {
+        let Some((i, _)) = self.query[..self.cursor].char_indices().next_back() else { return false };
+        self.query.remove(i);
+        self.cursor = i;
+        self.selected = 0;
+        true
+    }
+
+    pub fn delete(&mut self) -> bool {
+        if self.query[self.cursor..].chars().next().is_none() {
+            return false;
+        }
+        self.query.remove(self.cursor);
+        self.selected = 0;
+        true
+    }
+
+    pub fn move_cursor(&mut self, delta: isize) {
+        let mut chars: Vec<usize> = self.query.char_indices().map(|(i, _)| i).collect();
+        chars.push(self.query.len());
+        let pos = chars.binary_search(&self.cursor).unwrap_or(0) as isize;
+        let next = (pos + delta).clamp(0, chars.len() as isize - 1) as usize;
+        self.cursor = chars[next];
+    }
+
+    pub fn cursor_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn cursor_end(&mut self) {
+        self.cursor = self.query.len();
+    }
+
     pub fn refresh(&mut self, sources: &Sources, search_template: &str) {
         let q = self.query.trim();
         let qchars: Vec<char> = q.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
@@ -478,6 +531,26 @@ mod tests {
         assert!(a > b);
         assert!(fuzzy_score("xyz", "GitHub").is_none());
         assert!(fuzzy_score("nt", "New Tab").unwrap() > fuzzy_score("nt", "Reopen Closed Tab").unwrap());
+    }
+
+    #[test]
+    fn cursor_editing_respects_char_boundaries() {
+        let mut p = Palette::default();
+        p.set_query("abc".into());
+        p.move_cursor(-1);
+        p.insert("é");
+        assert_eq!(p.query, "abéc");
+        assert_eq!(p.cursor, 4);
+        p.move_cursor(-1);
+        assert!(p.delete());
+        assert_eq!(p.query, "abc");
+        p.cursor_home();
+        assert!(p.backspace() == false);
+        p.cursor_end();
+        assert!(p.backspace());
+        assert_eq!((p.query.as_str(), p.cursor), ("ab", 2));
+        p.clear_query();
+        assert_eq!((p.query.as_str(), p.cursor), ("", 0));
     }
 
     #[test]
