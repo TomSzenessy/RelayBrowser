@@ -8,7 +8,7 @@ use crate::library::{Library, Mode};
 use crate::palette::{self, Command, Item, Palette, Sources};
 use crate::startpage::{Section, StartItem, StartPage};
 use crate::tabstrip;
-use crate::theme::Theme;
+use crate::theme::{AccentChoice, Theme, ThemeChoice};
 use crate::web::{EditAction, WebEvent, WebHost};
 use crate::webapp;
 use gpui::{
@@ -321,6 +321,8 @@ pub struct RelayApp {
     store: Option<Store>,
     focus: FocusHandle,
     theme: Theme,
+    theme_choice: ThemeChoice,
+    accent_choice: AccentChoice,
     palette: Option<Palette>,
     /// ⌘T opens the palette for a new tab; ⌘K/⌘L target the current tab.
     palette_new_tab: bool,
@@ -440,13 +442,25 @@ impl RelayApp {
         let focus = cx.focus_handle();
         let hub_events = hub.subscribe();
         window.focus(&focus);
+        let theme_choice = store
+            .as_ref()
+            .and_then(|s| s.setting("theme").ok().flatten())
+            .and_then(|v| ThemeChoice::parse(&v))
+            .unwrap_or_default();
+        let accent_choice = store
+            .as_ref()
+            .and_then(|s| s.setting("accent").ok().flatten())
+            .and_then(|v| AccentChoice::parse(&v))
+            .unwrap_or_default();
         let mut app = Self {
             hub,
             web: Rc::new(RefCell::new(web)),
             requests,
             store,
             focus,
-            theme: Theme::for_appearance(window.appearance()),
+            theme: Theme::for_choice(window.appearance(), theme_choice, accent_choice),
+            theme_choice,
+            accent_choice,
             palette: None,
             palette_new_tab: false,
             settings_open: false,
@@ -1519,6 +1533,8 @@ impl RelayApp {
             Command::ShowBookmarks => self.open_library(Mode::Bookmarks, cx),
             Command::ToggleAgents => self.toggle_agents(cx),
             Command::CycleAgentPolicy => self.cycle_agent_policy(cx),
+            Command::CycleTheme => self.cycle_theme(cx),
+            Command::CycleAccent => self.cycle_accent(cx),
         }
     }
 
@@ -2814,6 +2830,34 @@ impl RelayApp {
         )
     }
 
+    fn set_theme_choice(&mut self, choice: ThemeChoice) {
+        self.theme_choice = choice;
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("theme", choice.as_str());
+        }
+    }
+
+    fn set_accent_choice(&mut self, choice: AccentChoice) {
+        self.accent_choice = choice;
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("accent", choice.as_str());
+        }
+    }
+
+    fn cycle_theme(&mut self, cx: &mut Context<Self>) {
+        let next = self.theme_choice.next();
+        self.set_theme_choice(next);
+        self.toast(format!("Appearance: {}", next.label()));
+        cx.notify();
+    }
+
+    fn cycle_accent(&mut self, cx: &mut Context<Self>) {
+        let next = self.accent_choice.next();
+        self.set_accent_choice(next);
+        self.toast(format!("Accent: {}", next.label()));
+        cx.notify();
+    }
+
     fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let pill = |id: &'static str, label: SharedString, danger: bool| {
@@ -2923,6 +2967,41 @@ impl RelayApp {
                 cx.notify();
             }))
             .into_any_element();
+        let mut theme_control = div().flex().items_center().gap_1();
+        for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
+            let id = match choice {
+                ThemeChoice::System => "settings-theme-system",
+                ThemeChoice::Light => "settings-theme-light",
+                ThemeChoice::Dark => "settings-theme-dark",
+            };
+            theme_control = theme_control.child(
+                pill(id, choice.label().into(), false)
+                    .when(choice == self.theme_choice, |d| d.bg(t.active))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.set_theme_choice(choice);
+                        cx.notify();
+                    })),
+            );
+        }
+        let mut accent_control = div().flex().items_center().gap_1();
+        for choice in AccentChoice::ALL {
+            let id = match choice {
+                AccentChoice::Blue => "settings-accent-blue",
+                AccentChoice::Purple => "settings-accent-purple",
+                AccentChoice::Green => "settings-accent-green",
+                AccentChoice::Orange => "settings-accent-orange",
+            };
+            accent_control = accent_control.child(
+                pill(id, choice.label().into(), false)
+                    .when(choice == self.accent_choice, |d| d.bg(t.active))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.set_accent_choice(choice);
+                        cx.notify();
+                    })),
+            );
+        }
+        let theme_control = theme_control.into_any_element();
+        let accent_control = accent_control.into_any_element();
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
             div()
                 .id("settings")
@@ -2951,6 +3030,8 @@ impl RelayApp {
                         .child(div().text_size(px(15.)).text_color(t.text).child("Settings"))
                         .child(div().text_size(px(12.)).text_color(t.muted).child("Esc")),
                 )
+                .child(row("Appearance", Some("System follows macOS"), theme_control))
+                .child(row("Accent", None, accent_control))
                 .child(row("Search engine", None, search_btn))
                 .child(row("Ad & tracker blocking", None, blocking_btn))
                 .child(row("Tab sleep timeout", None, sleep_btn))
@@ -3090,7 +3171,7 @@ impl RelayApp {
 
 impl Render for RelayApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.theme = Theme::for_appearance(window.appearance());
+        self.theme = Theme::for_choice(window.appearance(), self.theme_choice, self.accent_choice);
         let title = if self.title_cache.0 == self.seen_version {
             self.title_cache.1.clone()
         } else {
