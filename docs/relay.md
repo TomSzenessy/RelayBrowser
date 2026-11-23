@@ -12,7 +12,7 @@ frontends read it: the native Inspector and the local MCP server.
 | Crate | Owns | Platform |
 |---|---|---|
 | `relay-bridge` | Page protocol (`protocol.rs`), the shared tab state `SharedHub` (`hub.rs`), the `Browser` trait the shell implements, `ChannelBrowser` for off-main-thread callers, `relay_home()` paths | portable |
-| `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy; `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback | policy portable, engine macOS |
+| `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy, download naming policy (`downloads.rs`); `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback | policy portable, engine macOS |
 | `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `login.rs`: pure origin, candidate, fill, and save/decline model with redacted secrets; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
 | `relay-mcp` | `RelayMcp` (rmcp 3.x tool router), user-only Unix socket server, `relay mcp` stdio proxy | portable (Unix) |
 | `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (native menu bar, tab strip with close buttons/agent group/fold/move, panes and split, ⌘K palette, ⌘, Settings overlay, Inspector with console/network filters, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping, web app install/remove). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `tabstrip.rs`: placement/fold logic. `startpage.rs`: new-tab sections and rows. `webapp.rs`: manifest validation and `.app` bundle writer. `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md) with WCAG AA contrast tests. `main.rs`: the CLI (`mcp`, `--app`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
@@ -221,20 +221,30 @@ CRX3 signatures are still not verified (residual).
 
 A navigation WebKit cannot display is accepted as a `WKDownload`; the delegate
 saves it under `~/Downloads/Relay` with a sanitized collision-safe name and
-records URL/filename/path/state and the owning tab in the hub. `⇧⌘J` (View →
-Downloads, palette) opens a panel with active and finished rows, the filename,
-Cancel for a running row, Retry for a failed/cancelled row, Reveal in Finder,
-and Clear finished. The destination path is kept for Reveal but is not shown in
-the row yet, and the rows are not grouped by state (#54). Running rows show native byte progress (received/total and
-percent) from `WKDownload.progress`, polled at 500 ms while any row is active. Cancel marks the row immediately and calls
+records URL/filename/path/state and the owning tab in the hub. The naming
+policy (`relay-webkit/src/downloads.rs`) is portable: it keeps only the last
+path component of the server's suggestion, replaces control characters and `:`,
+turns dot-only names into `download`, and appends `(n)` instead of overwriting.
+Its unit tests run on every platform, including Linux CI, and cover traversal
+(`../`), absolute paths, reserved names, and collisions; only the `WKDownload`
+delegate (`mac.rs`) needs macOS. `⇧⌘J` (View → Downloads, palette) opens a panel
+with **Active** and **Finished** sections, the filename, state/URL, and the
+destination path (home shortened to `~`; the row ellipsizes overflow; before
+WebKit chooses a destination the row says where files save), Cancel for a
+running row, Retry for a failed/cancelled row, Reveal in Finder, and Clear
+finished. `Hub::downloads_in_panel_order` is the one display order — running
+rows first, then finished rows, oldest first within each section — so headings,
+rows, and keyboard selection agree. Running rows show native byte progress
+(received/total and percent) from `WKDownload.progress`, polled at 500 ms while
+any row is active. Cancel marks the row immediately and calls
 `WKDownload.cancel` through the tab's bridge handler; Retry navigates the
 owning tab to the original URL so WebKit decides again whether it is a
-download, creating a fresh row when it is. ↑/↓/Home/End move a visible
-selection and ↩ activates the selected row (Cancel running, Retry failed,
-Reveal done). The metadata is in memory only; the file is the user's, outside the
-profile. The panel and the rest of the GPUI chrome have no VoiceOver labels:
-GPUI 0.2.2 exposes no accessibility tree, so this residual is #64, not a
-downloads-model gap.
+download, creating a fresh row when it is. ↑/↓/Home/End move the selection in
+panel order and ↩ activates the selected row (Cancel running, Retry failed,
+Reveal done). The metadata is in memory only; the file is the user's, outside
+the profile. The panel and the rest of the GPUI chrome have no VoiceOver
+labels: GPUI 0.2.2 exposes no accessibility tree, so this residual is #64, not
+a downloads-model gap.
 
 ## Picture in Picture
 

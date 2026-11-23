@@ -51,6 +51,13 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   (`⇧⌘B`): one query line, wrapped selection, row click opens, × deletes, and
   Bookmarks rows have a move prompt for the folder path. Esc or click-outside
   closes and returns focus to the page.
+- **Downloads:** a modal over the page (`⇧⌘J`) with **Active** and **Finished**
+  sections. A row shows the filename, the state with byte progress and the
+  source URL, then the destination path with the home directory as `~`; long
+  text ellipsizes instead of widening the panel. A running row offers Cancel, a
+  failed row Retry, and a finished row Reveal; Clear finished and the empty
+  state (which says where files save) live with the panel. ↑/↓/Home/End move the
+  selection in section order and ↩ runs the selected row's action.
 - **New tab:** with no active tab, a quiet page with the app name, one search
   field (opens ⌘K), and two columns of Recent / Frequent / Apps / Bookmarks
   rows. Rows are one line with a muted note; empty sections say "Nothing yet";
