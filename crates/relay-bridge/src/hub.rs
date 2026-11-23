@@ -16,6 +16,18 @@ pub type TabId = u64;
 
 pub const MAX_CONSOLE: usize = 1000;
 pub const MAX_NETWORK: usize = 500;
+/// Native message-boundary limits. The injected bridge has softer caps, but a
+/// page can post to the message handler directly, so these are authoritative.
+pub const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_TITLE_BYTES: usize = 2048;
+pub const MAX_URL_BYTES: usize = 8192;
+pub const MAX_CONSOLE_ARGS: usize = 32;
+pub const MAX_CONSOLE_ENTRY_BYTES: usize = 16 * 1024;
+pub const MAX_NETWORK_FIELD_BYTES: usize = 16 * 1024;
+pub const MAX_DOM_NODES: usize = 4000;
+pub const MAX_DOM_TEXT_BYTES: usize = 4096;
+pub const MAX_ATTR_BYTES: usize = 2048;
+pub const MAX_MARKDOWN_BYTES: usize = 256 * 1024;
 
 /// Who issues a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +72,46 @@ struct StoredNode {
     text: String,
     interactive: bool,
     children: Vec<NodeId>,
+}
+
+fn truncate(s: &mut String, max: usize) {
+    if s.len() <= max {
+        return;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    s.push('…');
+}
+
+fn count_dom(node: &DomNode, budget: &mut usize) -> bool {
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    node.children.iter().all(|c| count_dom(c, budget))
+}
+
+fn within_dom_limits(node: &DomNode) -> bool {
+    let mut budget = MAX_DOM_NODES;
+    count_dom(node, &mut budget)
+}
+
+fn truncate_dom(node: &mut DomNode, budget: &mut usize) {
+    if *budget == 0 {
+        node.children.clear();
+        return;
+    }
+    *budget -= 1;
+    truncate(&mut node.text, MAX_DOM_TEXT_BYTES);
+    for value in node.attrs.values_mut() {
+        truncate(value, MAX_ATTR_BYTES);
+    }
+    for child in &mut node.children {
+        truncate_dom(child, budget);
+    }
 }
 
 fn unique_ids(node: &DomNode) -> bool {
@@ -604,6 +656,10 @@ impl SharedHub {
 
     /// Ingest one raw JSON message from a tab's bridge.
     pub fn ingest_json(&self, tab: TabId, json: &str) -> Result<(), serde_json::Error> {
+        // Drop before parsing: a hostile page can bypass the bridge caps.
+        if json.len() > MAX_MESSAGE_BYTES {
+            return Ok(());
+        }
         let msg = PageMessage::parse(json)?;
         self.update(|h| h.ingest(tab, msg));
         Ok(())
@@ -838,7 +894,8 @@ impl Hub {
         }
         let Some(t) = self.tabs.get_mut(&tab) else { return };
         match msg {
-            PageMessage::Hello { url, version } => {
+            PageMessage::Hello { mut url, version } => {
+                truncate(&mut url, MAX_URL_BYTES);
                 t.url = url;
                 t.bridge_version = Some(version);
                 t.load_seq += 1;
@@ -848,28 +905,57 @@ impl Hub {
                 t.load_error = None;
                 t.markdown = None;
             }
-            PageMessage::Page { url, title } => {
+            PageMessage::Page { mut url, mut title } => {
+                truncate(&mut url, MAX_URL_BYTES);
+                truncate(&mut title, MAX_TITLE_BYTES);
                 t.url = url;
                 t.title = title;
             }
-            PageMessage::DomSnapshot { root } => {
-                let _ = t.dom.replace_all(root);
+            PageMessage::DomSnapshot { mut root } => {
+                if root.as_ref().is_some_and(within_dom_limits) {
+                    if let Some(root) = root.as_mut() {
+                        let mut budget = MAX_DOM_NODES;
+                        truncate_dom(root, &mut budget);
+                    }
+                    let _ = t.dom.replace_all(root);
+                }
             }
-            PageMessage::DomPatch { nodes, removed } => {
-                let _ = t.dom.patch(nodes, &removed);
+            PageMessage::DomPatch { mut nodes, removed } => {
+                if nodes.iter().all(within_dom_limits) {
+                    let mut budget = MAX_DOM_NODES;
+                    for n in &mut nodes { truncate_dom(n, &mut budget); }
+                    let _ = t.dom.patch(nodes, &removed);
+                }
             }
             PageMessage::DomAttrs { nodes } => {
-                for update in nodes {
+                for mut update in nodes {
+                    for value in update.attrs.values_mut() { truncate(value, MAX_ATTR_BYTES); }
                     let _ = t.dom.set_attrs(update.id, update.attrs);
                 }
             }
-            PageMessage::Console(c) => {
+            PageMessage::Console(mut c) => {
+                if let Some(source) = c.source.as_mut() {
+                    truncate(source, 512);
+                }
+                c.args.truncate(MAX_CONSOLE_ARGS);
+                let mut total = c.source.as_ref().map(|s| s.len()).unwrap_or(0);
+                c.args.retain_mut(|a| {
+                    truncate(a, MAX_CONSOLE_ENTRY_BYTES);
+                    total += a.len();
+                    total <= MAX_CONSOLE_ENTRY_BYTES
+                });
                 if t.console.len() == MAX_CONSOLE {
                     t.console.pop_front();
                 }
                 t.console.push_back(c);
             }
-            PageMessage::Network(n) => {
+            PageMessage::Network(mut n) => {
+                truncate(&mut n.url, MAX_URL_BYTES);
+                if let Some(v) = n.status_text.as_mut() { truncate(v, 256); }
+                if let Some(v) = n.content_type.as_mut() { truncate(v, 256); }
+                if let Some(v) = n.request_body.as_mut() { truncate(v, MAX_NETWORK_FIELD_BYTES); }
+                if let Some(v) = n.response_body.as_mut() { truncate(v, MAX_NETWORK_FIELD_BYTES); }
+                if let Some(v) = n.error.as_mut() { truncate(v, 1024); }
                 if t.network.len() == MAX_NETWORK {
                     t.network.pop_front();
                 }
@@ -877,8 +963,14 @@ impl Hub {
             }
             PageMessage::Challenge { challenge } => t.challenge = challenge,
             PageMessage::Media { playing } => t.playing_audio = playing,
-            PageMessage::Hotkey { key } => t.hotkeys.push(key),
-            PageMessage::Markdown { text } => t.markdown = Some(text),
+            PageMessage::Hotkey { mut key } => {
+                truncate(&mut key, 64);
+                t.hotkeys.push(key);
+            }
+            PageMessage::Markdown { mut text } => {
+                truncate(&mut text, MAX_MARKDOWN_BYTES);
+                t.markdown = Some(text);
+            }
             PageMessage::Result(_) => unreachable!(),
         }
     }
@@ -962,6 +1054,33 @@ mod tests {
         let out = d.outline(None, 10, true, 100);
         assert_eq!(out.trim(), "[5] button \"New\"");
         assert_eq!(d.interactive_ids(10), vec![5]);
+    }
+
+    #[test]
+    fn native_message_bounds_reject_or_truncate_hostile_payloads() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://x.test/", Owner::User));
+        // Oversized raw message is dropped before parsing.
+        let huge = format!(r#"{{"kind":"page","url":"https://x.test/","title":"{}"}}"#, "x".repeat(MAX_MESSAGE_BYTES));
+        hub.ingest_json(tab, &huge).unwrap();
+        assert!(hub.lock().tab(tab).unwrap().title.is_empty());
+        // Title/URL truncate at the native boundary.
+        hub.ingest_json(tab, &format!(r#"{{"kind":"page","url":"https://x.test/","title":"{}"}}"#, "é".repeat(MAX_TITLE_BYTES))).unwrap();
+        assert!(hub.lock().tab(tab).unwrap().title.len() <= MAX_TITLE_BYTES + 4);
+        // Console args count and bytes are capped.
+        let args = vec!["y".repeat(MAX_CONSOLE_ENTRY_BYTES); MAX_CONSOLE_ARGS + 50];
+        hub.ingest_json(tab, &serde_json::json!({"kind":"console","level":"log","args":args}).to_string()).unwrap();
+        {
+            let t = hub.lock();
+            let c = t.tab(tab).unwrap().console.back().unwrap();
+            assert!(c.args.len() <= MAX_CONSOLE_ARGS);
+            assert!(c.args.iter().map(|a| a.len()).sum::<usize>() <= MAX_CONSOLE_ENTRY_BYTES + 8);
+        }
+        // A snapshot over the node cap is rejected, leaving the old store untouched.
+        let kids: Vec<DomNode> = (0..MAX_DOM_NODES + 1).map(|i| node(i as u32 + 10, "span", "", vec![])).collect();
+        let snap = node(1, "body", "", kids);
+        hub.ingest_json(tab, &serde_json::json!({"kind":"dom_snapshot","root":snap}).to_string()).unwrap();
+        assert!(hub.lock().tab(tab).unwrap().dom.is_empty(), "oversized snapshot must not be accepted");
     }
 
     #[test]

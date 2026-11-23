@@ -127,6 +127,12 @@ set of every node or scans every child list per message. The store also
 unlinks a moved child from its old parent, so repeated patches cannot grow
 orphan links.
 
+The native boundary is authoritative: `ingest_json` drops messages over
+2 MiB before parsing; titles/URLs, console args/total bytes, network fields,
+markdown, DOM text/attributes, and snapshot/patch node counts are capped in
+`relay-bridge` (see the `MAX_*` constants). The JavaScript caps are ergonomic,
+not a security boundary.
+
 Rust treats the patch as untrusted input. `DomStore::replace_all` and `patch`
 reject a message that repeats an id within one tree (or would close a cycle
 through the existing store) and leave the previous tree untouched.

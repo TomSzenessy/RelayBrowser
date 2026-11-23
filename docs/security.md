@@ -162,6 +162,10 @@ known slow German legal site with a documented manual-review exception; a 403,
 - **Reading mode:** the overlay is a sanitized clone (no scripts, inline
   handlers, forms, or copied Relay ids); it is not addressable by agent
   commands.
+- **Bridge message bounds:** the native boundary drops messages over 2 MiB
+  before parsing and caps title/URL, console args/bytes, network fields,
+  markdown, DOM text/attrs, and node counts; JavaScript-side limits are not
+  trusted.
 - **Pages are untrusted:** bridge output is data written by the website. The
   MCP instructions tell agents so, subframe messages are dropped, and replies
   resolve only for their own tab. Pages and agents share
