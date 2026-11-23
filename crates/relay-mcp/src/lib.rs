@@ -72,6 +72,36 @@ pub struct StorageArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchArgs {
+    /// Tab id; defaults to the active tab. Every action runs in this tab.
+    pub tab_id: Option<TabId>,
+    /// Sequential actions; the batch stops at the first failure.
+    pub actions: Vec<BatchStep>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchStep {
+    /// click, type, press_key, scroll, or wait.
+    pub action: String,
+    /// Element id for click/type.
+    pub element_id: Option<NodeId>,
+    /// Text for type, or text to wait for.
+    pub text: Option<String>,
+    /// CSS selector to wait for.
+    pub selector: Option<String>,
+    /// Key name for press_key.
+    pub key: Option<String>,
+    /// Any of ctrl, alt, shift, meta.
+    pub modifiers: Option<Vec<String>>,
+    /// Submit the form after type.
+    pub submit: Option<bool>,
+    /// Pixels to scroll.
+    pub dy: Option<f64>,
+    /// Max wait in ms (default 500, capped 10s).
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReadDomArgs {
     pub tab_id: Option<TabId>,
     /// Element id to start from (default: <body>).
@@ -509,6 +539,74 @@ impl RelayMcp {
             }
         }.await);
         self.audit("wait_for", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        result
+    }
+
+    #[tool(description = "Run sequential click/type/press_key/scroll/wait actions in one tab; stops at the first failure and reports how many ran.")]
+    async fn batch_actions(&self, Parameters(a): Parameters<BatchArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let result = reply(async {
+            let tab = self.tab(a.tab_id)?;
+            if a.actions.is_empty() {
+                return Err(HubError::Browser("actions is empty".into()));
+            }
+            for (i, step) in a.actions.iter().enumerate() {
+                let outcome = match step.action.as_str() {
+                    "click" => {
+                        let target = step.element_id.ok_or_else(|| HubError::Browser(format!("step {} click needs element_id", i + 1)))?;
+                        self.op(tab, Op::Click { target }).await.map(|_| ())
+                    }
+                    "type" => {
+                        let target = step.element_id.ok_or_else(|| HubError::Browser(format!("step {} type needs element_id", i + 1)))?;
+                        let text = step.text.clone().ok_or_else(|| HubError::Browser(format!("step {} type needs text", i + 1)))?;
+                        self.op(tab, Op::Type { target, text, submit: step.submit.unwrap_or(false), clear: true }).await.map(|_| ())
+                    }
+                    "press_key" => {
+                        let key = step.key.clone().ok_or_else(|| HubError::Browser(format!("step {} press_key needs key", i + 1)))?;
+                        let mut modifiers = vec![];
+                        for m in step.modifiers.clone().unwrap_or_default() {
+                            let m = m.to_ascii_lowercase();
+                            if !matches!(m.as_str(), "ctrl" | "alt" | "shift" | "meta") {
+                                return Err(HubError::Browser(format!("step {} has unknown modifier {m:?}", i + 1)));
+                            }
+                            if !modifiers.contains(&m) {
+                                modifiers.push(m);
+                            }
+                        }
+                        self.op(tab, Op::PressKey { key, modifiers }).await.map(|_| ())
+                    }
+                    "scroll" => self.op(tab, Op::Scroll { x: 0.0, y: step.dy.unwrap_or(0.0) }).await.map(|_| ()),
+                    "wait" => {
+                        let timeout = Duration::from_millis(step.timeout_ms.unwrap_or(500).min(10_000));
+                        if let (None, None) = (&step.text, &step.selector) {
+                            tokio::time::sleep(timeout).await;
+                        } else {
+                            let start = std::time::Instant::now();
+                            loop {
+                                let hit = {
+                                    let h = self.hub.lock();
+                                    let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
+                                    t.dom.root().and_then(|r| t.dom.tree(r, 80)).map(|root| !matching_nodes(&root, step.text.as_deref(), step.selector.as_deref(), 1).is_empty()).unwrap_or(false)
+                                };
+                                if hit { break; }
+                                if start.elapsed() >= timeout {
+                                    return Err(HubError::Browser(format!("step {} wait did not appear within {} ms", i + 1, timeout.as_millis())));
+                                }
+                                tokio::time::sleep(Duration::from_millis(50)).await;
+                            }
+                        }
+                        Ok(())
+                    }
+                    other => Err(HubError::Browser(format!("step {} has unknown action {other:?}; use click, type, press_key, scroll, wait", i + 1))),
+                };
+                if let Err(e) = outcome {
+                    self.audit("batch_actions", &self.host_for(tab), Some(tab), "error");
+                    return Err(e);
+                }
+            }
+            self.audit("batch_actions", &self.host_for(tab), Some(tab), "ok");
+            Ok(ok(format!("Completed {} actions.", a.actions.len())))
+        }.await);
         result
     }
 
