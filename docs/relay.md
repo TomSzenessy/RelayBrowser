@@ -426,6 +426,16 @@ the error is only logged.
 `if-domain` lists every such host (`Compiled::allow_sites`, subdomains
 included), so requests and element hiding on those pages are left alone.
 
+Filter lists use EasyList syntax. A `$domain` list that mixes includes and
+excludes (`$domain=news.test|~blog.news.test`) compiles to the include block
+plus an ordered `ignore-previous-rules` exception for the excluded hosts,
+because WebKit accepts only one of `if-domain`/`unless-domain` per trigger.
+The exception also relaxes earlier rules with the same URL filter on the
+excluded host, since WebKit cannot scope it to one block. An element-hiding
+scope that mixes them (`news.test,~blog.news.test##.ad`) is skipped and
+counted: the only WebKit exception would cancel network blocking on that page
+too.
+
 "Toggle Compatibility Mode on This Site" flips `SitePrefs.compat_mode`: the
 tab then sends a Safari-shaped user agent (`SAFARI_USER_AGENT`, via
 `Engine::set_user_agent` / `customUserAgent`) for sites that reject WebKit's

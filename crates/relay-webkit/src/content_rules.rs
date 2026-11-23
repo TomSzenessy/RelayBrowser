@@ -4,10 +4,12 @@
 //! Supported subset (covers the bulk of EasyList/EasyPrivacy):
 //! `||domain^`, `|https://…`, plain substrings, `*` wildcards, `@@` exceptions,
 //! `$third-party`, `$~third-party`, `$script,image,stylesheet,font,media,
-//! xmlhttprequest,subdocument,popup,ping,websocket`, `$domain=a|~b`,
-//! `$match-case`, and element hiding `##sel` / `domain##sel`.
-//! Anything else (regex filters, `#?#`, `#@#`, `$redirect`, `$csp`, scriptlets)
-//! is skipped and counted.
+//! xmlhttprequest,subdocument,popup,ping,websocket`, `$domain=a|~b` (a mixed
+//! scope compiles to a block plus an ordered `ignore-previous-rules`
+//! exception, because WebKit allows one domain condition per trigger; a mixed
+//! element-hiding scope is skipped), `$match-case`, and element hiding `##sel`
+//! / `domain##sel`. Anything else (regex filters, `#?#`, `#@#`, `$redirect`,
+//! `$csp`, scriptlets) is skipped and counted.
 
 use serde_json::{json, Value};
 
@@ -103,12 +105,18 @@ pub fn compile(filters: &str) -> Compiled {
             continue;
         }
         match compile_line(line) {
-            Some((rule, true)) => exceptions.push(rule),
-            Some((rule, false)) => out.rules.push(rule),
+            Some(rules) => {
+                for (rule, kind) in rules {
+                    match kind {
+                        RuleKind::Block | RuleKind::InlineException => out.rules.push(rule),
+                        RuleKind::Exception => exceptions.push(rule),
+                    }
+                }
+            }
             None => out.skipped += 1,
         }
     }
-    // ignore-previous-rules only affects rules listed before it.
+    // Plain `@@` exceptions apply to every block rule before them, so they run last.
     out.rules.extend(exceptions);
     if out.rules.len() > WEBKIT_MAX_RULES {
         out.skipped += out.rules.len() - WEBKIT_MAX_RULES;
@@ -117,8 +125,23 @@ pub fn compile(filters: &str) -> Compiled {
     out
 }
 
-/// Returns the rule and whether it is an exception.
-fn compile_line(line: &str) -> Option<(Value, bool)> {
+/// Where a compiled rule goes relative to the others. WebKit evaluates rules in
+/// list order, and `ignore-previous-rules` cancels every earlier rule that
+/// matches the request.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RuleKind {
+    Block,
+    /// `@@` exception: kept to the end so it can cancel all block rules.
+    Exception,
+    /// Mixed `$domain` exception: paired with the block just before it, so it
+    /// stays inline and cannot cancel unrelated rules compiled later.
+    InlineException,
+}
+
+/// Returns the rules for one filter in evaluation order; an empty vector means
+/// the filter is valid but its domain scope can never match. `None` means
+/// unsupported syntax, counted in [`Compiled::skipped`].
+fn compile_line(line: &str) -> Option<Vec<(Value, RuleKind)>> {
     if line.contains("#?#") || line.contains("#@#") || line.contains("#$#") || line.contains("##+js") {
         return None;
     }
@@ -127,9 +150,17 @@ fn compile_line(line: &str) -> Option<(Value, bool)> {
         if selector.is_empty() {
             return None;
         }
+        let scope = DomainScope::parse(domains.split(',').filter(|d| !d.is_empty()))?;
         let mut trigger = json!({ "url-filter": ".*" });
-        apply_domains(&mut trigger, domains.split(',').filter(|d| !d.is_empty()))?;
-        return Some((json!({ "trigger": trigger, "action": { "type": "css-display-none", "selector": selector } }), false));
+        match apply_domains(&mut trigger, &scope) {
+            DomainApplication::Applied => {}
+            DomainApplication::Never => return Some(vec![]),
+            // A CSS exception would need url-filter `.*`, which would also cancel
+            // network blocking on the excluded page. WebKit has no CSS-only undo.
+            DomainApplication::Split(_) => return None,
+        }
+        let rule = json!({ "trigger": trigger, "action": { "type": "css-display-none", "selector": selector } });
+        return Some(vec![(rule, RuleKind::Block)]);
     }
 
     let (exception, body) = match line.strip_prefix("@@") {
@@ -144,6 +175,7 @@ fn compile_line(line: &str) -> Option<(Value, bool)> {
         return None; // raw regex filters use syntax WebKit does not support
     }
     let mut trigger = json!({ "url-filter": url_filter(pattern)? });
+    let mut scope = DomainScope::Any;
     if let Some(opts) = options {
         let mut types = vec![];
         for opt in opts.split(',') {
@@ -152,7 +184,7 @@ fn compile_line(line: &str) -> Option<(Value, bool)> {
                 "~third-party" | "first-party" => trigger["load-type"] = json!(["first-party"]),
                 "match-case" => trigger["url-filter-is-case-sensitive"] = json!(true),
                 "important" => {}
-                o if o.starts_with("domain=") => apply_domains(&mut trigger, o[7..].split('|'))?,
+                o if o.starts_with("domain=") => scope = DomainScope::parse(o[7..].split('|'))?,
                 o => types.push(resource_type(o)?),
             }
         }
@@ -162,7 +194,23 @@ fn compile_line(line: &str) -> Option<(Value, bool)> {
         }
     }
     let action = if exception { "ignore-previous-rules" } else { "block" };
-    Some((json!({ "trigger": trigger, "action": { "type": action } }), exception))
+    let kind = if exception { RuleKind::Exception } else { RuleKind::Block };
+    match apply_domains(&mut trigger, &scope) {
+        DomainApplication::Applied => Some(vec![(json!({ "trigger": trigger, "action": { "type": action } }), kind)]),
+        DomainApplication::Never => Some(vec![]),
+        DomainApplication::Split(exception_trigger) => {
+            // An allow rule narrowed to include-minus-exclude would need both
+            // conditions on one trigger, and a second exception cannot undo the
+            // first. Skip it rather than widening the allow to the excluded host.
+            if exception {
+                return None;
+            }
+            Some(vec![
+                (json!({ "trigger": trigger, "action": { "type": "block" } }), RuleKind::Block),
+                (json!({ "trigger": exception_trigger, "action": { "type": "ignore-previous-rules" } }), RuleKind::InlineException),
+            ])
+        }
+    }
 }
 
 fn resource_type(opt: &str) -> Option<&'static str> {
@@ -180,26 +228,96 @@ fn resource_type(opt: &str) -> Option<&'static str> {
     })
 }
 
-fn apply_domains<'a>(trigger: &mut Value, domains: impl Iterator<Item = &'a str>) -> Option<()> {
-    let (mut inc, mut exc) = (vec![], vec![]);
-    for d in domains {
-        let d = d.trim().to_ascii_lowercase();
-        if d.is_empty() || d.contains('*') {
-            return None;
+/// A `$domain` or `domain##` scope after resolving which sides can matter.
+#[derive(Debug, PartialEq)]
+enum DomainScope {
+    Any,
+    Include(Vec<String>),
+    Exclude(Vec<String>),
+    IncludeExcept { include: Vec<String>, except: Vec<String> },
+    /// Every included host is excluded: the filter can never match.
+    Never,
+}
+
+impl DomainScope {
+    fn parse<'a>(domains: impl Iterator<Item = &'a str>) -> Option<Self> {
+        let (mut include, mut except) = (vec![], vec![]);
+        for d in domains {
+            let d = d.trim().to_ascii_lowercase();
+            if d.is_empty() || d.contains('*') {
+                return None;
+            }
+            match d.strip_prefix('~') {
+                Some(x) if x.is_empty() => return None,
+                Some(x) => push_unique(&mut except, x),
+                None => push_unique(&mut include, &d),
+            }
         }
-        match d.strip_prefix('~') {
-            Some(x) => exc.push(format!("*{x}")),
-            None => inc.push(format!("*{d}")),
+        Some(match (include.is_empty(), except.is_empty()) {
+            (true, true) => Self::Any,
+            (false, true) => Self::Include(include),
+            (true, false) => Self::Exclude(except),
+            (false, false) => Self::mixed(include, except),
+        })
+    }
+
+    /// A WebKit include matches the host and its subdomains, so an include
+    /// inside an excluded host can never match, while an exclusion outside
+    /// every include cannot change a match. Keep only the domains that matter.
+    fn mixed(include: Vec<String>, except: Vec<String>) -> Self {
+        let include: Vec<String> = include.into_iter().filter(|i| !except.iter().any(|e| covers(e, i))).collect();
+        if include.is_empty() {
+            return Self::Never;
+        }
+        let except: Vec<String> = except.into_iter().filter(|e| include.iter().any(|i| covers(i, e))).collect();
+        if except.is_empty() {
+            Self::Include(include)
+        } else {
+            Self::IncludeExcept { include, except }
         }
     }
-    // WebKit allows only one of if-domain / unless-domain per trigger.
-    match (inc.is_empty(), exc.is_empty()) {
-        (false, true) => trigger["if-domain"] = json!(inc),
-        (true, false) => trigger["unless-domain"] = json!(exc),
-        (true, true) => {}
-        (false, false) => trigger["if-domain"] = json!(inc),
+}
+
+/// True when `domain` is `host` itself or a subdomain of it.
+fn covers(host: &str, domain: &str) -> bool {
+    domain == host || domain.strip_suffix(host).is_some_and(|prefix| prefix.ends_with('.'))
+}
+
+fn push_unique(domains: &mut Vec<String>, domain: &str) {
+    if !domains.iter().any(|d| d == domain) {
+        domains.push(domain.to_string());
     }
-    Some(())
+}
+
+/// What one trigger can carry. WebKit rejects two domain conditions on one
+/// trigger (`JSONMultipleConditions`), so a mixed scope returns a second
+/// trigger for the paired `ignore-previous-rules` exception.
+enum DomainApplication {
+    Applied,
+    Split(Value),
+    Never,
+}
+
+fn apply_domains(trigger: &mut Value, scope: &DomainScope) -> DomainApplication {
+    let webkit = |domains: &[String]| domains.iter().map(|d| format!("*{d}")).collect::<Vec<_>>();
+    match scope {
+        DomainScope::Any => DomainApplication::Applied,
+        DomainScope::Include(include) => {
+            trigger["if-domain"] = json!(webkit(include));
+            DomainApplication::Applied
+        }
+        DomainScope::Exclude(except) => {
+            trigger["unless-domain"] = json!(webkit(except));
+            DomainApplication::Applied
+        }
+        DomainScope::IncludeExcept { include, except } => {
+            trigger["if-domain"] = json!(webkit(include));
+            let mut exception = trigger.clone();
+            exception["if-domain"] = json!(webkit(except));
+            DomainApplication::Split(exception)
+        }
+        DomainScope::Never => DomainApplication::Never,
+    }
 }
 
 /// Translate an ABP pattern to WebKit's regex subset (no `|`, `{}`, `\d`).
@@ -253,6 +371,35 @@ mod tests {
         compile(filter).rules[0]["trigger"]["url-filter"].as_str().unwrap().to_string()
     }
 
+    fn domain_matches(patterns: &Value, page: &str) -> bool {
+        patterns.as_array().unwrap().iter().any(|pattern| {
+            let pattern = pattern.as_str().unwrap();
+            let host = pattern.strip_prefix('*').unwrap_or(pattern);
+            page == host || page.strip_suffix(host).is_some_and(|prefix| prefix.ends_with('.'))
+        })
+    }
+
+    /// WebKit applies rules in order and `ignore-previous-rules` cancels every
+    /// match before it. Every rule in these tests shares one url-filter, so the
+    /// domain condition alone decides whether it matches.
+    fn blocks_on(compiled: &Compiled, page: &str) -> bool {
+        let mut blocked = false;
+        for rule in &compiled.rules {
+            let trigger = &rule["trigger"];
+            let included = trigger.get("if-domain").is_none_or(|d| domain_matches(d, page));
+            let not_excluded = trigger.get("unless-domain").is_none_or(|d| !domain_matches(d, page));
+            if !included || !not_excluded {
+                continue;
+            }
+            match rule["action"]["type"].as_str().unwrap() {
+                "block" => blocked = true,
+                "ignore-previous-rules" => blocked = false,
+                _ => {}
+            }
+        }
+        blocked
+    }
+
     #[test]
     fn domain_anchor() {
         assert_eq!(regex_of("||ads.example.com^"), "^[^:]+://+([^:/]+\\.)?ads\\.example\\.com[:/?]");
@@ -261,10 +408,91 @@ mod tests {
     #[test]
     fn options_map_to_webkit_triggers() {
         let c = compile("||tracker.test^$third-party,script,domain=news.test|~blog.news.test");
-        let t = &c.rules[0]["trigger"];
-        assert_eq!(t["load-type"], json!(["third-party"]));
-        assert_eq!(t["resource-type"], json!(["script"]));
-        assert_eq!(t["if-domain"], json!(["*news.test"]));
+        assert_eq!((c.rules.len(), c.skipped), (2, 0));
+
+        let block = &c.rules[0];
+        assert_eq!(block["action"]["type"], "block");
+        assert_eq!(block["trigger"]["load-type"], json!(["third-party"]));
+        assert_eq!(block["trigger"]["resource-type"], json!(["script"]));
+        assert_eq!(block["trigger"]["if-domain"], json!(["*news.test"]));
+        assert!(block["trigger"].get("unless-domain").is_none());
+
+        let exception = &c.rules[1];
+        assert_eq!(exception["action"]["type"], "ignore-previous-rules");
+        assert_eq!(exception["trigger"]["load-type"], json!(["third-party"]));
+        assert_eq!(exception["trigger"]["resource-type"], json!(["script"]));
+        assert_eq!(exception["trigger"]["if-domain"], json!(["*blog.news.test"]));
+        assert_eq!(exception["trigger"]["url-filter"], block["trigger"]["url-filter"]);
+        assert!(
+            c.rules.iter().all(|r| r["trigger"].get("if-domain").is_none() || r["trigger"].get("unless-domain").is_none()),
+            "WebKit rejects a trigger with both domain conditions"
+        );
+
+        assert!(blocks_on(&c, "news.test"));
+        assert!(blocks_on(&c, "sub.news.test"));
+        assert!(!blocks_on(&c, "blog.news.test"));
+        assert!(!blocks_on(&c, "sub.blog.news.test"));
+        assert!(!blocks_on(&c, "other.test"));
+    }
+
+    #[test]
+    fn domain_scopes_keep_each_side() {
+        // Exclusion only: the block applies everywhere except the excluded host.
+        let c = compile("||tracker.test^$domain=~blog.news.test");
+        assert_eq!(c.rules.len(), 1);
+        assert_eq!(c.rules[0]["trigger"]["unless-domain"], json!(["*blog.news.test"]));
+        assert!(blocks_on(&c, "news.test"));
+        assert!(!blocks_on(&c, "blog.news.test"));
+
+        // An exclusion outside the included host cannot change a match.
+        let c = compile("||tracker.test^$domain=news.test|~other.test");
+        assert_eq!(c.rules.len(), 1);
+        assert_eq!(c.rules[0]["trigger"]["if-domain"], json!(["*news.test"]));
+        assert!(blocks_on(&c, "news.test"));
+        assert!(!blocks_on(&c, "other.test"));
+
+        // The exclusion covers the include: the filter can never match.
+        let c = compile("||tracker.test^$domain=blog.news.test|~news.test");
+        assert!(c.rules.is_empty());
+        assert_eq!(c.skipped, 0);
+        assert!(!blocks_on(&c, "blog.news.test"));
+
+        // A malformed exclusion is unsupported, not a bare `*` domain.
+        let c = compile("||tracker.test^$domain=news.test|~");
+        assert!(c.rules.is_empty());
+        assert_eq!(c.skipped, 1);
+    }
+
+    #[test]
+    fn mixed_domain_scopes_webkit_cannot_express_are_skipped() {
+        // A narrowed allow would need both conditions on one trigger; a second
+        // exception cannot undo the first.
+        let c = compile("@@||tracker.test^$domain=news.test|~blog.news.test");
+        assert!(c.rules.is_empty());
+        assert_eq!(c.skipped, 1);
+
+        // A CSS exception with url-filter `.*` would also cancel network
+        // blocking on the excluded page, so the whole scope is unsupported.
+        let c = compile("news.test,~blog.news.test##.promo");
+        assert!(c.rules.is_empty());
+        assert_eq!(c.skipped, 1);
+
+        // Exclusion-only element hiding stays expressible.
+        let c = compile("~blog.news.test##.promo");
+        assert_eq!(c.rules.len(), 1);
+        assert_eq!(c.rules[0]["trigger"]["unless-domain"], json!(["*blog.news.test"]));
+        assert_eq!(c.rules[0]["action"], json!({"type": "css-display-none", "selector": ".promo"}));
+    }
+
+    #[test]
+    fn mixed_domain_exception_stays_with_its_block() {
+        let c = compile("||tracker.test^$domain=news.test|~blog.news.test\n||tracker.test^$domain=blog.news.test");
+        assert_eq!(c.rules.len(), 3);
+        assert_eq!(c.rules[1]["action"]["type"], "ignore-previous-rules");
+        assert_eq!(c.rules[2]["action"]["type"], "block");
+        assert_eq!(c.rules[2]["trigger"]["if-domain"], json!(["*blog.news.test"]));
+        assert!(blocks_on(&c, "blog.news.test"), "the later block survives its inline exception");
+        assert!(blocks_on(&c, "news.test"));
     }
 
     #[test]
