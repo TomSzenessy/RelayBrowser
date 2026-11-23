@@ -158,21 +158,33 @@ on this repository); never use a public issue for an unpatched report.
   over the local socket, and stores nothing; it obeys Stop/Block. Like any
   screenshot it can include private page pixels, so the user controls when an
   agent is attached.
-- **Shell writes:** theme/accent/start-section and an allowlist of settings
-  are off by default; a global switch or a per-client grant (recorded on MCP
-  initialize, managed in Settings → Connected agents) is required. Writes
-  require an explicit plan id (single-use, 60 s), reject
-  `mcp`/`shell_control`/`agent_eval`, validate shortcut action ids/duplicates/reserved keys, allow only
-  inspector/agents/off for the sidebar, cap/control-strip the one start-page
-  widget, and push bounded hub
-  changes; `shell_apply` records the MCP client name, plan id, and before/after
-  hashes, not values. No arbitrary code or shortcut writes.
+- **Shell writes:** theme/accent/start-section/sidebar/widget and an allowlist
+  of settings are off by default; a global switch or a per-client grant
+  (recorded on MCP initialize, managed in Settings → Connected agents and the
+  Agent sidebar) is required, and revoking a grant applies on the next tool
+  call without a restart. Writes require an explicit plan id (single-use, 60 s,
+  at most 32 pending), reject unknown JSON fields, and accept only
+  `system`/`light`/`dark`, the four AA-tested accents, an ordered unique
+  start-section subset, inspector/agents/off, at most eight allowlisted
+  settings (each value ≤4096 bytes), and one control-stripped ≤80/≤280 text
+  widget. `mcp`, `shell_control`, `agent_eval`, `mcp_socket`,
+  `mcp_socket_path`, and `clear_data` are reserved. Shortcut plans are checked
+  against the shared action table and the live default keymap (unknown ids,
+  duplicates, default conflicts, bare keys, and ⌘Q misuse fail before a plan
+  exists). The start page has no URL/HTML/script input; the widget is plain
+  text and refuses angle brackets or `javascript:`. `shell_apply` records the MCP client name, plan id, result, and
+  before/after hashes, not values. Denied attempts and failed writes are
+  audited; an unknown or expired id returns an error and writes no row because
+  nothing was applied. No arbitrary code or shortcut writes.
 - **Shell read tools:** `shell_*` tools return a bounded allowlist of settings,
-  shortcut overrides, section order, installed apps, and version. They cannot
-  write or execute code; the page/agent boundary is unchanged.
-- **Agent audit:** each MCP tool writes tool/host/tab/outcome/time to the
-  local profile, capped at 5,000 rows, with no typed text, cookie values, or
-  page content. The write is best-effort; `relay clear-data --audit`.
+  shortcut overrides and defaults, section order, live sidebar state, installed
+  apps, and version. They cannot write or execute code; the page/agent boundary
+  is unchanged, and each read writes one audit row.
+- **Agent audit:** each executed MCP tool call writes tool/host/tab/outcome/time
+  to the local profile, capped at 5,000 rows, with no typed text, cookie values,
+  or page content. An unknown or expired shell plan id returns before writing a
+  row because nothing was applied. The write is best-effort;
+  `relay clear-data --audit`.
 - **Downloads:** WebKit downloads are saved to `~/Downloads/Relay` with a
   sanitized basename and collision suffix; the panel's Cancel calls the native
   `WKDownload.cancel` for a running row, and Retry only re-navigates the owning

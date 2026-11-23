@@ -10,6 +10,6 @@ pub mod protocol;
 pub mod url_policy;
 
 pub use channel::{BrowserRequest, ChannelBrowser};
-pub use hub::{run_op, Actor, Browser, Cookie, DomStore, Hub, HubError, Owner, SharedHub, Download, DownloadState, ShellChange, TabId, TabState, TabSummary, TabView};
+pub use hub::{run_op, Actor, Browser, Cookie, DomStore, Hub, HubError, Owner, SharedHub, Download, DownloadState, ShellChange, SidebarState, TabId, TabState, TabSummary, TabView};
 pub use protocol::{Challenge, Command, CommandResult, ConsoleEntry, ConsoleLevel, DomNode, NetworkEntry, NodeId, Op, PageMessage, BRIDGE_JS, PROTOCOL_VERSION};
 pub use url_policy::{host_of, is_http_url, is_openable_url, AgentPolicy};

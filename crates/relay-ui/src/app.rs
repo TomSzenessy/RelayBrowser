@@ -238,6 +238,15 @@ enum SidebarTab {
     Inspector,
 }
 
+impl SidebarTab {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Agent => "agents",
+            Self::Inspector => "inspector",
+        }
+    }
+}
+
 struct ShortcutEditor {
     recording: Option<ActionId>,
 }
@@ -761,7 +770,7 @@ impl RelayApp {
                     shell_changed = true;
                 }
                 relay_bridge::ShellChange::Setting { key, value } => {
-                    self.apply_shell_setting(&key, &value);
+                    self.apply_shell_setting(&key, &value, cx);
                     shell_changed = true;
                 }
                 relay_bridge::ShellChange::Sidebar { open, tab } => {
@@ -1632,6 +1641,7 @@ impl RelayApp {
             Command::Forward => active.into_iter().for_each(|t| self.web.borrow_mut().apply(BrowserRequest::GoForward(t))),
             Command::ToggleInspector => {
                 self.inspector_open = !self.inspector_open;
+                self.hub.set_sidebar(self.inspector_open, self.sidebar_tab.as_str());
                 if self.inspector_open {
                     if let Some(t) = active {
                         self.web.borrow_mut().apply(BrowserRequest::RefreshCookies(t));
@@ -2597,6 +2607,7 @@ impl RelayApp {
                     .when(on, |d| d.bg(t.active))
                     .on_click(cx.listener(move |app, _, _, cx| {
                         app.sidebar_tab = tab;
+                        app.hub.set_sidebar(app.inspector_open, tab.as_str());
                         cx.notify();
                     }))
                     .child(label),
@@ -2617,6 +2628,7 @@ impl RelayApp {
                 .hover(|s| s.bg(t.hover).text_color(t.text))
                 .on_click(cx.listener(|app, _, _, cx| {
                     app.inspector_open = false;
+                    app.hub.set_sidebar(false, app.sidebar_tab.as_str());
                     app.focus_active_page();
                     cx.notify();
                 }))
@@ -2651,6 +2663,8 @@ impl RelayApp {
             })
             .unwrap_or_else(|| ("no site".to_string(), relay_bridge::AgentPolicy::Allow));
         let paused = self.hub.agents_paused();
+        let clients = self.store.as_ref().and_then(|s| s.mcp_clients().ok()).unwrap_or_default();
+        let granted = clients.iter().filter(|c| c.granted).count();
         let button = |id: &'static str, label: &'static str| {
             div()
                 .id(id)
@@ -2665,6 +2679,61 @@ impl RelayApp {
                 .hover(|s| s.bg(t.hover))
                 .child(label)
         };
+        let mut shell_section = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().text_size(px(11.)).text_color(t.text).child("Shell writes"))
+            .child(div().text_size(px(10.)).text_color(t.muted).child(if self.shell_control {
+                "The global switch is on for every client; Revoke still removes a stored grant."
+            } else {
+                "Off by default. Grant one connected agent; Revoke applies on its next tool call, no restart."
+            }));
+        if clients.is_empty() {
+            shell_section = shell_section.child(div().text_size(px(10.)).text_color(t.muted).child("No MCP agent has connected yet."));
+        }
+        for c in &clients {
+            let name = c.name.clone();
+            let granted = c.granted;
+            shell_section = shell_section.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_size(px(11.)).text_color(t.text).child(c.name.clone()))
+                            .child(div().text_size(px(10.)).text_color(t.muted).child(if granted {
+                                "may plan/apply shell changes"
+                            } else {
+                                "connected; no shell writes"
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("agent-grant-{}", c.name)))
+                            .px_2()
+                            .py_0p5()
+                            .rounded(px(4.))
+                            .border_1()
+                            .border_color(t.border)
+                            .text_size(px(10.))
+                            .text_color(if granted { t.accent } else { t.text })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .child(shell_grant_action(granted))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_mcp_client_granted(&name, !granted, now_unix());
+                                }
+                                cx.notify();
+                            })),
+                    ),
+            );
+        }
         div()
             .p_3()
             .flex()
@@ -2682,7 +2751,7 @@ impl RelayApp {
                     .child(format!("Socket: {}", self.mcp_socket))
                     .child(format!("Status: {}", if paused { "paused" } else { "accepting tool calls" }))
                     .child(format!("eval_js: {}", if self.agent_eval { "on (Allow sites only)" } else { "off" }))
-                    .child(format!("shell writes: {}", if self.shell_control { "on" } else { "off" }))
+                    .child(format!("shell writes: {}", shell_write_summary(self.shell_control, granted)))
                     .child(format!("This site: {host} · {}", policy.label())),
             )
             .child(
@@ -2698,6 +2767,7 @@ impl RelayApp {
                             .on_click(cx.listener(|app, _, _, cx| app.cycle_agent_policy(cx))),
                     ),
             )
+            .child(shell_section)
             .child(
                 div()
                     .id("agent-copy-setup")
@@ -3230,7 +3300,7 @@ impl RelayApp {
         )
     }
 
-    fn apply_shell_setting(&mut self, key: &str, value: &str) {
+    fn apply_shell_setting(&mut self, key: &str, value: &str, cx: &mut Context<Self>) {
         match key {
             "search" => self.search = value.to_string(),
             "blocking" => {
@@ -3254,6 +3324,9 @@ impl RelayApp {
             "restore_session" => self.session_enabled = setting_enabled(Some(value)),
             "keybindings" => {
                 self.keymap = Keymap::from_setting(Some(value));
+                // Rebinding menus and GPUI keys is what makes the shortcut
+                // fire now, not after a restart.
+                self.apply_keymap(cx);
             }
             _ => {}
         }
@@ -3358,9 +3431,10 @@ impl RelayApp {
     }
 
     fn apply_keymap(&mut self, cx: &mut Context<Self>) {
+        let (bindings, menus) = live_keymap(&self.keymap, self.app_name.as_deref());
         cx.clear_key_bindings();
-        cx.bind_keys(self.keymap.bindings());
-        cx.set_menus(app_menus_named(self.app_name.as_deref()));
+        cx.bind_keys(bindings);
+        cx.set_menus(menus);
         self.restore_keymap();
     }
 
@@ -3857,7 +3931,7 @@ impl RelayApp {
         for c in clients {
             let name = c.name.clone();
             let granted = c.granted;
-            let action = if granted { "Revoke" } else { "Grant" };
+            let action = shell_grant_action(granted);
             let btn = div()
                 .id(SharedString::from(format!("grant-{}", c.name)))
                 .px_2()
@@ -3872,11 +3946,7 @@ impl RelayApp {
                 .child(action)
                 .on_click(cx.listener(move |app, _, _, cx| {
                     if let Some(store) = &app.store {
-                        let at = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs() as i64)
-                            .unwrap_or(0);
-                        let _ = store.set_mcp_client_granted(&name, !granted, at);
+                        let _ = store.set_mcp_client_granted(&name, !granted, now_unix());
                     }
                     cx.notify();
                 }))
@@ -4463,6 +4533,26 @@ fn now_unix() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+fn shell_grant_action(granted: bool) -> &'static str {
+    if granted { "Revoke" } else { "Grant" }
+}
+
+/// The binding and menu set GPUI installs for a keymap. One owner keeps the
+/// Settings editor and an agent-applied `keybindings` change in step.
+fn live_keymap(keymap: &Keymap, app_name: Option<&str>) -> (Vec<KeyBinding>, Vec<Menu>) {
+    (keymap.bindings(), app_menus_named(app_name))
+}
+
+fn shell_write_summary(global: bool, granted: usize) -> String {
+    if global {
+        "on (all clients)".into()
+    } else if granted == 0 {
+        "off".into()
+    } else {
+        format!("{granted} client{} granted", if granted == 1 { "" } else { "s" })
+    }
+}
+
 /// Built-in list plus the user's `relay_home()/filters.txt` (EasyList syntax).
 /// The content-blocker JSON: built-in + cookie-banner + `filters.txt` rules,
 /// then an exception for every site the user turned blocking off on.
@@ -4895,5 +4985,35 @@ mod tests {
         assert!(menus.iter().any(|m| m.name == "Edit"), "Edit menu");
         assert_eq!(app_menus_named(Some("Relay Shop"))[0].name, "Relay Shop");
         assert_eq!(app_menus()[0].name, "Relay");
+    }
+
+    #[test]
+    fn shell_grant_labels_and_summary_are_stable() {
+        assert_eq!(shell_grant_action(false), "Grant");
+        assert_eq!(shell_grant_action(true), "Revoke");
+        assert_eq!(shell_write_summary(false, 0), "off");
+        assert_eq!(shell_write_summary(false, 1), "1 client granted");
+        assert_eq!(shell_write_summary(false, 3), "3 clients granted");
+        assert_eq!(shell_write_summary(true, 0), "on (all clients)");
+    }
+
+    #[test]
+    fn shell_keybinding_setting_reaches_live_bindings_and_menus() {
+        // The MCP shell path parses this same string and calls apply_keymap,
+        // so the active map is what Settings/palette show without a restart.
+        let keymap = Keymap::from_setting(Some("find=ctrl-alt-f"));
+        let (bindings, menus) = live_keymap(&keymap, Some("Relay"));
+        assert_eq!(bindings.len(), ActionId::ALL.len());
+        let find_index = ActionId::ALL.iter().position(|id| *id == ActionId::Find).expect("Find action");
+        let key = &bindings[find_index].keystrokes()[0];
+        assert_eq!(key.key(), "f");
+        assert!(key.modifiers().control && key.modifiers().alt, "ctrl-alt-f modifiers");
+        assert!(
+            menus.iter().flat_map(|m| m.items.iter()).any(|i| matches!(i, MenuItem::Action { action, .. } if action.name() == Find.name())),
+            "the Find menu action is rebuilt too"
+        );
+        // A reserved/conflicting override is skipped and leaves the default.
+        let skipped = Keymap::from_setting(Some("find=secondary-k"));
+        assert_eq!(skipped.key(ActionId::Find), ActionId::Find.default_key());
     }
 }
