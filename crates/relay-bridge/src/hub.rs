@@ -570,6 +570,7 @@ pub enum ShellChange {
     Theme { theme: String, accent: String },
     StartSections { sections: String },
     Setting { key: String, value: String },
+    Sidebar { open: bool, tab: String },
 }
 
 /// Thread-safe handle shared by the UI, the WebKit layer, and the MCP server.

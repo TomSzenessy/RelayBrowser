@@ -757,6 +757,11 @@ impl RelayApp {
                     self.apply_shell_setting(&key, &value);
                     shell_changed = true;
                 }
+                relay_bridge::ShellChange::Sidebar { open, tab } => {
+                    self.inspector_open = open;
+                    self.sidebar_tab = if tab == "agents" { SidebarTab::Agent } else { SidebarTab::Inspector };
+                    shell_changed = true;
+                }
             }
         }
         if shell_changed {

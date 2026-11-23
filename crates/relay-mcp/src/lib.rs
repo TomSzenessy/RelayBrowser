@@ -48,6 +48,7 @@ struct PendingPlan {
     accent: Option<String>,
     sections: Option<String>,
     settings: BTreeMap<String, String>,
+    sidebar: Option<String>,
     created: Instant,
 }
 
@@ -98,6 +99,8 @@ pub struct PlanChangeArgs {
     /// Allowlisted shell settings (search, blocking, sleep_minutes,
     /// tabs_position, tabs_folded, restore_session).
     pub settings: Option<BTreeMap<String, String>>,
+    /// inspector, agents, or off.
+    pub sidebar: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -506,7 +509,13 @@ impl RelayMcp {
         for (key, value) in &settings {
             validate_shell_setting(key, value)?;
         }
-        if theme.is_none() && accent.is_none() && sections.is_none() && settings.is_empty() {
+        let sidebar = a.sidebar.map(|s| s.to_ascii_lowercase());
+        if let Some(s) = &sidebar {
+            if !matches!(s.as_str(), "inspector" | "agents" | "off" | "closed") {
+                return Err(ErrorData::invalid_params("sidebar must be inspector, agents, or off", None));
+            }
+        }
+        if theme.is_none() && accent.is_none() && sections.is_none() && settings.is_empty() && sidebar.is_none() {
             return Err(ErrorData::invalid_params("plan has no changes", None));
         }
         let old_theme = store.setting("theme").ok().flatten().unwrap_or_else(|| "system".into());
@@ -516,12 +525,13 @@ impl RelayMcp {
         if let Some(t) = &theme { diff.push_str(&format!("theme: {old_theme} -> {t}\n")); }
         if let Some(a) = &accent { diff.push_str(&format!("accent: {old_accent} -> {a}\n")); }
         if let Some(s) = &sections { diff.push_str(&format!("start_sections: {old_sections} -> {s}\n")); }
+        if let Some(s) = &sidebar { diff.push_str(&format!("sidebar: -> {s}\n")); }
         for (key, value) in &settings {
             let old = store.setting(key).ok().flatten().unwrap_or_default();
             diff.push_str(&format!("{key}: {old} -> {value}\n"));
         }
         let id = self.next_plan.fetch_add(1, Ordering::SeqCst);
-        self.plans.lock().unwrap_or_else(|p| p.into_inner()).insert(id, PendingPlan { theme, accent, sections, settings, created: Instant::now() });
+        self.plans.lock().unwrap_or_else(|p| p.into_inner()).insert(id, PendingPlan { theme, accent, sections, settings, sidebar, created: Instant::now() });
         Ok(json(&serde_json::json!({ "plan_id": id, "diff": diff.trim_end(), "expires_in_seconds": 60 })))
     }
 
@@ -573,6 +583,11 @@ impl RelayMcp {
         }
         for (key, value) in &plan.settings {
             self.hub.push_shell_change(relay_bridge::ShellChange::Setting { key: key.clone(), value: value.clone() });
+        }
+        if let Some(sidebar) = &plan.sidebar {
+            let open = !matches!(sidebar.as_str(), "off" | "closed");
+            self.hub.push_shell_change(relay_bridge::ShellChange::Sidebar { open, tab: sidebar.clone() });
+            audit.push_str(" sidebar");
         }
         self.audit("shell_apply", "", None, &audit);
         Ok(json(&serde_json::json!({ "applied": true, "plan_id": a.plan_id })))

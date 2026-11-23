@@ -4,7 +4,7 @@
 <!-- covers: docs/product/features.csv -->
 
 The current feature matrix is [`features.csv`](./features.csv); the
-palette row notes live custom shortcuts; shell-write row covers plan/apply for theme, allowlisted settings, shortcuts, and hashed audit; the
+palette row notes live custom shortcuts; shell-write row covers plan/apply for theme, allowlisted settings, shortcuts, sidebar, and hashed audit; the
 Downloads row covers cancel/retry and native byte progress. These sources
 come from the owner's brief (2026-11-22) plus the primary docs
 for the APIs Relay uses. The owner named the three GitHub projects and asked
