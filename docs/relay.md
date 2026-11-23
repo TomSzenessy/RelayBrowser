@@ -183,6 +183,14 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## Picture in Picture
+
+`⇧⌘P` (View → Picture in Picture, palette) asks the page to toggle its first
+`<video>` through WebKit's presentation mode or the standard API. It is a
+page-local action; if the WebView/page has no video or no support, the toast
+still says "requested" and nothing else changes. Reading mode and PiP together
+complete the Search-parity page tools.
+
 ## Reading mode
 
 `⇧⌘R` (View → Reading Mode, palette) asks the page for a reader overlay built

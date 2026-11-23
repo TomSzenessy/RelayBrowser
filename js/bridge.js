@@ -588,6 +588,29 @@
     },
     storage: storageSummary,
     reader: reader,
+    picture_in_picture: function () {
+      var video = document.querySelector("video");
+      if (!video) return { available: false, reason: "no video on this page" };
+      if (video.webkitPresentationMode === "picture-in-picture" && typeof video.webkitSetPresentationMode === "function") {
+        video.webkitSetPresentationMode("inline");
+        return { available: true, active: false };
+      }
+      if (typeof video.webkitSetPresentationMode === "function") {
+        try {
+          video.webkitSetPresentationMode("picture-in-picture");
+          return { available: true, active: true };
+        } catch (e) {
+          return { available: false, reason: String(e && e.message || e) };
+        }
+      }
+      if (typeof video.requestPictureInPicture === "function") {
+        return video.requestPictureInPicture().then(
+          function () { return { available: true, active: true }; },
+          function (e) { return { available: false, reason: String(e && e.message || e) }; }
+        );
+      }
+      return { available: false, reason: "this WebView does not support picture-in-picture" };
+    },
     set_cookie: function (c) {
       var name = String(c.name || "");
       var value = String(c.value || "");

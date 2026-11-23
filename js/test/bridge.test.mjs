@@ -523,3 +523,42 @@ test("reader builds an inert article overlay and removes it", async () => {
   assert.equal(await p.evaluate(() => !!document.getElementById("relay-reader")), false);
   await p.close();
 });
+
+test("picture_in_picture toggles a video or reports no support", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => {
+    const body = new URL(route.request().url()).pathname === "/novideo/" ? "<body>no video</body>" : '<body><video id="v"></video></body>';
+    return route.fulfill({ contentType: "text/html", body });
+  });
+  await p.goto(`${ORIGIN}/video/`);
+  await p.evaluate(() => {
+    const v = document.getElementById("v");
+    v.requestPictureInPicture = () => { window.pip = (window.pip || 0) + 1; return Promise.resolve(); };
+    v.webkitSetPresentationMode = (mode) => { window.pipMode = mode; window.pip = (window.pip || 0) + 1; };
+  });
+  let on;
+  await p.evaluate(() => window.__relay.exec({ id: 180, op: "picture_in_picture" }));
+  for (let i = 0; i < 100 && !on; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    on = msgs.find(m => m.kind === "result" && m.id === 180);
+    if (!on) await p.waitForTimeout(25);
+  }
+  assert.ok(on, "PiP replied");
+  assert.equal(on.ok, true, on.error);
+  assert.equal(on.value.available, true);
+  assert.equal(on.value.active, true);
+  assert.equal(await p.evaluate(() => window.pip), 1);
+  await p.goto(`${ORIGIN}/novideo/`);
+  let none;
+  await p.evaluate(() => window.__relay.exec({ id: 181, op: "picture_in_picture" }));
+  for (let i = 0; i < 100 && !none; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    none = msgs.find(m => m.kind === "result" && m.id === 181);
+    if (!none) await p.waitForTimeout(25);
+  }
+  assert.ok(none, "no-video PiP replied");
+  assert.equal(none.ok, true);
+  assert.equal(none.value.available, false);
+  await p.close();
+});
