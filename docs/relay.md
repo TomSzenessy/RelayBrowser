@@ -212,16 +212,19 @@ CRX3 signatures are still not verified (residual).
 A navigation WebKit cannot display is accepted as a `WKDownload`; the delegate
 saves it under `~/Downloads/Relay` with a sanitized collision-safe name and
 records URL/filename/path/state and the owning tab in the hub. `⇧⌘J` (View →
-Downloads, palette) opens a panel with active/finished rows, the destination,
+Downloads, palette) opens a panel with active and finished rows, the filename,
 Cancel for a running row, Retry for a failed/cancelled row, Reveal in Finder,
-and Clear finished. Running rows show native byte progress (received/total and
+and Clear finished. The destination path is kept for Reveal but is not shown in
+the row yet, and the rows are not grouped by state (#54). Running rows show native byte progress (received/total and
 percent) from `WKDownload.progress`, polled at 500 ms while any row is active. Cancel marks the row immediately and calls
 `WKDownload.cancel` through the tab's bridge handler; Retry navigates the
 owning tab to the original URL so WebKit decides again whether it is a
 download, creating a fresh row when it is. ↑/↓/Home/End move a visible
 selection and ↩ activates the selected row (Cancel running, Retry failed,
 Reveal done). The metadata is in memory only; the file is the user's, outside the
-profile. VoiceOver labels are not built yet (#54).
+profile. The panel and the rest of the GPUI chrome have no VoiceOver labels:
+GPUI 0.2.2 exposes no accessibility tree, so this residual is #64, not a
+downloads-model gap.
 
 ## Picture in Picture
 
@@ -476,8 +479,10 @@ it, ⌫ deletes the character before it, Delete removes the one after,
 Shift+←/→ extends a selection, Option+←/→ moves by word, ⌘A selects all,
 ⌘C/⌘X copy/cut, ⌘⌫/⌥⌫ clears all, pasted text replaces a selection, and
 clicking a character places the cursor. The caret and selection background are
-drawn at the model positions. Composed `key_char` input (IME/accented keys) is inserted as a
-unit; there is no separate composition popup.
+drawn at the model positions. `key_char` covers printable key events only. GPUI
+0.2.2 exposes macOS IME through `InputHandler`/`Window::handle_input`, but the
+palette installs no input handler: `on_key` reads `KeyDownEvent::key_char`, so
+composition and committed IME text do not reach the query (#14).
 
 ## Palette smart input
 
