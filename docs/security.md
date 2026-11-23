@@ -159,7 +159,9 @@ on this repository); never use a public issue for an unpatched report.
   screenshot it can include private page pixels, so the user controls when an
   agent is attached.
 - **Shell writes:** theme/accent/start-section and an allowlist of settings
-  are off by default, require an explicit plan id (single-use, 60 s), reject
+  are off by default; a global switch or a per-client grant (recorded on MCP
+  initialize, managed in Settings → Connected agents) is required. Writes
+  require an explicit plan id (single-use, 60 s), reject
   `mcp`/`shell_control`/`agent_eval`, re-validate shortcut conflicts, allow only
   inspector/agents/off for the sidebar, and push bounded hub
   changes; `shell_apply` records the MCP client name, plan id, and before/after

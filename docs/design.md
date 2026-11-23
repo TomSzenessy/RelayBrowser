@@ -89,7 +89,7 @@ none under Reduce Motion.
 
 | Keys | Action |
 |---|---|
-| Settings → Agent shell changes | off by default; with it on, an agent can plan/apply theme, accent, start sections, allowlisted settings, validated shortcut overrides, and the Inspector/agent sidebar; the shell applies them live |
+| Settings → Agent shell changes | off by default; a global switch or per-client grant under Connected agents lets an agent plan/apply theme, accent, start sections, allowlisted settings, validated shortcuts, and the sidebar; the shell applies them live |
 | ⌘K | palette; each command shows its current custom shortcut; ←/→/Home/End move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, click places the caret |
 | ⌘L | palette prefilled with the current URL |
 | ⇧⌘J | Downloads panel: ↑/↓ select, ↩ cancel/retry/reveal, byte progress, buttons, Clear finished |

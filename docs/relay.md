@@ -282,7 +282,9 @@ polls the whole tree every 50 ms.
 
 ## Shell plan/apply (theme, accent, start sections)
 
-When Settings → Agent shell changes is on, an agent can call
+Settings → Connected agents lists each MCP client that has initialized, with a
+per-client Grant/Revoke; the global Agent shell changes switch overrides every
+grant. When a client is granted (or the global switch is on), it can call
 `shell_plan_change {theme?, accent?, start_sections?}` to get a one-time id and
 a human diff, then `shell_apply_change {plan_id}`. The plan expires after 60 s,
 is single-use. It accepts system/light/dark, the four accents, an ordered
