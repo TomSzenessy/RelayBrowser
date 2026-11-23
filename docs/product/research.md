@@ -103,8 +103,8 @@ widgets. That is a second *plane* of tools, kept separate from page control:
   with no bridge and no network by default.
 - **Trust**: shell writes are off until the user grants the connected agent;
   `mcp`, `shell_control`, clear-data, and reserved system keys cannot be
-  changed by an agent. The agent sidebar shows who is connected and what it
-  changed, with Stop.
+  changed by an agent. The Agent sidebar shows connected clients with
+  Grant/Revoke and Stop; `relay audit` and `relay export` show what changed.
 - **Why not copy Search or Obscura**: Search is the UX/feature reference and
   Obscura is the agent-surface reference; Relay's value is one bridge feeding
   both the Inspector and the MCP, now extended from *page* state to *shell*

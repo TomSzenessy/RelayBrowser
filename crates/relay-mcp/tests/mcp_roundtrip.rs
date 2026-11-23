@@ -71,6 +71,26 @@ impl Browser for SimPage {
         let hub = self.hub.clone();
         tokio::spawn(async move { hub.ingest_json(tab, &reply.to_string()).unwrap() });
     }
+    fn screenshot(&self, _: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Ok(vec![0xff, 0xd8, 0xff, 0xd9]));
+    }
+}
+
+/// Same page, but leaves `screenshot` at the trait default so the error path
+/// (a backend without macOS WebKit) is exercised.
+struct NoShotPage(Arc<SimPage>);
+
+impl Browser for NoShotPage {
+    fn open(&self, tab: TabId, url: &str) { self.0.open(tab, url) }
+    fn navigate(&self, tab: TabId, url: &str) { self.0.navigate(tab, url) }
+    fn go_back(&self, tab: TabId) { self.0.go_back(tab) }
+    fn go_forward(&self, tab: TabId) { self.0.go_forward(tab) }
+    fn reload(&self, tab: TabId) { self.0.reload(tab) }
+    fn close(&self, tab: TabId) { self.0.close(tab) }
+    fn activate(&self, tab: TabId) { self.0.activate(tab) }
+    fn refresh_cookies(&self, tab: TabId) { self.0.refresh_cookies(tab) }
+    fn open_web_inspector(&self, tab: TabId) { self.0.open_web_inspector(tab) }
+    fn eval(&self, tab: TabId, script: String) { self.0.eval(tab, script) }
 }
 
 fn text(r: &rmcp::model::CallToolResult) -> String {
@@ -255,6 +275,246 @@ async fn agents_wake_sleeping_tabs() {
     assert!(!err, "{msg}");
     let (err, dom) = call(&client, "read_dom", json!({"tab_id": tab})).await;
     assert!(!err && dom.contains("Pay now"), "{dom}");
+    client.cancel().await.unwrap();
+}
+
+/// A real MCP client plans and applies shell state only after the user grants
+/// it; revoking in Settings/Agent sidebar takes effect on the next call. The
+/// multi-thread runtime lets the apply timeout fire even if a blocking store
+/// lock regresses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shell_plan_apply_round_trip_with_a_live_client_grant() {
+    let hub = SharedHub::new();
+    let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let store = Arc::new(Mutex::new(Store::in_memory().unwrap()));
+    store.lock().unwrap().set_setting("theme", "light").unwrap();
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub.clone(), page.clone()).with_audit(store.clone());
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+
+    let tools = client.list_all_tools().await.unwrap();
+    for name in ["shell_settings", "shell_shortcuts", "shell_start_page", "shell_sidebar", "shell_apps", "shell_version"] {
+        let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("missing {name}"));
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(description.contains("Read-only"), "{name}: {description}");
+    }
+    for forbidden in ["shell_eval", "shell_exec", "shell_script", "shell_html"] {
+        assert!(!tools.iter().any(|t| t.name == forbidden), "{forbidden} must not exist");
+    }
+
+    // Off by default: no global switch and no grant.
+    let msg = call_message(&client, "shell_plan_change", json!({"theme": "dark"})).await;
+    assert!(msg.contains("shell writes are off"), "{msg}");
+
+    let client_name = store.lock().unwrap().mcp_clients().unwrap().first().expect("initialize records the client").name.clone();
+    assert!(!client_name.is_empty(), "the client advertises a name");
+    store.lock().unwrap().set_mcp_client_granted(&client_name, true, 1).unwrap();
+    store.lock().unwrap().set_setting("search", &format!("https://search.test/?q=%s&pad={}", "x".repeat(2000))).unwrap();
+
+    // Every shell read tool answers through the real client with bounded data.
+    let (err, settings) = call(&client, "shell_settings", json!({})).await;
+    assert!(!err, "{settings}");
+    let settings: Value = serde_json::from_str(&settings).unwrap();
+    assert_eq!(settings["search"].as_str().unwrap().chars().count(), 1024, "settings values are capped");
+    let (err, shortcuts) = call(&client, "shell_shortcuts", json!({})).await;
+    assert!(!err, "{shortcuts}");
+    let shortcuts: Value = serde_json::from_str(&shortcuts).unwrap();
+    assert_eq!(shortcuts["defaults"]["palette"], "secondary-k");
+    let (err, start) = call(&client, "shell_start_page", json!({})).await;
+    assert!(!err, "{start}");
+    assert!(serde_json::from_str::<Value>(&start).unwrap()["sections"].is_string());
+    let (err, apps) = call(&client, "shell_apps", json!({})).await;
+    assert!(!err, "{apps}");
+    assert!(serde_json::from_str::<Value>(&apps).unwrap()["apps"].is_array());
+    let (err, version) = call(&client, "shell_version", json!({})).await;
+    assert!(!err, "{version}");
+    assert_eq!(serde_json::from_str::<Value>(&version).unwrap()["name"], "relay-mcp");
+    let (err, sidebar) = call(&client, "shell_sidebar", json!({})).await;
+    assert!(!err, "{sidebar}");
+    assert_eq!(serde_json::from_str::<Value>(&sidebar).unwrap()["open"], false);
+
+    let (err, planned) = call(&client, "shell_plan_change", json!({
+        "theme": "dark",
+        "accent": "purple",
+        "start_sections": "apps,recent",
+        "settings": {"blocking": "off", "keybindings": "find=ctrl-alt-f"},
+        "sidebar": "agents",
+        "widget": {"title": "Build note", "body": "All checks passed"}
+    })).await;
+    assert!(!err, "{planned}");
+    let planned: Value = serde_json::from_str(&planned).unwrap();
+    let id = planned["plan_id"].as_u64().unwrap();
+    assert!(planned["diff"].as_str().unwrap().contains("theme: light -> dark"));
+    assert_eq!(store.lock().unwrap().setting("theme").unwrap().as_deref(), Some("light"), "planning writes nothing");
+
+    // A deadlocked apply would hang here; the timeout turns that into a failure.
+    let (err, applied) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        call(&client, "shell_apply_change", json!({"plan_id": id})),
+    )
+    .await
+    .expect("shell_apply_change timed out; the profile-store lock is probably still held");
+    assert!(!err, "{applied}");
+    let s = store.lock().unwrap();
+    assert_eq!(s.setting("theme").unwrap().as_deref(), Some("dark"));
+    assert_eq!(s.setting("accent").unwrap().as_deref(), Some("purple"));
+    assert_eq!(s.setting("start_sections").unwrap().as_deref(), Some("apps,recent"));
+    assert_eq!(s.setting("blocking").unwrap().as_deref(), Some("off"));
+    assert_eq!(s.setting("keybindings").unwrap().as_deref(), Some("find=ctrl-alt-f"));
+    let rows = s.agent_audit(20).unwrap();
+    drop(s);
+    let audit = rows.iter().find(|r| r.tool == "shell_apply" && r.outcome.starts_with("ok ")).expect("apply row");
+    assert_eq!(rows.iter().filter(|r| r.tool == "shell_apply" && r.outcome.starts_with("ok ")).count(), 1, "exactly one apply row");
+    assert!(audit.outcome.contains(&format!("client={client_name}")), "{}", audit.outcome);
+    assert!(audit.outcome.contains(&format!("plan={id}")), "{}", audit.outcome);
+    for key in ["theme=", "accent=", "start_sections=", "blocking=", "keybindings=", "sidebar=", "widget="] {
+        assert!(audit.outcome.contains(key), "missing {key}: {}", audit.outcome);
+    }
+    assert!(!audit.outcome.contains("dark") && !audit.outcome.contains("All checks passed"), "{}", audit.outcome);
+    assert!(hub.sidebar().open && hub.sidebar().tab == "agents");
+
+    let (err, sidebar) = call(&client, "shell_sidebar", json!({})).await;
+    assert!(!err, "{sidebar}");
+    let sidebar: Value = serde_json::from_str(&sidebar).unwrap();
+    assert_eq!(sidebar["open"], true);
+    assert_eq!(sidebar["tab"], "agents");
+
+    // The id is single-use; a retry is unknown and writes no second row.
+    let msg = call_message(&client, "shell_apply_change", json!({"plan_id": id})).await;
+    assert!(msg.contains("unknown or already applied"), "{msg}");
+    let rows = store.lock().unwrap().agent_audit(20).unwrap();
+    assert_eq!(rows.iter().filter(|r| r.tool == "shell_apply" && r.outcome.starts_with("ok ")).count(), 1);
+
+    // Unknown ids are stable errors and write no apply result.
+    let msg = call_message(&client, "shell_apply_change", json!({"plan_id": 9999})).await;
+    assert!(msg.contains("unknown or already applied"), "{msg}");
+
+    // No free-form fields: HTML/JS/URL knobs fail deserialization.
+    let msg = call_message(&client, "shell_plan_change", json!({"theme": "dark", "script": "alert(1)"})).await;
+    assert!(msg.contains("unknown field") || msg.contains("invalid"), "{msg}");
+    let msg = call_message(&client, "shell_plan_change", json!({"theme": "dark", "start_url": "https://evil.test"})).await;
+    assert!(msg.contains("unknown field") || msg.contains("invalid"), "{msg}");
+
+    // Revoke is read on the next call, with no restart.
+    store.lock().unwrap().set_mcp_client_granted(&client_name, false, 2).unwrap();
+    let msg = call_message(&client, "shell_plan_change", json!({"theme": "light"})).await;
+    assert!(msg.contains("shell writes are off"), "{msg}");
+    let rows = store.lock().unwrap().agent_audit(20).unwrap();
+    assert!(rows.iter().any(|r| r.tool == "shell_plan" && r.outcome == "denied"), "{rows:?}");
+    client.cancel().await.unwrap();
+}
+
+/// The full grant matrix: global switch and per-client grant are independent,
+/// and a revoke is read on the next call.
+#[tokio::test]
+async fn shell_grant_matrix_global_switch_and_client_grant() {
+    let hub = SharedHub::new();
+    let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let store = Arc::new(Mutex::new(Store::in_memory().unwrap()));
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub.clone(), page.clone()).with_audit(store.clone());
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+    let name = {
+        client.list_all_tools().await.unwrap();
+        store.lock().unwrap().mcp_clients().unwrap().first().expect("client recorded on initialize").name.clone()
+    };
+
+    // Global off, no grant: denied.
+    let msg = call_message(&client, "shell_plan_change", json!({"theme": "dark"})).await;
+    assert!(msg.contains("shell writes are off"), "{msg}");
+
+    // Global off, granted: allowed.
+    store.lock().unwrap().set_mcp_client_granted(&name, true, 1).unwrap();
+    let (err, planned) = call(&client, "shell_plan_change", json!({"theme": "dark"})).await;
+    assert!(!err, "{planned}");
+    assert!(serde_json::from_str::<Value>(&planned).unwrap()["plan_id"].is_u64());
+
+    // Global on, ungranted: allowed by the global switch.
+    store.lock().unwrap().set_setting("shell_control", "on").unwrap();
+    store.lock().unwrap().set_mcp_client_granted(&name, false, 2).unwrap();
+    let (err, planned) = call(&client, "shell_plan_change", json!({"theme": "light"})).await;
+    assert!(!err, "{planned}");
+
+    // Global off, revoked: denied again.
+    store.lock().unwrap().set_setting("shell_control", "off").unwrap();
+    let msg = call_message(&client, "shell_plan_change", json!({"theme": "light"})).await;
+    assert!(msg.contains("shell writes are off"), "{msg}");
+    client.cancel().await.unwrap();
+}
+
+/// Plan ids expire end to end; paused tokio time makes the 60 s TTL instant.
+#[tokio::test(start_paused = true)]
+async fn expired_plan_is_refused_end_to_end() {
+    let hub = SharedHub::new();
+    let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let store = Arc::new(Mutex::new(Store::in_memory().unwrap()));
+    store.lock().unwrap().set_setting("shell_control", "on").unwrap();
+    store.lock().unwrap().set_setting("theme", "light").unwrap();
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub.clone(), page.clone()).with_audit(store.clone());
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+
+    let (_, planned) = call(&client, "shell_plan_change", json!({"theme": "dark"})).await;
+    let id = serde_json::from_str::<Value>(&planned).unwrap()["plan_id"].as_u64().unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(61)).await;
+    let msg = call_message(&client, "shell_apply_change", json!({"plan_id": id})).await;
+    assert!(msg.contains("expired"), "{msg}");
+    assert_eq!(store.lock().unwrap().setting("theme").unwrap().as_deref(), Some("light"));
+    let rows = store.lock().unwrap().agent_audit(10).unwrap();
+    assert!(!rows.iter().any(|r| r.tool == "shell_apply"), "an expired apply writes no audit row: {rows:?}");
+    client.cancel().await.unwrap();
+}
+
+/// Shell tools fail cleanly when the server was built without the profile
+/// store (the read/plan path a test or CLI-only server takes).
+#[tokio::test]
+async fn shell_tools_without_a_store_fail_cleanly() {
+    let hub = SharedHub::new();
+    let page: Arc<dyn Browser> = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub, page);
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+    for tool in ["shell_settings", "shell_shortcuts", "shell_start_page", "shell_apps"] {
+        let msg = call_message(&client, tool, json!({})).await;
+        assert!(msg.contains("shell store is attached only while the browser is running"), "{tool}: {msg}");
+    }
+    let msg = call_message(&client, "shell_plan_change", json!({"theme": "dark"})).await;
+    assert!(msg.contains("shell store is attached only while the browser is running"), "plan: {msg}");
+    client.cancel().await.unwrap();
+}
+
+/// A fake Browser returns JPEG bytes; the same tool explains the no-WebKit
+/// default instead of returning an image.
+#[tokio::test]
+async fn screenshot_returns_image_content_and_default_error_is_clear() {
+    let hub = SharedHub::new();
+    hub.update(|h| {
+        let tab = h.create_tab("https://shot.test/", Owner::User);
+        h.set_active(tab);
+    });
+    let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub.clone(), page.clone());
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+    let r = client.call_tool(CallToolRequestParams::new("screenshot")).await.unwrap();
+    assert!(!r.is_error.unwrap_or(false), "{:?}", r.content);
+    let image = r.content.iter().find_map(|c| c.as_image()).expect("image content");
+    assert_eq!(image.mime_type, "image/jpeg");
+    assert_eq!(image.data, "/9j/2Q==");
+    client.cancel().await.unwrap();
+
+    let no_shot: Arc<dyn Browser> = Arc::new(NoShotPage(page.clone()));
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let server = RelayMcp::new(hub, no_shot);
+    tokio::spawn(async move { server.serve(server_io).await.unwrap().waiting().await.unwrap() });
+    let client = ().serve(client_io).await.unwrap();
+    let msg = call_message(&client, "screenshot", json!({})).await;
+    assert!(msg.contains("screenshots need macOS WebKit"), "{msg}");
     client.cancel().await.unwrap();
 }
 

@@ -231,12 +231,17 @@ mod tests {
     }
 
     #[test]
-    fn dark_and_light_meet_wcag_aa_contrast() {
+    fn every_named_theme_and_accent_pair_meets_wcag_aa() {
         assert_wcag_aa("dark", Theme::dark());
         assert_wcag_aa("light", Theme::light());
-        for choice in [ThemeChoice::Light, ThemeChoice::Dark] {
+        // The MCP accepts only these named tokens, so covering every choice
+        // pair here is the runtime guarantee for an agent-planned theme.
+        for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
             for accent in AccentChoice::ALL {
-                assert_wcag_aa(&format!("{choice:?}/{accent:?}"), Theme::for_choice(WindowAppearance::Light, choice, accent));
+                for appearance in [WindowAppearance::Light, WindowAppearance::Dark] {
+                    let theme = Theme::for_choice(appearance, choice, accent);
+                    assert_wcag_aa(&format!("{appearance:?}/{choice:?}/{accent:?}"), theme);
+                }
             }
         }
     }
@@ -253,5 +258,18 @@ mod tests {
         assert_eq!(AccentChoice::Orange.next(), AccentChoice::Blue);
         assert_eq!(Theme::for_choice(WindowAppearance::Dark, ThemeChoice::System, AccentChoice::Blue).background, Theme::dark().background);
         assert_eq!(Theme::for_choice(WindowAppearance::Light, ThemeChoice::Dark, AccentChoice::Blue).background, Theme::dark().background);
+    }
+
+    #[test]
+    fn unlisted_theme_tokens_are_rejected() {
+        // Raw colours and unknown names never reach a palette: the MCP rejects
+        // the same set, and a future palette entry must pass the contrast test
+        // above before it can be named here.
+        for value in ["neon", "#ff00ff", "rgb(255,0,255)", "system,light"] {
+            assert_eq!(ThemeChoice::parse(value), None, "{value}");
+        }
+        for value in ["magenta", "#ff00ff", "orange,blue"] {
+            assert_eq!(AccentChoice::parse(value), None, "{value}");
+        }
     }
 }

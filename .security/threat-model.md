@@ -102,8 +102,9 @@ publishing is a separate `contents: write` job.
 
 - A subframe could pretend to be the main page: dropped by `isMainFrame`.
 - A local process could claim to be another MCP client: the socket has no
-  per-client auth; same-user access is the accepted boundary; shell writes are
-  not implemented, and read tools expose only bounded settings.
+  per-client auth; same-user access is the accepted boundary. The advertised
+  client name is self-asserted and used for the per-client grant and audit, not
+  as authentication.
 - A CRX could declare another id: `parse` extracts `crx_id`; `unpack` refuses a
   mismatch or a package without a CRX3 id.
 
@@ -122,7 +123,11 @@ publishing is a separate `contents: write` job.
 - Agent actions write `agent_audit` rows (tool/host/tab/outcome/time), capped at
   5,000, with no page content or typed text. `relay audit` and
   `clear-data --audit` exist.
-- Shell read tools are not audited yet; shell writes/grants are issue #46.
+- Shell read tools, plans, denied applies, and successful applies are audited.
+  An apply row carries the self-asserted MCP client name, plan id, result, and
+  before/after hashes for each changed key; values, widget text, and page data
+  are never stored. An unknown or expired plan id writes no audit row because
+  nothing was applied.
 
 ### Information disclosure
 
@@ -141,6 +146,9 @@ publishing is a separate `contents: write` job.
 - Huge bridge messages/trees are bounded natively; console/network rings are
   capped; tabs sleep after inactivity (pinned/audible/agent-active tabs are
   exempt); downloads/CRX unpack are byte-capped.
+- Shell plans are capped at 32 pending ids, expire after 60 s, and bound each
+  setting, start-section list, diff, widget, and read output; plan/apply
+  arguments reject unknown JSON fields.
 - A page can still use CPU in its own WebKit process; Relay does not sandbox
   page script beyond WebKit's process model.
 
@@ -150,7 +158,12 @@ publishing is a separate `contents: write` job.
   and is refused on Stop/Block/Read-only.
 - Agent policy cannot be escalated by a tool argument; `open_tab` to a Block
   host creates nothing; `read_dom` has no direct-hub fallback.
-- Shell writes are not built; shell read tools cannot write or execute code.
+- Shell writes are off by default and need a global switch or a per-client
+  grant, checked again on every plan/apply. They are plan/apply only, bounded
+  to allowlisted settings, named AA-tested palette tokens, ordered start
+  sections, inspector/agents/off, validated shortcuts, and one plain-text
+  widget; no shell tool takes HTML, a URL, a plugin, or a script, and unknown
+  fields fail before validation. Revoking a grant is immediate.
 - Extension permissions are blanket-granted at install (residual below).
 
 ## 4. Accepted risks (and the enforcing path)
@@ -165,11 +178,14 @@ publishing is a separate `contents: write` job.
 | Extension install grants all requested permissions | WebKit blanket grant | install prints full report; no withholding yet |
 | Chrome import can race a running Chrome | Copy is a snapshot | WAL/SHM included; best effort |
 | Downloads are not malware-scanned | User chose the file | sanitized destination; no auto-execute |
-| Shell tools are read-only | Write surface not built | bounded allowlist; issue #46 |
+| Shell tools can change the browser after a grant | Owner asked for agent customization | off by default; per-client grant and live revoke; plan/apply; allowlists; audit |
 
 ## 5. Residual risks and owned issues
 
-- **#46** shell plan/apply/per-client grants; none of those writes exist yet.
+- Shell writes are declarative only. Sandboxed HTML widgets remain unbuilt and
+  need their own issue plus an isolation review before they are attempted.
+- The macOS visual observation of Agent-sidebar Grant/Revoke and live menu
+  rebinding is still an owner check; Linux tests cover the logic and code path.
 - **#54** download progress/cancel/retry and keyboard/VoiceOver access.
 - **#57** explicit login fill/save; must keep values outside bridge/MCP/logs.
 - **#64** GPUI accessibility tree; VoiceOver is not available today.

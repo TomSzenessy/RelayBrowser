@@ -748,9 +748,12 @@ mod tests {
         assert!(s.mcp_client_granted("Claude Desktop").unwrap());
         s.touch_mcp_client("Claude Desktop", 12).unwrap();
         assert!(s.mcp_client_granted("Claude Desktop").unwrap(), "touch does not revoke");
+        s.set_mcp_client_granted("Claude Desktop", false, 13).unwrap();
+        assert!(!s.mcp_client_granted("Claude Desktop").unwrap(), "revoke is immediate for the next MCP call");
         let c = s.mcp_clients().unwrap();
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].last_seen, 12);
+        assert!(!c[0].granted);
     }
 
     #[test]

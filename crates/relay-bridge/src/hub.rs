@@ -539,6 +539,7 @@ pub struct Hub {
     next_download: u64,
     downloads: BTreeMap<u64, Download>,
     pending: HashMap<u64, (TabId, oneshot::Sender<CommandResult>)>,
+    sidebar: SidebarState,
 }
 
 /// One user-initiated download. The file lives outside the profile; this is
@@ -561,6 +562,21 @@ pub enum DownloadState {
     Downloading,
     Done,
     Failed(String),
+}
+
+/// The live Agent/Inspector sidebar state. The MCP reads it so
+/// `shell_sidebar` reports what the running shell shows, not a stale setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarState {
+    pub open: bool,
+    /// `inspector` or `agents`; the pane keeps its last target when closed.
+    pub tab: String,
+}
+
+impl Default for SidebarState {
+    fn default() -> Self {
+        Self { open: false, tab: "inspector".into() }
+    }
 }
 
 /// A shell-visible change produced by the MCP plan/apply pair. The shell
@@ -636,6 +652,17 @@ impl SharedHub {
     /// Drain changes under the lock; the shell applies them in one pump.
     pub fn take_shell_changes(&self) -> Vec<ShellChange> {
         std::mem::take(&mut *self.shell_changes.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+
+    /// The sidebar the running shell currently shows.
+    pub fn sidebar(&self) -> SidebarState {
+        self.lock().sidebar.clone()
+    }
+
+    /// Keep the sidebar read tool honest: the shell calls this on every manual
+    /// toggle, and apply calls it before pushing the `ShellChange`.
+    pub fn set_sidebar(&self, open: bool, tab: &str) {
+        self.update(|h| h.set_sidebar(open, tab));
     }
 
     pub fn set_agent_eval(&self, enabled: bool) {
@@ -792,6 +819,15 @@ impl Hub {
 
     pub fn tab_mut(&mut self, id: TabId) -> Option<&mut TabState> {
         self.tabs.get_mut(&id)
+    }
+
+    /// Sidebar open flag and pane; `off`/`closed` only close, keeping the last
+    /// pane so the next open lands where the user left it.
+    pub fn set_sidebar(&mut self, open: bool, tab: &str) {
+        self.sidebar.open = open;
+        if matches!(tab, "agents" | "inspector") {
+            self.sidebar.tab = tab.to_string();
+        }
     }
 
     /// Tabs in display order.
@@ -1222,6 +1258,18 @@ mod tests {
         hub.push_shell_change(ShellChange::Theme { theme: "dark".into(), accent: "purple".into() });
         assert_eq!(hub.take_shell_changes(), vec![ShellChange::Theme { theme: "dark".into(), accent: "purple".into() }]);
         assert!(hub.take_shell_changes().is_empty());
+    }
+
+    #[test]
+    fn sidebar_state_is_shared_and_keeps_the_last_pane_when_closed() {
+        let hub = SharedHub::new();
+        assert_eq!(hub.sidebar(), SidebarState { open: false, tab: "inspector".into() });
+        hub.set_sidebar(true, "agents");
+        assert_eq!(hub.sidebar(), SidebarState { open: true, tab: "agents".into() });
+        hub.set_sidebar(false, "off");
+        assert_eq!(hub.sidebar(), SidebarState { open: false, tab: "agents".into() });
+        hub.set_sidebar(true, "bogus");
+        assert_eq!(hub.sidebar(), SidebarState { open: true, tab: "agents".into() }, "unknown panes are ignored");
     }
 
     #[test]

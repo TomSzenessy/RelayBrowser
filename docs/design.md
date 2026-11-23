@@ -36,8 +36,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   Elements row highlights the node in the page.
 - **Sidebar:** a 380 px right sidebar with **Agent** and **Inspector** tabs and
   a × collapse button. Agent shows MCP state/socket, Stop/Resume, per-site
-  access, the copyable setup command, and the untrusted-page reminder;
-  Inspector keeps the Elements/Network/Console/Cookies panels. The sidebar
+  access, per-client shell-write Grant/Revoke, the copyable setup command, and
+  the untrusted-page reminder; Inspector keeps the
+  Elements/Network/Console/Cookies panels. The sidebar
   works at every tab-strip placement.
 - **Agent stop:** while an agent is paused, a tinted line above the status bar
   says page automation is stopped and offers Resume. The state lives in the
@@ -89,7 +90,7 @@ none under Reduce Motion.
 
 | Keys | Action |
 |---|---|
-| Settings → Agent shell changes | off by default; a global switch or per-client grant under Connected agents lets an agent plan/apply theme, accent, start sections, allowlisted settings, validated shortcuts, the sidebar, and one capped start-page note; the shell applies them live |
+| Settings → Agent shell changes | off by default; a global switch or per-client grant under Connected agents or the Agent sidebar lets an agent plan/apply theme, accent, start sections, allowlisted settings, validated shortcuts, the sidebar, and one capped plain-text start-page note; revoke applies on the next tool call; the shell applies changes live |
 | ⌘K | palette; each command shows its current custom shortcut; ←/→/Home/End move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, click places the caret |
 | ⌘L | palette prefilled with the current URL |
 | ⇧⌘J | Downloads panel: ↑/↓ select, ↩ cancel/retry/reveal, byte progress, buttons, Clear finished |

@@ -293,33 +293,60 @@ waits on the hub watch for a newer sequence (2 s cap) instead of sleeping
 re-checks only when state changes, with the caller's timeout; it no longer
 polls the whole tree every 50 ms.
 
-## Shell plan/apply (theme, accent, start sections)
+## Shell plan/apply (settings, shortcuts, start page, sidebar, theme)
 
-Settings → Connected agents lists each MCP client that has initialized, with a
-per-client Grant/Revoke; the global Agent shell changes switch overrides every
-grant. When a client is granted (or the global switch is on), it can call
-`shell_plan_change {theme?, accent?, start_sections?}` to get a one-time id and
-a human diff, then `shell_apply_change {plan_id}`. The plan expires after 60 s,
-is single-use. It accepts system/light/dark, the four accents, an ordered
-unique subset of recent/frequent/apps/bookmarks, an allowlist of settings
+Settings → Connected agents and the Agent sidebar both list each MCP client
+that has initialized, with a per-client Grant/Revoke; the global Agent shell
+changes switch overrides every grant. A Revoke is read on the next tool call:
+the MCP re-reads `mcp_clients` on every plan/apply, so no browser restart is
+needed. When a client is granted (or the global switch is on), it can call
+`shell_plan_change` to get a one-time id and a human diff, then
+`shell_apply_change {plan_id}`. A plan expires after 60 s, is single-use, and
+at most 32 pending plans are kept (expired ones are pruned first).
+
+Plan fields are bounded: `theme` (`system`/`light`/`dark`), `accent` (the four
+named accents), `start_sections` (an ordered unique subset of
+`recent`/`frequent`/`apps`/`bookmarks`), at most eight allowlisted `settings`
 (`search`, `blocking`, `sleep_minutes`, `tabs_position`, `tabs_folded`,
-`restore_session`, `keybindings`), a sidebar target (`inspector`, `agents`, or
-`off`), and one small start-page widget (`title` ≤80 chars, `body` ≤280;
-`visible: false` clears it). Shortcut overrides are checked in the MCP against a shared action-id table
-(unknown ids, duplicate keys, and ⌘Q misuse are rejected) and re-validated by
-`Keymap::from_setting`, which skips reserved/conflicting keys. `mcp`,
-`shell_control`, and `agent_eval` are reserved. Apply writes the Store, pushes bounded `ShellChange`s the GPUI
-pump drains (theme/accent/settings update live; start sections rebuild), and
-audits `shell_apply` with the MCP client name, plan id, and 64-bit before/after
-hashes for each changed key (values never enter the audit). Off by default; no shortcut or arbitrary-code writes.
+`restore_session`, `keybindings`; each value ≤4096 bytes and trimmed before
+storage), a sidebar target
+(`inspector`, `agents`, or `off`), and one small start-page widget
+(`title` ≤80 chars, `body` ≤280; `visible: false` clears it). The widget is
+plain text rendered by GPUI, never HTML; angle brackets and `javascript:` are
+refused before a plan exists. The shell has no URL, HTML, script, or
+plugin parameter, and unknown JSON fields are rejected before validation.
+Start sections and the widget reject control characters; unknown sections
+(including URLs or markup) are refused. The only theme tokens accepted are the
+named light/dark/accent pairs whose WCAG AA contrast is tested in
+`relay-ui/src/theme.rs`; a raw colour or unlisted name is refused. The MCP
+therefore cannot choose a palette that has not passed AA.
+
+Shortcut overrides are checked in the MCP against the shared action-id table
+and the live default keymap: unknown ids, repeated action ids, duplicate keys,
+default-key conflicts, bare keys, and ⌘Q misuse are rejected before a plan
+exists. On Linux `secondary` and `ctrl` are compared as the same modifier, as
+`Keymap::from_setting` does. Apply writes the Store, pushes the `ShellChange`s
+the GPUI pump drains (theme/accent/settings update live, and a `keybindings`
+change rebuilds GPUI bindings and the menu bar through the same
+`apply_keymap` path as Settings; start sections
+rebuild; sidebar/widget update), and audits `shell_apply` with the MCP client
+name, plan id, an `ok` result, and 64-bit before/after hashes for every changed
+key including sidebar and widget state (values never enter the audit).
+Denied and failed applies write a compact audit outcome too; unknown or
+expired ids return a stable error and write no audit row because nothing was
+applied. `mcp`, `shell_control`, `agent_eval`, `mcp_socket`,
+`mcp_socket_path`, and `clear_data` are reserved. Off by default; no arbitrary
+code or shortcut writes.
 
 ## Shell read tools
 
 The MCP also exposes read-only shell state: `shell_settings` (a bounded
-allowlist), `shell_shortcuts` (the raw `keybindings` override plus length),
-`shell_start_page` (section order), `shell_apps` (installed web apps, ≤50), and
-`shell_version`. They never read page content and cannot write anything;
-plan/apply shell writes and grants remain #46.
+allowlist), `shell_shortcuts` (the raw `keybindings` override, its length, and
+every known action with its default key), `shell_start_page` (section order),
+`shell_sidebar` (the live open flag and pane read from the hub), `shell_apps`
+(installed web apps, ≤50, with capped id/name/URL), and `shell_version`. They
+never read page content, cannot write or execute code, and write one audit row
+each. Plan/apply is the only shell write path, and it requires a grant.
 
 ## MCP tools: batch actions
 
@@ -338,11 +365,16 @@ one audit row, never the key or storage values.
 
 ## Agent audit
 
-Every MCP tool writes one row to `agent_audit`: tool, host, tab, outcome
-(ok/error), and time. It never stores typed text, cookie values, or page
-content. The table keeps the newest 5,000 rows; `relay audit [--limit N]`
-prints them, `relay clear-data --audit --yes` erases them, and `relay export`
-includes the array. The audit write is best-effort and cannot fail a browser
+Every page tool, shell read, shell plan, and applied or denied shell apply
+writes one row to `agent_audit`: tool, host, tab, outcome, and time. Page
+tools use `ok`/`error`; shell plan/apply use `ok`/`error`/`denied`, and a
+successful apply carries the client name, plan id, and before/after hashes. An
+unknown or expired plan id returns an error and writes no row because nothing
+was applied. The log never stores typed text, cookie values, setting values,
+widget text, or page content. The table
+keeps the newest 5,000 rows; `relay audit [--limit N]` prints them,
+`relay clear-data --audit --yes` erases them, and `relay export` includes the
+array. The audit write is best-effort and cannot fail a browser
 action.
 
 ## Agent safety (attached mode)
