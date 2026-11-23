@@ -169,7 +169,6 @@ publishing is a separate `contents: write` job.
 
 ## 5. Residual risks and owned issues
 
-- **#17** private security-reporting route and issue-form link.
 - **#46** shell plan/apply/per-client grants; none of those writes exist yet.
 - **#54** download progress/cancel/retry and keyboard/VoiceOver access.
 - **#57** explicit login fill/save; must keep values outside bridge/MCP/logs.
@@ -179,5 +178,6 @@ publishing is a separate `contents: write` job.
 
 This model was rewritten against the code on 2026-11-23. It has **not** had an
 independent security review; `.security/config.json` records the owner and
-pending status. The private reporting route is issue #17, and the fields must be
+pending status. Private reports use the enabled GitHub private advisory form
+(also named in `SECURITY.md`); `security_reviewed_on`/`reviewer` must be
 completed before public launch.

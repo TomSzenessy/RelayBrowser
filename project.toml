@@ -176,8 +176,8 @@ job = "issue-reference"
 reason = "validates a pull request event payload and queries the linked issue over the GitHub API; the PR body carries Fixes #N and the workflow checks it once"
 
 [security]
-contact = ""
-private_reporting = ""
+contact = "https://github.com/TomSzenessy/RelayBrowser/security/advisories/new"
+private_reporting = "https://github.com/TomSzenessy/RelayBrowser/security/advisories/new"
 
 [launch]
 legal_review = "pending"
