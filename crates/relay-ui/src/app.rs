@@ -81,6 +81,7 @@ actions!(
         ToggleAgents,
         CycleAgentPolicy,
         ToggleReader,
+        TogglePictureInPicture,
     ]
 );
 
@@ -148,6 +149,7 @@ fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
                 item("Move Tab Strip", NextTabStripPosition),
                 sep(),
                 item("Reading Mode", ToggleReader),
+                item("Picture in Picture", TogglePictureInPicture),
                 item("Reload Page", Reload),
                 item("Zoom In", ZoomIn),
                 item("Zoom Out", ZoomOut),
@@ -1239,6 +1241,16 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn toggle_picture_in_picture(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active() else {
+            self.toast("Open a video first");
+            return;
+        };
+        self.eval_op(tab, Op::PictureInPicture);
+        self.toast("Picture-in-picture requested");
+        cx.notify();
+    }
+
     fn toggle_reader(&mut self, cx: &mut Context<Self>) {
         let Some(tab) = self.active() else {
             self.toast("Open an article first");
@@ -1582,6 +1594,7 @@ impl RelayApp {
             Command::CycleTheme => self.cycle_theme(cx),
             Command::CycleAccent => self.cycle_accent(cx),
             Command::ToggleReader => self.toggle_reader(cx),
+            Command::TogglePictureInPicture => self.toggle_picture_in_picture(cx),
         }
     }
 
@@ -3848,6 +3861,9 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &ToggleReader, _, cx| {
                 app.toggle_reader(cx);
+            }))
+            .on_action(cx.listener(|app, _: &TogglePictureInPicture, _, cx| {
+                app.toggle_picture_in_picture(cx);
             }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
@@ -4285,9 +4301,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 47);
+        assert_eq!(bindings.len(), 48);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 47] = [
+        let required: [&'static str; 48] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -4335,6 +4351,7 @@ mod tests {
             ToggleAgents.name(),
             CycleAgentPolicy.name(),
             ToggleReader.name(),
+            TogglePictureInPicture.name(),
         ];
         for name in required {
             assert!(bound.contains(name), "missing key binding for {name}");

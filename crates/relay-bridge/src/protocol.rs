@@ -188,6 +188,9 @@ pub enum Op {
     SetCookie { name: String, value: String },
     /// Show or hide a clean reader overlay built from the page's article/main.
     Reader { on: bool },
+    /// Toggle picture-in-picture for the first `<video>` using WebKit/Safari's
+    /// presentation mode or the standard API.
+    PictureInPicture,
 }
 
 fn yes() -> bool {
