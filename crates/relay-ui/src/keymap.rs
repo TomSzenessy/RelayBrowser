@@ -418,6 +418,19 @@ mod tests {
     }
 
     #[test]
+    fn shared_action_file_matches_the_keymap() {
+        let raw = include_str!("../../../.agents/keymap-actions.txt");
+        let mut seen = 0;
+        for line in raw.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+            let (id, key) = line.split_once('|').expect("id|key");
+            let id = ActionId::parse(id).unwrap_or_else(|| panic!("unknown action {id}"));
+            assert_eq!(id.default_key(), key, "{id:?}");
+            seen += 1;
+        }
+        assert_eq!(seen, ActionId::ALL.len());
+    }
+
+    #[test]
     fn defaults_cover_every_action_once() {
         let map = Keymap::default();
         let keys: std::collections::HashSet<&str> = ActionId::ALL.iter().map(|id| map.key(*id)).collect();

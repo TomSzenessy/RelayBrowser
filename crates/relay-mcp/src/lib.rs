@@ -1265,6 +1265,34 @@ pub async fn stdio_proxy(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+const KEYMAP_ACTIONS: &str = include_str!("../../../.agents/keymap-actions.txt");
+
+fn validate_shortcuts(value: &str) -> Result<(), String> {
+    let mut keys = std::collections::HashSet::new();
+    for pair in value.split(';') {
+        if pair.trim().is_empty() {
+            continue;
+        }
+        let Some((id, key)) = pair.split_once('=') else {
+            return Err(format!("{pair:?} is not id=keystroke"));
+        };
+        let (id, key) = (id.trim(), key.trim());
+        if !KEYMAP_ACTIONS.lines().filter(|l| !l.starts_with('#')).any(|l| l.split('|').next() == Some(id)) {
+            return Err(format!("{id:?} is not a known action id"));
+        }
+        if key.is_empty() || key.chars().any(char::is_whitespace) {
+            return Err(format!("{key:?} is not a keystroke"));
+        }
+        if key == "secondary-q" && id != "quit" {
+            return Err("⌘Q is reserved for Quit".into());
+        }
+        if !keys.insert(key.to_string()) {
+            return Err(format!("{key:?} is bound twice"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_shell_setting(key: &str, value: &str) -> Result<(), ErrorData> {
     let v = value.trim();
     match key {
@@ -1289,6 +1317,7 @@ fn validate_shell_setting(key: &str, value: &str) -> Result<(), ErrorData> {
             if v.len() > 4096 || v.chars().any(|c| c.is_control()) {
                 return Err(ErrorData::invalid_params("keybindings must be <=4096 bytes and contain no control characters", None));
             }
+            validate_shortcuts(v).map_err(|e| ErrorData::invalid_params(e, None))?;
         }
         "tabs_position" => {
             if !matches!(v, "left" | "top" | "right") {

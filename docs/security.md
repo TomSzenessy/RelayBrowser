@@ -162,7 +162,7 @@ on this repository); never use a public issue for an unpatched report.
   are off by default; a global switch or a per-client grant (recorded on MCP
   initialize, managed in Settings → Connected agents) is required. Writes
   require an explicit plan id (single-use, 60 s), reject
-  `mcp`/`shell_control`/`agent_eval`, re-validate shortcut conflicts, allow only
+  `mcp`/`shell_control`/`agent_eval`, validate shortcut action ids/duplicates/reserved keys, allow only
   inspector/agents/off for the sidebar, cap/control-strip the one start-page
   widget, and push bounded hub
   changes; `shell_apply` records the MCP client name, plan id, and before/after
