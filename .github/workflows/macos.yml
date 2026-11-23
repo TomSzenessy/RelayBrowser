@@ -57,6 +57,10 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    env:
+      # Keep every command's profile in the job's temp dir; never the runner's
+      # real ~/Library/Application Support/Relay.
+      RELAY_HOME: ${{ runner.temp }}/relay-home
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,8 +139,8 @@ jobs:
         with:
           name: macos-diagnostics
           path: |
-            ~/Library/Logs/DiagnosticReports/**
-            ~/Library/Application Support/Relay/**
+            ~/Library/Logs/DiagnosticReports/Relay*.ips
+            ${{ runner.temp }}/relay-home/*.log
           if-no-files-found: ignore
           retention-days: 7
 
