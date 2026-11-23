@@ -33,6 +33,11 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   commands). The first row is always "Open <typed URL>" or "Search <query>".
 - **Inspector:** a tab strip of four panels over monospace rows. Hovering an
   Elements row highlights the node in the page.
+- **Sidebar:** a 380 px right sidebar with **Agent** and **Inspector** tabs and
+  a × collapse button. Agent shows MCP state/socket, Stop/Resume, per-site
+  access, the copyable setup command, and the untrusted-page reminder;
+  Inspector keeps the Elements/Network/Console/Cookies panels. The sidebar
+  works at every tab-strip placement.
 - **Agent stop:** while an agent is paused, a tinted line above the status bar
   says page automation is stopped and offers Resume. The state lives in the
   shared hub, so every MCP tool fails fast before touching a page.
@@ -98,6 +103,7 @@ none under Reduce Motion.
 | ⌘⇧M | copy the page's main content as Markdown |
 | ⌘D | bookmark the page, or remove its bookmark |
 | ⌘F | find in page (↩ next, ⇧↩ previous, Esc closes) |
+| ⌥⌘I | open / close the right sidebar; × collapses it, Agent / Inspector tabs switch panes |
 | ⇧⌘. | pause / resume every agent tool call; a tinted banner with Resume appears |
 | ⌘⌥A | cycle agent access on this site: Allow → Read only → Block |
 | Settings → Keyboard shortcuts | click Change, press a new shortcut; conflicts, bare keys, and ⌘Q are refused; Reset all restores defaults; changes apply without restart |

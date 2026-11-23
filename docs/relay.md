@@ -414,6 +414,15 @@ at most one icon per host, caches it in memory and 0600 files under
 start-page rows. Starts with no icon get the deterministic dot/empty fallback;
 a failed fetch is not retried for that host this session.
 
+## Agent and Inspector sidebar
+
+`⌥⌘I` toggles a 380 px right sidebar; × collapses it and returns focus to the
+page. Its **Agent** tab shows MCP on/off, the socket, paused/accepting state,
+the active site's policy, Pause/Resume, Cycle site access, and a click-to-copy
+setup command. The **Inspector** tab keeps the Elements/Network/Console/
+Cookies panels and their filters. The sidebar sits beside the content at every
+tab-strip placement (top/left/right) and does not cover native views.
+
 ## Keyboard shortcuts
 
 `keymap.rs` is the one action table: 46 defaults, stable ids, labels, and
