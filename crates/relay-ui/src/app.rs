@@ -311,6 +311,7 @@ pub struct RelayApp {
     sidebar_tab: SidebarTab,
     connect_open: bool,
     downloads_open: bool,
+    downloads_selected: usize,
     reader_tabs: HashSet<TabId>,
     /// History/Bookmarks modal; `None` when closed.
     library: Option<Library>,
@@ -462,6 +463,7 @@ impl RelayApp {
             sidebar_tab: SidebarTab::Inspector,
             connect_open: false,
             downloads_open: false,
+            downloads_selected: 0,
             reader_tabs: HashSet::new(),
             library: None,
             panel: Panel::Elements,
@@ -1842,8 +1844,15 @@ impl RelayApp {
             return;
         }
         if self.downloads_open {
-            if k.key == "escape" {
-                self.close_downloads();
+            let len = self.hub.lock().downloads().len();
+            match k.key.as_str() {
+                "escape" => self.close_downloads(),
+                "up" => self.downloads_selected = self.downloads_selected.saturating_sub(1),
+                "down" => self.downloads_selected = self.downloads_selected.saturating_add(1).min(len.saturating_sub(1)),
+                "home" => self.downloads_selected = 0,
+                "end" => self.downloads_selected = len.saturating_sub(1),
+                "enter" => self.activate_selected_download(cx),
+                _ => {}
             }
             cx.stop_propagation();
             cx.notify();
@@ -3201,6 +3210,39 @@ impl RelayApp {
         }
     }
 
+    fn reveal_download(&mut self, path: &str, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = path;
+            self.toast("Reveal in Finder needs macOS");
+        }
+        cx.notify();
+    }
+
+    fn activate_selected_download(&mut self, cx: &mut Context<Self>) {
+        let Some(d) = self.hub.lock().downloads().into_iter().nth(self.downloads_selected) else { return };
+        match d.state {
+            relay_bridge::DownloadState::Downloading => {
+                self.web.borrow_mut().apply(BrowserRequest::CancelDownload { tab: d.tab, id: d.id });
+                self.toast("Download cancelled");
+            }
+            relay_bridge::DownloadState::Failed(_) => {
+                self.web.borrow_mut().apply(BrowserRequest::Navigate { tab: d.tab, url: d.url.clone() });
+                self.toast("Retrying download");
+            }
+            relay_bridge::DownloadState::Done => {
+                if let Some(path) = &d.path {
+                    self.reveal_download(path, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
     fn open_downloads(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.settings_open = false;
@@ -3210,6 +3252,7 @@ impl RelayApp {
         self.find = None;
         self.end_hints();
         self.downloads_open = true;
+        self.downloads_selected = 0;
         self.web.borrow().focus_shell();
         cx.notify();
     }
@@ -3331,7 +3374,8 @@ impl RelayApp {
         if downloads.is_empty() {
             rows = rows.child(div().px_4().py_6().text_size(px(13.)).text_color(t.muted).child("No downloads yet"));
         }
-        for d in downloads {
+        for (idx, d) in downloads.into_iter().enumerate() {
+            let selected = idx == self.downloads_selected;
             let state = match &d.state {
                 relay_bridge::DownloadState::Downloading => "Downloading…".to_string(),
                 relay_bridge::DownloadState::Done => "Done".to_string(),
@@ -3349,6 +3393,7 @@ impl RelayApp {
                     .py_1()
                     .border_b_1()
                     .border_color(t.border)
+                    .when(selected, |el| el.bg(t.hover))
                     .child(
                         div()
                             .flex_1()
@@ -3418,16 +3463,10 @@ impl RelayApp {
                                         .hover(|s| s.bg(t.hover))
                                         .on_click(cx.listener(move |app, _, _, cx| {
                                             if let Some(path) = &path {
-                                                #[cfg(target_os = "macos")]
-                                                {
-                                                    let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
-                                                }
-                                                #[cfg(not(target_os = "macos"))]
-                                                {
-                                                    app.toast("Reveal in Finder needs macOS");
-                                                }
+                                                app.reveal_download(path, cx);
+                                            } else {
+                                                cx.notify();
                                             }
-                                            cx.notify();
                                         }))
                                         .child("Reveal"),
                                 )

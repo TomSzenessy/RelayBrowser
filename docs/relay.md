@@ -216,7 +216,9 @@ Cancel for a running row, Retry for a failed/cancelled row, Reveal in Finder,
 and Clear finished. Cancel marks the row immediately and calls
 `WKDownload.cancel` through the tab's bridge handler; Retry navigates the
 owning tab to the original URL so WebKit decides again whether it is a
-download, creating a fresh row when it is. The metadata is in memory only; the file is the user's, outside the
+download, creating a fresh row when it is. ↑/↓/Home/End move a visible
+selection and ↩ activates the selected row (Cancel running, Retry failed,
+Reveal done). The metadata is in memory only; the file is the user's, outside the
 profile. Progress bytes and VoiceOver labels are not built yet (#54).
 
 ## Picture in Picture
