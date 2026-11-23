@@ -121,6 +121,12 @@ still disconnected then. `need(id)` also rejects a detached element, so a
 moved/reordered node stays clickable while a genuinely removed one reports
 "not found".
 
+`patch` removes a replaced subtree through a parent index, so its cost is
+proportional to the patched subtree plus removed ids; it no longer allocates a
+set of every node or scans every child list per message. The store also
+unlinks a moved child from its old parent, so repeated patches cannot grow
+orphan links.
+
 Rust treats the patch as untrusted input. `DomStore::replace_all` and `patch`
 reject a message that repeats an id within one tree (or would close a cycle
 through the existing store) and leave the previous tree untouched.
