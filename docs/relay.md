@@ -109,7 +109,8 @@ gone: the same renderer draws vertical rows or a horizontal row of pills.
 ## New-tab page
 
 With no active tab, `render_start_page` paints the new-tab page: the app name,
-one quiet search field that opens the ⌘K palette, and up to four sections from
+one quiet search field that opens the ⌘K palette (command rows read the live
+keymap, so custom shortcuts show immediately), and up to four sections from
 `startpage.rs` — **Recent** (pure `last_visit` order, 5 rows), **Frequent**
 (most-visited, with recent pages removed so the two lists do not repeat),
 **Apps** (installed web apps from the `web_apps` table), and **Bookmarks**
