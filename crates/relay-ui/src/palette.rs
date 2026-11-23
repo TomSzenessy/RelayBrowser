@@ -52,10 +52,11 @@ pub enum Command {
     ShowHistory,
     ShowBookmarks,
     ToggleAgents,
+    CycleAgentPolicy,
 }
 
 impl Command {
-    pub const ALL: [Command; 31] = [
+    pub const ALL: [Command; 32] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -87,6 +88,7 @@ impl Command {
         Command::ShowHistory,
         Command::ShowBookmarks,
         Command::ToggleAgents,
+        Command::CycleAgentPolicy,
     ];
 
     pub fn title(self) -> &'static str {
@@ -122,6 +124,7 @@ impl Command {
             Command::ShowHistory => "Show History",
             Command::ShowBookmarks => "Show Bookmarks",
             Command::ToggleAgents => "Pause / Resume Agents",
+            Command::CycleAgentPolicy => "Cycle Agent Access on This Site",
         }
     }
 
@@ -158,6 +161,7 @@ impl Command {
             Command::ShowHistory => "⌘Y",
             Command::ShowBookmarks => "⇧⌘B",
             Command::ToggleAgents => "⇧⌘.",
+            Command::CycleAgentPolicy => "⌘⌥A",
         }
     }
 }
@@ -527,8 +531,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 31);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents] {
+        assert_eq!(Command::ALL.len(), 32);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents, Command::CycleAgentPolicy] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }

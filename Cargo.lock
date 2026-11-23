@@ -4727,6 +4727,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-web-kit",
+ "relay-bridge",
  "rusqlite",
  "security-framework",
  "security-framework-sys",

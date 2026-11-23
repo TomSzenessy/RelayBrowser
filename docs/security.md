@@ -132,6 +132,10 @@ known slow German legal site with a documented manual-review exception; a 403,
   Any process running as the user can drive the browser, including the user's
   logged-in sessions; this is the intended trust level for local coding
   agents. A second instance refuses to take over a live socket.
+- **Per-site agent policy:** Allow / Read only / Block is stored per host
+  (`agent_policies`) and enforced by the MCP before a tool resolves a tab
+  (`Block`), before a mutating op (`Read only`), and before `open_tab`/
+  `navigate`. A blocked `open_tab` creates no tab.
 - **Pages are untrusted:** bridge output is data written by the website. The
   MCP instructions tell agents so, subframe messages are dropped, and replies
   resolve only for their own tab. Pages and agents share

@@ -241,7 +241,21 @@ impl RelayMcp {
         if self.hub.agents_paused() {
             return Err(HubError::Paused);
         }
-        self.hub.lock().resolve(id)
+        let tab = self.hub.lock().resolve(id)?;
+        let (host, policy) = self.tab_policy(tab)?;
+        if policy == relay_bridge::AgentPolicy::Block {
+            return Err(HubError::Blocked(host));
+        }
+        Ok(tab)
+    }
+
+    fn tab_policy(&self, tab: TabId) -> Result<(String, relay_bridge::AgentPolicy), HubError> {
+        let host = {
+            let h = self.hub.lock();
+            let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
+            relay_bridge::host_of(&t.url).unwrap_or_default()
+        };
+        Ok((host.clone(), self.hub.agent_policy_for_host(&host)))
     }
 
     /// The user's Stop control is checked before every tool, including reads.
@@ -254,6 +268,10 @@ impl RelayMcp {
     }
 
     async fn op(&self, tab: TabId, op: Op) -> Result<serde_json::Value, HubError> {
+        let (host, policy) = self.tab_policy(tab)?;
+        if policy == relay_bridge::AgentPolicy::Block || (policy == relay_bridge::AgentPolicy::ReadOnly && op.mutates()) {
+            return Err(if policy == relay_bridge::AgentPolicy::Block { HubError::Blocked(host) } else { HubError::ReadOnly(host) });
+        }
         self.ensure_awake(tab).await?;
         run_op(&self.hub, self.browser.as_ref(), tab, op, OP_TIMEOUT).await
     }
@@ -313,6 +331,10 @@ impl RelayMcp {
         self.ensure_running()?;
         reply(async {
             check_url(&a.url)?;
+            let host = relay_bridge::host_of(&a.url).unwrap_or_default();
+            if self.hub.agent_policy_for_host(&host) == relay_bridge::AgentPolicy::Block {
+                return Err(HubError::Blocked(host));
+            }
             let tab = self.hub.update(|h| h.create_tab(&a.url, Owner::Agent));
             self.browser.open(tab, &a.url);
             self.after_load(tab, 0).await
@@ -325,6 +347,14 @@ impl RelayMcp {
         reply(async {
             check_url(&a.url)?;
             let tab = self.tab(a.tab_id)?;
+            let (host, policy) = self.tab_policy(tab)?;
+            if policy != relay_bridge::AgentPolicy::Allow {
+                return Err(if policy == relay_bridge::AgentPolicy::Block { HubError::Blocked(host) } else { HubError::ReadOnly(host) });
+            }
+            let target_host = relay_bridge::host_of(&a.url).unwrap_or_default();
+            if self.hub.agent_policy_for_host(&target_host) == relay_bridge::AgentPolicy::Block {
+                return Err(HubError::Blocked(target_host));
+            }
             let before = self.load_seq(tab)?;
             self.browser.navigate(tab, &a.url);
             self.after_load(tab, before).await
@@ -345,14 +375,15 @@ impl RelayMcp {
     #[tool(description = "Read the page structure as an outline. Each line is `[id] tag \"label\"`; pass the id to click_element/type_text.")]
     async fn read_dom(&self, Parameters(a): Parameters<ReadDomArgs>) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
-        if let Ok(tab) = self.tab(a.tab_id) {
-            if let Err(e) = self.ensure_awake(tab).await {
-                return reply(Err(e));
-            }
+        let tab = match self.tab(a.tab_id) {
+            Ok(tab) => tab,
+            Err(e) => return reply(Err(e)),
+        };
+        if let Err(e) = self.ensure_awake(tab).await {
+            return reply(Err(e));
         }
         reply((|| {
             let h = self.hub.lock();
-            let tab = h.resolve(a.tab_id)?;
             let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
             if t.dom.is_empty() {
                 if let Some(e) = &t.load_error {
@@ -480,6 +511,7 @@ impl RelayMcp {
     async fn get_console_logs(&self, Parameters(a): Parameters<ConsoleArgs>) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
         reply((|| {
+            let _ = self.tab(a.tab_id)?;
             let h = self.hub.lock();
             let tab = h.resolve(a.tab_id)?;
             let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
@@ -509,6 +541,7 @@ impl RelayMcp {
     async fn get_network_requests(&self, Parameters(a): Parameters<NetworkArgs>) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
         reply((|| {
+            let _ = self.tab(a.tab_id)?;
             let h = self.hub.lock();
             let tab = h.resolve(a.tab_id)?;
             let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;

@@ -77,6 +77,7 @@ actions!(
         ShowHistory,
         ShowBookmarks,
         ToggleAgents,
+        CycleAgentPolicy,
     ]
 );
 
@@ -134,6 +135,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-y", ShowHistory, None),
         KeyBinding::new("secondary-shift-b", ShowBookmarks, None),
         KeyBinding::new("secondary-shift-.", ToggleAgents, None),
+        KeyBinding::new("secondary-alt-a", CycleAgentPolicy, None),
     ]
 }
 
@@ -155,6 +157,7 @@ fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
             items: vec![
                 item("Settings…", ToggleSettings),
                 item("Pause / Resume Agents", ToggleAgents),
+                item("Cycle Agent Access on This Site", CycleAgentPolicy),
                 sep(),
                 item("Quit Relay", Quit),
             ],
@@ -419,6 +422,11 @@ impl RelayApp {
             store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).as_deref(),
             store.as_ref().and_then(|s| s.setting("tabs_folded").ok().flatten()).as_deref(),
         );
+        if let Some(store) = &store {
+            for (host, policy) in store.all_agent_policies().unwrap_or_default() {
+                hub.set_agent_policy(&host, policy);
+            }
+        }
         let start_page = match &store {
             Some(store) => {
                 let sections = store.setting("start_sections").ok().flatten();
@@ -1173,6 +1181,26 @@ impl RelayApp {
         self.web.borrow().edit(action);
     }
 
+    fn cycle_agent_policy(&mut self, cx: &mut Context<Self>) {
+        let Some(url) = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())) else {
+            self.toast("Open a site first");
+            return;
+        };
+        let Some(host) = relay_bridge::host_of(&url) else {
+            self.toast("Site policies apply to http(s) pages");
+            return;
+        };
+        let next = self.hub.agent_policy_for_host(&host).next();
+        self.hub.set_agent_policy(&host, next);
+        if let Some(store) = &self.store {
+            if let Err(e) = store.set_agent_policy(&host, next) {
+                eprintln!("relay: could not save the agent policy: {e}");
+            }
+        }
+        self.toast(format!("Agents on {host}: {}. Each MCP call is checked in the hub.", next.label()));
+        cx.notify();
+    }
+
     fn toggle_agents(&mut self, cx: &mut Context<Self>) {
         let paused = !self.hub.agents_paused();
         self.hub.set_agents_paused(paused);
@@ -1490,6 +1518,7 @@ impl RelayApp {
             Command::ShowHistory => self.open_library(Mode::History, cx),
             Command::ShowBookmarks => self.open_library(Mode::Bookmarks, cx),
             Command::ToggleAgents => self.toggle_agents(cx),
+            Command::CycleAgentPolicy => self.cycle_agent_policy(cx),
         }
     }
 
@@ -3238,6 +3267,9 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &ToggleAgents, _, cx| {
                 app.toggle_agents(cx);
+            }))
+            .on_action(cx.listener(|app, _: &CycleAgentPolicy, _, cx| {
+                app.cycle_agent_policy(cx);
             }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
@@ -3572,9 +3604,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 45);
+        assert_eq!(bindings.len(), 46);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 45] = [
+        let required: [&'static str; 46] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -3620,6 +3652,7 @@ mod tests {
             ShowHistory.name(),
             ShowBookmarks.name(),
             ToggleAgents.name(),
+            CycleAgentPolicy.name(),
         ];
         for name in required {
             assert!(bound.contains(name), "missing key binding for {name}");

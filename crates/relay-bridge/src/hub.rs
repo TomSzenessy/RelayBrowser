@@ -2,6 +2,7 @@
 //! Inspector and the MCP server read. The WebKit layer writes into it from
 //! bridge messages; nothing else does.
 
+use crate::url_policy::{host_of, AgentPolicy};
 use crate::protocol::{
     Challenge, Command, CommandResult, ConsoleEntry, DomNode, NetworkEntry, NodeId, Op, PageMessage,
 };
@@ -440,6 +441,10 @@ pub enum HubError {
     Browser(String),
     #[error("paused by the user; resume agents in Relay to continue")]
     Paused,
+    #[error("agent access to {0} is blocked by the site policy")]
+    Blocked(String),
+    #[error("{0} is read-only for agents; navigate or ask the user to change the site policy")]
+    ReadOnly(String),
 }
 
 #[derive(Default)]
@@ -460,6 +465,8 @@ pub struct SharedHub {
     changed: Arc<watch::Sender<u64>>,
     /// User's Stop control: checked by every MCP tool before it touches a tab.
     agents_paused: Arc<std::sync::atomic::AtomicBool>,
+    /// Per-host Allow / ReadOnly / Block, loaded from the profile by the shell.
+    agent_policies: Arc<Mutex<std::collections::HashMap<String, AgentPolicy>>>,
 }
 
 impl Default for SharedHub {
@@ -475,6 +482,7 @@ impl SharedHub {
             inner: Arc::new(Mutex::new(Hub { next_tab: 1, next_cmd: 1, ..Default::default() })),
             changed: Arc::new(tx),
             agents_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            agent_policies: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -491,6 +499,32 @@ impl SharedHub {
 
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.changed.subscribe()
+    }
+
+    pub fn set_agent_policy(&self, host: &str, policy: AgentPolicy) {
+        let host = host.trim().to_ascii_lowercase();
+        let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+        if host.is_empty() {
+            return;
+        }
+        let mut map = self.agent_policies.lock().unwrap_or_else(|p| p.into_inner());
+        if policy == AgentPolicy::Allow {
+            map.remove(&host);
+        } else {
+            map.insert(host, policy);
+        }
+        drop(map);
+        self.changed.send_modify(|v| *v = v.wrapping_add(1));
+    }
+
+    pub fn agent_policy_for_host(&self, host: &str) -> AgentPolicy {
+        let host = host.trim().to_ascii_lowercase();
+        let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+        self.agent_policies.lock().unwrap_or_else(|p| p.into_inner()).get(&host).copied().unwrap_or_default()
+    }
+
+    pub fn agent_policy_for_url(&self, url: &str) -> AgentPolicy {
+        host_of(url).map(|h| self.agent_policy_for_host(&h)).unwrap_or_default()
     }
 
     pub fn agents_paused(&self) -> bool {
@@ -794,6 +828,17 @@ mod tests {
         let out = d.outline(None, 10, true, 100);
         assert_eq!(out.trim(), "[5] button \"New\"");
         assert_eq!(d.interactive_ids(10), vec![5]);
+    }
+
+    #[test]
+    fn agent_policies_are_per_host_and_allow_is_the_default() {
+        let hub = SharedHub::new();
+        assert_eq!(hub.agent_policy_for_url("https://shop.test/cart"), AgentPolicy::Allow);
+        hub.set_agent_policy("Shop.Test", AgentPolicy::ReadOnly);
+        assert_eq!(hub.agent_policy_for_url("https://www.shop.test/x"), AgentPolicy::ReadOnly);
+        assert_eq!(hub.agent_policy_for_url("https://other.test/"), AgentPolicy::Allow);
+        hub.set_agent_policy("shop.test", AgentPolicy::Allow);
+        assert_eq!(hub.agent_policy_for_url("https://shop.test/"), AgentPolicy::Allow);
     }
 
     #[test]

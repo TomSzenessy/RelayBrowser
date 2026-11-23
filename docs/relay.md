@@ -190,6 +190,11 @@ back rather than hiding it.
   hub and fails fast with "paused by the user"; an `open_tab` creates nothing
   while paused. The shell repaints a banner from the hub tick and Resume clears
   the flag. It is not a page-level pause: the user can keep browsing.
+- **Per-site policy:** `⌘⌥A` cycles Allow → Read only → Block for the active
+  host; the value is stored in the `agent_policies` table and loaded into the
+  hub at startup. Block refuses every agent tool on that host; Read only
+  refuses navigation and mutating ops (`click`, `type`, `edit_style`) while
+  reads/scroll/highlight continue; opening a blocked URL creates nothing.
 
 - Agent tabs (`Owner::Agent`) share the user's cookie store and live in a
   tinted group in the tab strip.

@@ -131,7 +131,9 @@ impl Store {
                  hidden_selectors TEXT NOT NULL DEFAULT '[]');
              CREATE TABLE IF NOT EXISTS web_apps(
                  id TEXT PRIMARY KEY, name TEXT NOT NULL, start_url TEXT NOT NULL UNIQUE,
-                 bundle_path TEXT NOT NULL, installed_at INTEGER NOT NULL DEFAULT 0);",
+                 bundle_path TEXT NOT NULL, installed_at INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS agent_policies(
+                 host TEXT PRIMARY KEY, policy TEXT NOT NULL);",
         )?;
         let v: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get::<_, String>(0))
@@ -467,6 +469,45 @@ impl Store {
         let mut stmt = self.conn.prepare("SELECT id, name, path FROM extensions WHERE enabled = 1 ORDER BY name")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Per-site agent policy. Allow removes the row (the default).
+    pub fn set_agent_policy(&self, host: &str, policy: relay_bridge::AgentPolicy) -> Result<(), Error> {
+        let host = host.trim().to_ascii_lowercase();
+        let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+        if host.is_empty() {
+            return Ok(());
+        }
+        if policy == relay_bridge::AgentPolicy::Allow {
+            self.conn.execute("DELETE FROM agent_policies WHERE host=?1", [&host])?;
+        } else {
+            self.conn.execute("INSERT INTO agent_policies(host, policy) VALUES(?1, ?2) ON CONFLICT(host) DO UPDATE SET policy=?2", params![host, policy.as_str()])?;
+        }
+        Ok(())
+    }
+
+    pub fn agent_policy(&self, host: &str) -> Result<relay_bridge::AgentPolicy, Error> {
+        let host = host.trim().to_ascii_lowercase();
+        let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+        Ok(self
+            .conn
+            .query_row("SELECT policy FROM agent_policies WHERE host=?1", [&host], |r| r.get::<_, String>(0))
+            .optional()?
+            .and_then(|p| relay_bridge::AgentPolicy::parse(&p))
+            .unwrap_or_default())
+    }
+
+    pub fn all_agent_policies(&self) -> Result<Vec<(String, relay_bridge::AgentPolicy)>, Error> {
+        let mut stmt = self.conn.prepare("SELECT host, policy FROM agent_policies ORDER BY host")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = vec![];
+        for row in rows {
+            let (host, policy) = row?;
+            if let Some(policy) = relay_bridge::AgentPolicy::parse(&policy) {
+                out.push((host, policy));
+            }
+        }
+        Ok(out)
     }
 
     /// Record a web app installed from a page. `start_url` is unique, so
@@ -829,6 +870,18 @@ mod tests {
         assert!(s.move_bookmark("https://m.test/", &["New".into(), "Sub".into()]).unwrap());
         assert_eq!(s.bookmarks().unwrap()[0].folder, vec!["New".to_string(), "Sub".to_string()]);
         assert!(!s.move_bookmark("https://missing.test/", &[]).unwrap());
+    }
+
+    #[test]
+    fn agent_policies_round_trip_and_allow_clears() {
+        let s = Store::in_memory().unwrap();
+        assert_eq!(s.agent_policy("shop.test").unwrap(), relay_bridge::AgentPolicy::Allow);
+        s.set_agent_policy("WWW.Shop.Test", relay_bridge::AgentPolicy::ReadOnly).unwrap();
+        s.set_agent_policy("blocked.test", relay_bridge::AgentPolicy::Block).unwrap();
+        assert_eq!(s.agent_policy("shop.test").unwrap(), relay_bridge::AgentPolicy::ReadOnly);
+        assert_eq!(s.all_agent_policies().unwrap(), vec![("blocked.test".into(), relay_bridge::AgentPolicy::Block), ("shop.test".into(), relay_bridge::AgentPolicy::ReadOnly)]);
+        s.set_agent_policy("shop.test", relay_bridge::AgentPolicy::Allow).unwrap();
+        assert!(s.all_agent_policies().unwrap().len() == 1);
     }
 
     #[test]
