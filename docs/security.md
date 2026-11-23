@@ -158,6 +158,10 @@ on this repository); never use a public issue for an unpatched report.
   over the local socket, and stores nothing; it obeys Stop/Block. Like any
   screenshot it can include private page pixels, so the user controls when an
   agent is attached.
+- **Shell writes:** theme/accent/start-section changes are off by default,
+  require an explicit plan id (single-use, 60 s), allow only named values, and
+  push a bounded hub change; `shell_apply` is audited. No arbitrary code or
+  shortcut writes.
 - **Shell read tools:** `shell_*` tools return a bounded allowlist of settings,
   shortcut overrides, section order, installed apps, and version. They cannot
   write or execute code; the page/agent boundary is unchanged.

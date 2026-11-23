@@ -273,6 +273,17 @@ waits on the hub watch for a newer sequence (2 s cap) instead of sleeping
 re-checks only when state changes, with the caller's timeout; it no longer
 polls the whole tree every 50 ms.
 
+## Shell plan/apply (theme, accent, start sections)
+
+When Settings → Agent shell changes is on, an agent can call
+`shell_plan_change {theme?, accent?, start_sections?}` to get a one-time id and
+a human diff, then `shell_apply_change {plan_id}`. The plan expires after 60 s,
+is single-use, and only accepts system/light/dark, the four accents, and an
+ordered unique subset of recent/frequent/apps/bookmarks. Apply writes the
+setting, pushes a hub `ShellChange` the GPUI pump drains (theme/accent update
+live; start sections rebuild), and audits `shell_apply`. Off by default; no
+shortcut/arbitrary-code writes.
+
 ## Shell read tools
 
 The MCP also exposes read-only shell state: `shell_settings` (a bounded

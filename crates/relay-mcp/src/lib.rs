@@ -13,9 +13,11 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const OP_TIMEOUT: Duration = Duration::from_secs(5);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(20);
@@ -32,7 +34,17 @@ pub struct RelayMcp {
     hub: SharedHub,
     browser: Arc<dyn Browser>,
     audit: Option<Arc<Mutex<relay_extensions::store::Store>>>,
+    plans: Arc<Mutex<HashMap<u64, PendingPlan>>>,
+    next_plan: Arc<AtomicU64>,
     tool_router: ToolRouter<Self>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingPlan {
+    theme: Option<String>,
+    accent: Option<String>,
+    sections: Option<String>,
+    created: Instant,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -69,6 +81,22 @@ pub struct PressKeyArgs {
 pub struct StorageArgs {
     /// Tab id; defaults to the active tab.
     pub tab_id: Option<TabId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlanChangeArgs {
+    /// system, light, or dark.
+    pub theme: Option<String>,
+    /// blue, purple, green, or orange.
+    pub accent: Option<String>,
+    /// Comma-separated ordered sections: recent, frequent, apps, bookmarks.
+    pub start_sections: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplyChangeArgs {
+    /// The one-time id returned by shell_plan_change.
+    pub plan_id: u64,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -305,7 +333,7 @@ fn reply(r: Result<CallToolResult, HubError>) -> Result<CallToolResult, ErrorDat
 
 impl RelayMcp {
     pub fn new(hub: SharedHub, browser: Arc<dyn Browser>) -> Self {
-        Self { hub, browser, audit: None, tool_router: Self::tool_router() }
+        Self { hub, browser, audit: None, plans: Arc::new(Mutex::new(HashMap::new())), next_plan: Arc::new(AtomicU64::new(1)), tool_router: Self::tool_router() }
     }
 
     /// Attach the profile store so every tool call writes one lean audit row.
@@ -439,6 +467,79 @@ fn op_tool(op: &Op) -> &'static str {
 
 #[tool_router]
 impl RelayMcp {
+    #[tool(description = "Plan a theme/accent/start-section change and return a one-time id plus a human diff. Requires Settings → Agent shell changes. No state changes yet.")]
+    async fn shell_plan_change(&self, Parameters(a): Parameters<PlanChangeArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let store = self.shell_store()?;
+        let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
+        if !shell_enabled(&store) {
+            return Err(ErrorData::invalid_params("shell writes are off; enable Agent shell changes in Settings", None));
+        }
+        let theme = a.theme.map(|t| t.to_ascii_lowercase());
+        if let Some(t) = &theme {
+            if !matches!(t.as_str(), "system" | "light" | "dark") {
+                return Err(ErrorData::invalid_params("theme must be system, light, or dark", None));
+            }
+        }
+        let accent = a.accent.map(|t| t.to_ascii_lowercase());
+        if let Some(t) = &accent {
+            if !matches!(t.as_str(), "blue" | "purple" | "green" | "orange") {
+                return Err(ErrorData::invalid_params("accent must be blue, purple, green, or orange", None));
+            }
+        }
+        let sections = a.start_sections.map(|s| s.trim().to_string());
+        if let Some(s) = &sections {
+            let mut seen = std::collections::HashSet::new();
+            let parts: Vec<&str> = s.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+            if parts.is_empty() || parts.len() > 4 || !parts.iter().all(|p| matches!(*p, "recent" | "frequent" | "apps" | "bookmarks")) || !parts.iter().all(|p| seen.insert(*p)) {
+                return Err(ErrorData::invalid_params("start_sections must be an ordered comma list of recent, frequent, apps, bookmarks without duplicates", None));
+            }
+        }
+        if theme.is_none() && accent.is_none() && sections.is_none() {
+            return Err(ErrorData::invalid_params("plan has no changes", None));
+        }
+        let old_theme = store.setting("theme").ok().flatten().unwrap_or_else(|| "system".into());
+        let old_accent = store.setting("accent").ok().flatten().unwrap_or_else(|| "blue".into());
+        let old_sections = store.setting("start_sections").ok().flatten().unwrap_or_else(|| "recent,frequent,apps,bookmarks".into());
+        let mut diff = String::new();
+        if let Some(t) = &theme { diff.push_str(&format!("theme: {old_theme} -> {t}\n")); }
+        if let Some(a) = &accent { diff.push_str(&format!("accent: {old_accent} -> {a}\n")); }
+        if let Some(s) = &sections { diff.push_str(&format!("start_sections: {old_sections} -> {s}\n")); }
+        let id = self.next_plan.fetch_add(1, Ordering::SeqCst);
+        self.plans.lock().unwrap_or_else(|p| p.into_inner()).insert(id, PendingPlan { theme, accent, sections, created: Instant::now() });
+        Ok(json(&serde_json::json!({ "plan_id": id, "diff": diff.trim_end(), "expires_in_seconds": 60 })))
+    }
+
+    #[tool(description = "Apply a previously planned shell change. The id is single-use and expires after 60 seconds; requires Agent shell changes.")]
+    async fn shell_apply_change(&self, Parameters(a): Parameters<ApplyChangeArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let store = self.shell_store()?;
+        let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
+        if !shell_enabled(&store) {
+            return Err(ErrorData::invalid_params("shell writes are off; enable Agent shell changes in Settings", None));
+        }
+        let plan = self.plans.lock().unwrap_or_else(|p| p.into_inner()).remove(&a.plan_id);
+        let Some(plan) = plan else {
+            return Err(ErrorData::invalid_params("unknown or already applied plan", None));
+        };
+        if plan.created.elapsed() > Duration::from_secs(60) {
+            return Err(ErrorData::invalid_params("plan expired; plan the change again", None));
+        }
+        if let Some(theme) = &plan.theme { store.set_setting("theme", theme).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
+        if let Some(accent) = &plan.accent { store.set_setting("accent", accent).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
+        if let Some(sections) = &plan.sections { store.set_setting("start_sections", sections).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
+        if plan.theme.is_some() || plan.accent.is_some() {
+            let theme = plan.theme.clone().or_else(|| store.setting("theme").ok().flatten()).unwrap_or_else(|| "system".into());
+            let accent = plan.accent.clone().or_else(|| store.setting("accent").ok().flatten()).unwrap_or_else(|| "blue".into());
+            self.hub.push_shell_change(relay_bridge::ShellChange::Theme { theme, accent });
+        }
+        if let Some(sections) = &plan.sections {
+            self.hub.push_shell_change(relay_bridge::ShellChange::StartSections { sections: sections.clone() });
+        }
+        self.audit("shell_apply", "", None, "ok");
+        Ok(json(&serde_json::json!({ "applied": true, "plan_id": a.plan_id })))
+    }
+
     #[tool(description = "Read a bounded allowlist of shell settings (search, blocking, sleep, MCP, eval, theme/accent, start sections, tabs). Read-only.")]
     async fn shell_settings(&self) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
@@ -1056,6 +1157,10 @@ pub async fn stdio_proxy(path: &Path) -> anyhow::Result<()> {
     }
     let _ = w;
     Ok(())
+}
+
+fn shell_enabled(store: &relay_extensions::store::Store) -> bool {
+    matches!(store.setting("shell_control").ok().flatten().as_deref().map(str::trim), Some("on" | "true" | "yes" | "1"))
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
