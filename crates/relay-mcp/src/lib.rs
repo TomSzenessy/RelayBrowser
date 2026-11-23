@@ -482,8 +482,8 @@ impl RelayMcp {
         self.ensure_running()?;
         let store = self.shell_store()?;
         let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
-        if !shell_enabled(&store) {
-            return Err(ErrorData::invalid_params("shell writes are off; enable Agent shell changes in Settings", None));
+        if !self.shell_enabled_for(&store) {
+            return Err(ErrorData::invalid_params("shell writes are off; enable Agent shell changes or grant this client in Settings", None));
         }
         let theme = a.theme.map(|t| t.to_ascii_lowercase());
         if let Some(t) = &theme {
@@ -540,8 +540,8 @@ impl RelayMcp {
         self.ensure_running()?;
         let store = self.shell_store()?;
         let store = store.lock().map_err(|_| ErrorData::internal_error("shell store is poisoned", None))?;
-        if !shell_enabled(&store) {
-            return Err(ErrorData::invalid_params("shell writes are off; enable Agent shell changes in Settings", None));
+        if !self.shell_enabled_for(&store) {
+            return Err(ErrorData::invalid_params("shell writes are off; enable Agent shell changes or grant this client in Settings", None));
         }
         let plan = self.plans.lock().unwrap_or_else(|p| p.into_inner()).remove(&a.plan_id);
         let Some(plan) = plan else {
@@ -652,6 +652,13 @@ impl RelayMcp {
     async fn shell_version(&self) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
         Ok(json(&serde_json::json!({ "name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION") })))
+    }
+
+    fn shell_enabled_for(&self, store: &relay_extensions::store::Store) -> bool {
+        if shell_enabled(store) {
+            return true;
+        }
+        self.client_name().is_some_and(|name| store.mcp_client_granted(&name).unwrap_or(false))
     }
 
     fn client_name(&self) -> Option<String> {
@@ -1141,6 +1148,12 @@ impl ServerHandler for RelayMcp {
         if let Ok(mut name) = self.client_name.lock() {
             *name = Some(request.client_info.name.clone());
         }
+        if let Some(audit) = &self.audit {
+            if let Ok(store) = audit.lock() {
+                let at = now_unix();
+                let _ = store.touch_mcp_client(&request.client_info.name.chars().filter(|c| !c.is_control()).take(80).collect::<String>(), at);
+            }
+        }
         context.peer.set_peer_info(request.clone());
         self.negotiate_initialize(&request)
     }
@@ -1262,6 +1275,10 @@ fn validate_shell_setting(key: &str, value: &str) -> Result<(), ErrorData> {
         _ => return Err(ErrorData::invalid_params(format!("{key} is not an allowlisted shell setting"), None)),
     }
     Ok(())
+}
+
+fn now_unix() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 fn short_hash(value: &str) -> String {

@@ -3814,6 +3814,66 @@ impl RelayApp {
                 cx.notify();
             }))
             .into_any_element();
+        let clients = self.store.as_ref().and_then(|s| s.mcp_clients().ok()).unwrap_or_default();
+        let mut client_section = div().flex().flex_col().gap_2().child(row(
+            "Connected agents",
+            Some("Per-client shell writes; the global switch above overrides every grant"),
+            div().into_any_element(),
+        ));
+        if clients.is_empty() {
+            client_section = client_section.child(div().text_size(px(11.)).text_color(t.muted).child("No MCP agent has connected yet."));
+        }
+        for c in clients {
+            let name = c.name.clone();
+            let granted = c.granted;
+            let action = if granted { "Revoke" } else { "Grant" };
+            let btn = div()
+                .id(SharedString::from(format!("grant-{}", c.name)))
+                .px_2()
+                .py_0p5()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(t.border)
+                .text_size(px(11.))
+                .text_color(if granted { t.accent } else { t.text })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child(action)
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    if let Some(store) = &app.store {
+                        let at = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        let _ = store.set_mcp_client_granted(&name, !granted, at);
+                    }
+                    cx.notify();
+                }))
+                .into_any_element();
+            client_section = client_section.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_4()
+                    .py_2p5()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(div().text_size(px(13.)).text_color(t.text).child(c.name))
+                            .child(div().text_size(px(11.)).text_color(t.muted).child(if c.granted {
+                                "May plan/apply shell changes"
+                            } else {
+                                "Connected; no shell writes"
+                            })),
+                    )
+                    .child(btn),
+            );
+        }
         let strip_position = pill("settings-tabs-position", self.strip.placement.label().into(), false)
             .on_click(cx.listener(|app, _, _, cx| {
                 app.rotate_tab_strip(cx);
@@ -3923,7 +3983,8 @@ impl RelayApp {
                 .child(row("Tab strip", Some("⌘S folds · ⇧⌘S moves"), strip_control))
                 .child(row("Local MCP server", Some("(restart to apply)"), mcp_btn))
                 .child(row("Agent JavaScript (eval_js)", Some("On only for Allow sites; agents can read page data"), eval_btn))
-                .child(row("Agent shell changes", Some("Allow plan/apply for theme, accent, and start sections"), shell_btn))
+                .child(row("Agent shell changes (all clients)", Some("Allow plan/apply for theme, settings, shortcuts, and sidebar"), shell_btn))
+                .child(client_section)
                 .child(row("Connect an agent", Some("Claude Code, Codex, OpenCode, Cursor, Zed"), connect_btn))
                 .child(
                     div()

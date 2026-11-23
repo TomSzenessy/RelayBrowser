@@ -35,6 +35,13 @@ pub struct AgentAuditRow {
     pub at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpClientRow {
+    pub name: String,
+    pub last_seen: i64,
+    pub granted: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportCounts {
     pub bookmarks: usize,
@@ -151,7 +158,9 @@ impl Store {
                  host TEXT PRIMARY KEY, policy TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS agent_audit(
                  id INTEGER PRIMARY KEY, tool TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-                 tab INTEGER, outcome TEXT NOT NULL, at INTEGER NOT NULL);",
+                 tab INTEGER, outcome TEXT NOT NULL, at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS mcp_clients(
+                 name TEXT PRIMARY KEY, last_seen INTEGER NOT NULL, granted INTEGER NOT NULL DEFAULT 0);",
         )?;
         let v: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get::<_, String>(0))
@@ -503,6 +512,41 @@ impl Store {
         Ok(())
     }
 
+    /// Remember a connected MCP client without changing its grant.
+    pub fn touch_mcp_client(&self, name: &str, at: i64) -> Result<(), Error> {
+        self.conn.execute(
+            "INSERT INTO mcp_clients(name, last_seen, granted) VALUES(?1, ?2, 0)
+             ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen",
+            params![name, at],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_mcp_client_granted(&self, name: &str, granted: bool, at: i64) -> Result<(), Error> {
+        self.conn.execute(
+            "INSERT INTO mcp_clients(name, last_seen, granted) VALUES(?1, ?2, ?3)
+             ON CONFLICT(name) DO UPDATE SET granted=excluded.granted",
+            params![name, at, i64::from(granted)],
+        )?;
+        Ok(())
+    }
+
+    pub fn mcp_clients(&self) -> Result<Vec<McpClientRow>, Error> {
+        let mut stmt = self.conn.prepare("SELECT name, last_seen, granted FROM mcp_clients ORDER BY last_seen DESC LIMIT 50")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(McpClientRow { name: r.get(0)?, last_seen: r.get(1)?, granted: r.get::<_, i64>(2)? != 0 })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn mcp_client_granted(&self, name: &str) -> Result<bool, Error> {
+        Ok(self
+            .conn
+            .query_row("SELECT granted FROM mcp_clients WHERE name=?1", [name], |r| r.get::<_, i64>(0))
+            .optional()?
+            .is_some_and(|v| v != 0))
+    }
+
     pub fn agent_audit(&self, limit: usize) -> Result<Vec<AgentAuditRow>, Error> {
         let mut stmt = self.conn.prepare(
             "SELECT tool, host, tab, outcome, at FROM agent_audit ORDER BY id DESC LIMIT ?1",
@@ -694,6 +738,20 @@ fn create_private_file(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_clients_track_last_seen_and_grants() {
+        let s = Store::in_memory().unwrap();
+        s.touch_mcp_client("Claude Desktop", 10).unwrap();
+        assert!(!s.mcp_client_granted("Claude Desktop").unwrap());
+        s.set_mcp_client_granted("Claude Desktop", true, 11).unwrap();
+        assert!(s.mcp_client_granted("Claude Desktop").unwrap());
+        s.touch_mcp_client("Claude Desktop", 12).unwrap();
+        assert!(s.mcp_client_granted("Claude Desktop").unwrap(), "touch does not revoke");
+        let c = s.mcp_clients().unwrap();
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].last_seen, 12);
+    }
 
     #[test]
     fn visits_accumulate_and_search_ranks() {
