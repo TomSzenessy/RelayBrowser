@@ -577,14 +577,8 @@ fn install_extension(id: Option<&str>) -> anyhow::Result<()> {
     println!("  installing grants every requested permission and host pattern.");
     open_store()?.record_extension(id, &name, &m.version, &dir)?;
     println!("Installed {name} {} → {}", m.version, dir.display());
-    if !compat.shimmed.is_empty() {
-        println!("  shimmed: {}", compat.shimmed.join(", "));
-    }
-    if !compat.missing.is_empty() {
-        println!("  WebKit lacks: {} (those features will not work)", compat.missing.join(", "));
-    }
-    for w in compat.warnings {
-        println!("  note: {w}");
+    for line in compat.report_lines() {
+        println!("  {line}");
     }
     println!("It loads the next time Relay starts.");
     Ok(())

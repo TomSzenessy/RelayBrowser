@@ -166,7 +166,8 @@ known slow German legal site with a documented manual-review exception; a 403,
   prefix form `about:blankx`, `file:`, `javascript:`, `data:`, and
   `view-source:` are refused. Agents close only their own tabs.
 - **Extensions:** `relay install-extension` prints the requested API
-  permissions, optional permissions, and host match patterns from the manifest,
+  permissions, optional permissions, host match patterns, and every
+  compatibility class (shimmed/partial/missing) from one `report_lines()` call,
   then states plainly that installing grants every requested permission and
   host pattern; there is no per-permission withholding yet. Chrome import never
   installs extensions on its own. Residual: CRX3 signatures are

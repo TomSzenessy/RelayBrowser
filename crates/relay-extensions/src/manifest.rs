@@ -76,13 +76,32 @@ pub struct Compatibility {
     pub shimmed: Vec<String>,
     pub partial: Vec<String>,
     pub missing: Vec<String>,
+    /// Host match patterns the extension asked for (granted at install).
+    pub hosts: Vec<String>,
     /// MV2 background pages are unsupported in WebKit for new installs.
     pub warnings: Vec<String>,
 }
 
 impl Compatibility {
-    pub fn installable(&self) -> bool {
-        self.missing.is_empty()
+    /// The one user-facing report; install prints exactly these lines.
+    pub fn report_lines(&self) -> Vec<String> {
+        let mut out = vec![];
+        if !self.shimmed.is_empty() {
+            out.push(format!("shimmed by Relay: {}", self.shimmed.join(", ")));
+        }
+        if !self.partial.is_empty() {
+            out.push(format!("partial (some APIs may do nothing): {}", self.partial.join(", ")));
+        }
+        if !self.missing.is_empty() {
+            out.push(format!("missing in WebKit: {}", self.missing.join(", ")));
+        }
+        if !self.hosts.is_empty() {
+            out.push(format!("host access: {}", self.hosts.join(", ")));
+        }
+        for w in &self.warnings {
+            out.push(format!("warning: {w}"));
+        }
+        out
     }
 }
 
@@ -118,7 +137,7 @@ impl Manifest {
 
     pub fn compatibility(&self) -> Compatibility {
         let perms = self.permission_names();
-        let mut c = Compatibility { shimmed: vec![], partial: vec![], missing: vec![], warnings: vec![] };
+        let mut c = Compatibility { shimmed: vec![], partial: vec![], missing: vec![], hosts: self.host_permissions.clone(), warnings: vec![] };
         for (api, support) in GAPS {
             let used = perms.iter().any(|p| p == api) || (*api == "sidePanel" && self.side_panel.is_some());
             if used {
@@ -179,21 +198,23 @@ mod tests {
     #[test]
     fn compatibility_report() {
         let m: Manifest = serde_json::from_str(
-            r#"{"manifest_version":3,"name":"X","version":"1","permissions":["storage","sidePanel","offscreen","identity","downloads"]}"#,
+            r#"{"manifest_version":3,"name":"X","version":"1","permissions":["storage","sidePanel","offscreen","identity","downloads"],"host_permissions":["https://*.example.com/*"]}"#,
         )
         .unwrap();
         let c = m.compatibility();
         assert_eq!(c.shimmed, ["sidePanel", "offscreen"]);
         assert_eq!(c.partial, ["downloads"]);
         assert_eq!(c.missing, ["identity"]);
-        assert!(!c.installable());
+        assert_eq!(c.hosts, ["https://*.example.com/*"]);
+        let lines = c.report_lines();
+        assert!(lines.iter().any(|l| l.contains("downloads")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("host access")), "{lines:?}");
     }
 
     #[test]
     fn mv2_persistent_background_warns() {
         let m: Manifest = serde_json::from_str(r#"{"manifest_version":2,"name":"X","version":"1","background":{"scripts":["b.js"],"persistent":true}}"#).unwrap();
         let c = m.compatibility();
-        assert!(c.installable());
         assert_eq!(c.warnings.len(), 2);
     }
 }

@@ -472,6 +472,11 @@ Six layers, cheapest first:
 
 ## Chrome extension import
 
+`Manifest::compatibility().report_lines()` is the one install report: shimmed
+APIs, partial support (for example `downloads`/`nativeMessaging`), missing
+APIs, host match patterns, and MV2/background warnings. `installable()` was
+removed; install still proceeds after printing the full list.
+
 `read_extensions` orders version directories numerically (`1.10` after `1.9`)
 and falls back to the next readable manifest, so one corrupt extension cannot
 discard the rest of the preview. `relay install-extension` prints the
