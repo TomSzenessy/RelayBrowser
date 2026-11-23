@@ -414,6 +414,17 @@ at most one icon per host, caches it in memory and 0600 files under
 start-page rows. Starts with no icon get the deterministic dot/empty fallback;
 a failed fetch is not retried for that host this session.
 
+## Keyboard shortcuts
+
+`keymap.rs` is the one action table: 46 defaults, stable ids, labels, and
+GPUI bindings. Settings → Keyboard shortcuts lists every action; **Change**
+clears bindings and menus, captures the next keystroke, and rejects bare keys,
+conflicts (including `secondary` vs `Ctrl` on Linux), and `⌘Q` for anything but
+Quit. Overrides persist as `id=keystroke;…` in `settings.keybindings`, reload
+at startup, and rebuild menus immediately so macOS key equivalents match.
+`app::key_bindings()` delegates to the default map, so the old duplicate table
+is gone.
+
 ## Appearance
 
 Settings → Appearance offers System / Light / Dark and a Blue / Purple /

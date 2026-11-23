@@ -4,6 +4,7 @@
 //! the pump loop below.
 
 use crate::inspector::{self, ConsoleRow, ElementRow, NetworkRow, Panel, Tree};
+use crate::keymap::{self, ActionId, Keymap};
 use crate::library::{Library, Mode};
 use crate::palette::{self, Command, Item, Palette, Sources};
 use crate::startpage::{Section, StartItem, StartPage};
@@ -87,61 +88,9 @@ actions!(
 /// equivalents: on macOS the menu receives them before the focused
 /// WKWebView, which is why shortcuts work while a page has focus.
 pub fn key_bindings() -> Vec<KeyBinding> {
-    vec![
-        KeyBinding::new("secondary-k", OpenPalette, None),
-        KeyBinding::new("secondary-l", OpenLocation, None),
-        KeyBinding::new("secondary-t", NewTab, None),
-        KeyBinding::new("secondary-w", CloseTab, None),
-        KeyBinding::new("secondary-shift-t", ReopenClosedTab, None),
-        KeyBinding::new("secondary-r", Reload, None),
-        KeyBinding::new("secondary-[", Back, None),
-        KeyBinding::new("secondary-]", Forward, None),
-        KeyBinding::new("ctrl-tab", NextTab, None),
-        KeyBinding::new("ctrl-shift-tab", PrevTab, None),
-        KeyBinding::new("secondary-alt-i", ToggleInspector, None),
-        KeyBinding::new("secondary-alt-u", WebInspector, None),
-        KeyBinding::new("secondary-\\", ToggleSplit, None),
-        KeyBinding::new("secondary-,", ToggleSettings, None),
-        KeyBinding::new("secondary-j", LinkHints, None),
-        KeyBinding::new("secondary-shift-c", CopyCleanUrl, None),
-        KeyBinding::new("secondary-shift-m", CopyMarkdown, None),
-        KeyBinding::new("secondary-d", ToggleBookmark, None),
-        KeyBinding::new("secondary-alt-p", TogglePin, None),
-        KeyBinding::new("secondary-f", Find, None),
-        KeyBinding::new("secondary-=", ZoomIn, None),
-        KeyBinding::new("secondary--", ZoomOut, None),
-        KeyBinding::new("secondary-0", ZoomReset, None),
-        KeyBinding::new("secondary-q", Quit, None),
-        KeyBinding::new("secondary-1", SelectTab1, None),
-        KeyBinding::new("secondary-2", SelectTab2, None),
-        KeyBinding::new("secondary-3", SelectTab3, None),
-        KeyBinding::new("secondary-4", SelectTab4, None),
-        KeyBinding::new("secondary-5", SelectTab5, None),
-        KeyBinding::new("secondary-6", SelectTab6, None),
-        KeyBinding::new("secondary-7", SelectTab7, None),
-        KeyBinding::new("secondary-8", SelectTab8, None),
-        KeyBinding::new("secondary-9", SelectTab9, None),
-        KeyBinding::new("secondary-s", ToggleTabStrip, None),
-        KeyBinding::new("secondary-shift-s", NextTabStripPosition, None),
-        // Standard editing: the menu keeps these working inside WKWebView,
-        // and the handlers below route them into the palette and find bar.
-        KeyBinding::new("secondary-x", Cut, None),
-        KeyBinding::new("secondary-c", Copy, None),
-        KeyBinding::new("secondary-v", Paste, None),
-        KeyBinding::new("secondary-a", SelectAll, None),
-        KeyBinding::new("secondary-z", Undo, None),
-        KeyBinding::new("secondary-shift-z", Redo, None),
-        KeyBinding::new("secondary-m", Minimize, None),
-        KeyBinding::new("secondary-y", ShowHistory, None),
-        KeyBinding::new("secondary-shift-b", ShowBookmarks, None),
-        KeyBinding::new("secondary-shift-.", ToggleAgents, None),
-        KeyBinding::new("secondary-alt-a", CycleAgentPolicy, None),
-    ]
+    crate::keymap::Keymap::default().bindings()
 }
 
-/// The native menu bar. On macOS AppKit handles menu key equivalents before
-/// the first responder, so ⌘K/⌘T/⌘W/⌘C work even while WKWebView has focus,
-/// and every command is discoverable without memorising the key map.
 pub fn app_menus() -> Vec<Menu> {
     app_menus_named(None)
 }
@@ -275,6 +224,10 @@ struct InspectorCache {
 }
 
 /// The ⌘F bar: what is being searched in which tab, and the last answer.
+struct ShortcutEditor {
+    recording: Option<ActionId>,
+}
+
 struct FindBar {
     tab: TabId,
     query: String,
@@ -327,6 +280,8 @@ pub struct RelayApp {
     /// the same host this session is pointless.
     favicons: HashMap<String, Option<Arc<Image>>>,
     favicon_pending: HashSet<String>,
+    shortcuts: Option<ShortcutEditor>,
+    keymap: Keymap,
     palette: Option<Palette>,
     /// ⌘T opens the palette for a new tab; ⌘K/⌘L target the current tab.
     palette_new_tab: bool,
@@ -456,6 +411,7 @@ impl RelayApp {
             .and_then(|s| s.setting("accent").ok().flatten())
             .and_then(|v| AccentChoice::parse(&v))
             .unwrap_or_default();
+        let keymap = Keymap::from_setting(store.as_ref().and_then(|s| s.setting("keybindings").ok().flatten()).as_deref());
         let mut app = Self {
             hub,
             web: Rc::new(RefCell::new(web)),
@@ -467,6 +423,8 @@ impl RelayApp {
             accent_choice,
             favicons: cached_favicons(),
             favicon_pending: HashSet::new(),
+            shortcuts: None,
+            keymap,
             palette: None,
             palette_new_tab: false,
             settings_open: false,
@@ -527,6 +485,8 @@ impl RelayApp {
             Some(name) => app_menus_named(Some(name)),
             None => app_menus(),
         };
+        cx.clear_key_bindings();
+        cx.bind_keys(app.keymap.bindings());
         cx.set_menus(menus);
         if let Some(icon) = app_icon {
             app.web.borrow().set_application_icon(&icon);
@@ -1739,6 +1699,24 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.shortcuts.is_some() {
+            let recording = self.shortcuts.as_ref().and_then(|s| s.recording);
+            if let Some(id) = recording {
+                if k.key == "escape" {
+                    if let Some(editor) = self.shortcuts.as_mut() {
+                        editor.recording = None;
+                    }
+                    self.apply_keymap(cx);
+                } else if let Some(key) = keymap::from_keystroke(k) {
+                    self.finish_recording(id, &key, cx);
+                }
+            } else if k.key == "escape" {
+                self.close_shortcuts();
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.library.as_ref().is_some_and(|l| l.folder_input.is_some()) {
             match k.key.as_str() {
                 "escape" => {
@@ -2887,6 +2865,63 @@ impl RelayApp {
         )
     }
 
+    fn open_shortcuts(&mut self, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.settings_open = false;
+        self.library = None;
+        self.find = None;
+        self.end_hints();
+        self.shortcuts = Some(ShortcutEditor { recording: None });
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_shortcuts(&mut self) {
+        if self.shortcuts.as_ref().is_some_and(|s| s.recording.is_some()) {
+            // Restore the map that was active before recording.
+            self.restore_keymap();
+        }
+        self.shortcuts = None;
+        self.focus_active_page();
+    }
+
+    fn restore_keymap(&mut self) {
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("keybindings", &self.keymap.to_setting());
+        }
+    }
+
+    fn apply_keymap(&mut self, cx: &mut Context<Self>) {
+        cx.clear_key_bindings();
+        cx.bind_keys(self.keymap.bindings());
+        cx.set_menus(app_menus_named(self.app_name.as_deref()));
+        self.restore_keymap();
+    }
+
+    fn start_recording(&mut self, id: ActionId, cx: &mut Context<Self>) {
+        if let Some(editor) = self.shortcuts.as_mut() {
+            editor.recording = Some(id);
+            // No action may fire while the user presses the new shortcut.
+            cx.clear_key_bindings();
+            cx.set_menus(vec![]);
+            cx.notify();
+        }
+    }
+
+    fn finish_recording(&mut self, id: ActionId, key: &str, cx: &mut Context<Self>) {
+        match self.keymap.set(id, key) {
+            Ok(()) => {
+                if let Some(editor) = self.shortcuts.as_mut() {
+                    editor.recording = None;
+                }
+                self.apply_keymap(cx);
+                self.toast(format!("{}: {}", id.label(), keymap::display_key(key)));
+            }
+            Err(e) => self.toast(e),
+        }
+        cx.notify();
+    }
+
     fn set_theme_choice(&mut self, choice: ThemeChoice) {
         self.theme_choice = choice;
         if let Some(store) = &self.store {
@@ -2913,6 +2948,104 @@ impl RelayApp {
         self.set_accent_choice(next);
         self.toast(format!("Accent: {}", next.label()));
         cx.notify();
+    }
+
+    fn render_shortcuts(&self, editor: &ShortcutEditor, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mut list = div().id("shortcuts-list").flex().flex_col().max_h(px(460.)).overflow_y_scroll();
+        for (i, id) in ActionId::ALL.into_iter().enumerate() {
+            let recording = editor.recording == Some(id);
+            list = list.child(
+                div()
+                    .id(("shortcut", i))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .h(px(32.))
+                    .px_4()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .text_size(px(12.))
+                    .when(recording, |d| d.bg(t.active))
+                    .child(div().text_color(t.text).child(id.label()))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_color(t.muted).child(SharedString::from(keymap::display_key(self.keymap.key(id)))))
+                            .child(
+                                div()
+                                    .id(("shortcut-change", i))
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(4.))
+                                    .border_1()
+                                    .border_color(if recording { t.accent } else { t.border })
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(t.hover))
+                                    .on_click(cx.listener(move |app, _, _, cx| {
+                                        app.start_recording(id, cx);
+                                    }))
+                                    .child(if recording { "Press keys…" } else { "Change" }),
+                            ),
+                    ),
+            );
+        }
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(60.)).bg(t.scrim).child(
+            div()
+                .id("shortcuts")
+                .w(px(640.))
+                .flex()
+                .flex_col()
+                .rounded(px(10.))
+                .bg(t.surface)
+                .border_1()
+                .border_color(t.border)
+                .shadow_lg()
+                .overflow_hidden()
+                .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_shortcuts()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(44.))
+                        .px_4()
+                        .border_b_1()
+                        .border_color(t.border)
+                        .child(div().text_size(px(15.)).text_color(t.text).child("Keyboard shortcuts"))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .id("shortcuts-reset")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(4.))
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .text_size(px(11.))
+                                        .text_color(t.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover))
+                                        .on_click(cx.listener(|app, _, _, cx| {
+                                            app.keymap.reset_all();
+                                            app.apply_keymap(cx);
+                                            app.toast("Shortcuts reset to defaults");
+                                            cx.notify();
+                                        }))
+                                        .child("Reset all"),
+                                )
+                                .child(div().text_size(px(11.)).text_color(t.muted).child(if editor.recording.is_some() { "Press a shortcut · Esc cancels" } else { "Esc closes" })),
+                        ),
+                )
+                .child(list),
+        )
     }
 
     fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3059,6 +3192,9 @@ impl RelayApp {
         }
         let theme_control = theme_control.into_any_element();
         let accent_control = accent_control.into_any_element();
+        let shortcuts_btn = pill("settings-shortcuts", "Edit…".into(), false)
+            .on_click(cx.listener(|app, _, _, cx| app.open_shortcuts(cx)))
+            .into_any_element();
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
             div()
                 .id("settings")
@@ -3087,6 +3223,7 @@ impl RelayApp {
                         .child(div().text_size(px(15.)).text_color(t.text).child("Settings"))
                         .child(div().text_size(px(12.)).text_color(t.muted).child("Esc")),
                 )
+                .child(row("Keyboard shortcuts", Some("Click Change, then press the new keys"), shortcuts_btn))
                 .child(row("Appearance", Some("System follows macOS"), theme_control))
                 .child(row("Accent", None, accent_control))
                 .child(row("Search engine", None, search_btn))
@@ -3243,7 +3380,7 @@ impl Render for RelayApp {
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
-        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some();
+        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some() || self.shortcuts.is_some();
         if overlay_open {
             // Keep native views from covering the palette or settings overlay.
             self.web.borrow().layout(&[]);
@@ -3433,6 +3570,9 @@ impl Render for RelayApp {
         }
         if let Some(lib) = &self.library {
             root = root.child(self.render_library(lib, cx));
+        }
+        if let Some(editor) = &self.shortcuts {
+            root = root.child(self.render_shortcuts(editor, cx));
         }
         root
     }

@@ -5,6 +5,7 @@ mod bangs;
 mod calc;
 mod clean_url;
 mod inspector;
+mod keymap;
 mod library;
 mod palette;
 mod startpage;
