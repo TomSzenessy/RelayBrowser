@@ -55,10 +55,11 @@ pub enum Command {
     CycleAgentPolicy,
     CycleTheme,
     CycleAccent,
+    ToggleReader,
 }
 
 impl Command {
-    pub const ALL: [Command; 34] = [
+    pub const ALL: [Command; 35] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -93,6 +94,7 @@ impl Command {
         Command::CycleAgentPolicy,
         Command::CycleTheme,
         Command::CycleAccent,
+        Command::ToggleReader,
     ];
 
     pub fn title(self) -> &'static str {
@@ -131,6 +133,7 @@ impl Command {
             Command::CycleAgentPolicy => "Cycle Agent Access on This Site",
             Command::CycleTheme => "Cycle Appearance (System / Light / Dark)",
             Command::CycleAccent => "Cycle Accent Colour",
+            Command::ToggleReader => "Reading Mode",
         }
     }
 
@@ -170,6 +173,7 @@ impl Command {
             Command::CycleAgentPolicy => "⌘⌥A",
             Command::CycleTheme => "",
             Command::CycleAccent => "",
+            Command::ToggleReader => "⇧⌘R",
         }
     }
 }
@@ -539,8 +543,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 34);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents, Command::CycleAgentPolicy, Command::CycleTheme, Command::CycleAccent] {
+        assert_eq!(Command::ALL.len(), 35);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents, Command::CycleAgentPolicy, Command::CycleTheme, Command::CycleAccent, Command::ToggleReader] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }

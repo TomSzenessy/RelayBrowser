@@ -492,3 +492,34 @@ test("set_cookie writes only a scoped cookie on the page's own origin", async ()
   assert.equal(newline.ok, false);
   await p.close();
 });
+
+test("reader builds an inert article overlay and removes it", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  const page = `<!doctype html><html><body>
+    <nav id="nav">menu</nav>
+    <article id="story"><h1>Story</h1><p onclick="window.pwned=1">Body</p>
+      <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      <script>window.scripted=1</script>
+    </article>
+    <footer>foot</footer>
+  </body></html>`;
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: page }));
+  await p.goto(`${ORIGIN}/reader/`);
+  const on = await p.evaluate(() => window.__relay.exec({ id: 170, op: "reader", on: true }));
+  assert.equal(on.ok, true, on.error);
+  assert.equal(await p.evaluate(() => !!document.getElementById("relay-reader")), true);
+  const overlay = await p.evaluate(() => {
+    const r = document.getElementById("relay-reader");
+    return { text: r.innerText, html: r.innerHTML, hasNav: !!r.querySelector("nav"), hasScript: !!r.querySelector("script"), onclick: /onclick/i.test(r.innerHTML) };
+  });
+  assert.match(overlay.text, /Story/);
+  assert.match(overlay.text, /Body/);
+  assert.equal(overlay.hasNav, false);
+  assert.equal(overlay.hasScript, false);
+  assert.equal(overlay.onclick, false);
+  const off = await p.evaluate(() => window.__relay.exec({ id: 171, op: "reader", on: false }));
+  assert.equal(off.ok, true);
+  assert.equal(await p.evaluate(() => !!document.getElementById("relay-reader")), false);
+  await p.close();
+});

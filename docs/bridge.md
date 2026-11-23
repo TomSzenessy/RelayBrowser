@@ -40,7 +40,7 @@ ordinary text/search fields keep their values for debugging.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`, `set_cookie`. Element ids are
+`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`, `set_cookie`, `reader`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
 `markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub; an MCP tool for it is Tier 2.
@@ -68,6 +68,11 @@ prevented the event. It never inserts text.
 `{local:{values,truncated,redacted},session:…,url}`; keys matching
 `/pass|token|secret|auth|key|credential/i` are `[redacted]`, values stop at
 16 KB/200 keys, and access errors become `truncated: true`.
+
+`reader {on}` builds a fixed overlay from `<article>`, `[role=main]`, `<main>`,
+or `<body>`; scripts, styles, forms, nav/aside/footer, inline `on*` handlers,
+and copied `data-relay-id`s are removed. `on: false` removes it. The clone is
+inert content, not a second live DOM for commands.
 
 `set_cookie {name, value}` writes one cookie on the tab's own origin with
 `Path=/; SameSite=Lax` (and `Secure` on https); it cannot set domain-wide or

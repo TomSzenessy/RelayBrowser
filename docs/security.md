@@ -148,6 +148,9 @@ known slow German legal site with a documented manual-review exception; a 403,
 - **Agent audit:** each MCP tool writes tool/host/tab/outcome/time to the
   local profile, capped at 5,000 rows, with no typed text, cookie values, or
   page content. The write is best-effort; `relay clear-data --audit`.
+- **Reading mode:** the overlay is a sanitized clone (no scripts, inline
+  handlers, forms, or copied Relay ids); it is not addressable by agent
+  commands.
 - **Pages are untrusted:** bridge output is data written by the website. The
   MCP instructions tell agents so, subframe messages are dropped, and replies
   resolve only for their own tab. Pages and agents share

@@ -186,6 +186,8 @@ pub enum Op {
     /// Set one cookie on the tab's own origin via `document.cookie` (never
     /// HttpOnly/domain-wide).
     SetCookie { name: String, value: String },
+    /// Show or hide a clean reader overlay built from the page's article/main.
+    Reader { on: bool },
 }
 
 fn yes() -> bool {
@@ -195,7 +197,10 @@ fn yes() -> bool {
 impl Op {
     /// Ops that change the page; refused while a tab waits for a human.
     pub fn mutates(&self) -> bool {
-        matches!(self, Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. } | Op::Eval { .. } | Op::SetCookie { .. })
+        matches!(
+            self,
+            Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. } | Op::Eval { .. } | Op::SetCookie { .. } | Op::Reader { .. }
+        )
     }
 }
 
