@@ -120,6 +120,14 @@ define_class!(
     }
 
     unsafe impl WKNavigationDelegate for BridgeHandler {
+        #[unsafe(method(webView:didStartProvisionalNavigation:))]
+        fn did_start(&self, web_view: &WKWebView, _navigation: Option<&WKNavigation>) {
+            if let Some(url) = unsafe { web_view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()) {
+                let tab = self.ivars().tab;
+                self.ivars().hub.update(|h| h.navigation_started(tab, &url));
+            }
+        }
+
         #[unsafe(method(webView:decidePolicyForNavigationResponse:decisionHandler:))]
         fn decide_response(
             &self,

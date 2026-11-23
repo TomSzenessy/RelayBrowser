@@ -697,6 +697,21 @@ impl Hub {
         &self.order
     }
 
+    /// A main-frame navigation started: drop the previous document so a load
+    /// failure cannot leave the old page's DOM/title looking current.
+    pub fn navigation_started(&mut self, tab: TabId, url: &str) {
+        if let Some(t) = self.tabs.get_mut(&tab) {
+            t.url = url.to_string();
+            t.title.clear();
+            t.dom = DomStore::default();
+            t.load_error = None;
+            t.challenge = None;
+            t.hotkeys.clear();
+            t.console.clear();
+            t.network.clear();
+        }
+    }
+
     pub fn begin_download(&mut self, url: &str, filename: &str) -> u64 {
         let id = self.next_download;
         self.next_download += 1;
@@ -947,6 +962,23 @@ mod tests {
         let out = d.outline(None, 10, true, 100);
         assert_eq!(out.trim(), "[5] button \"New\"");
         assert_eq!(d.interactive_ids(10), vec![5]);
+    }
+
+    #[test]
+    fn navigation_start_clears_the_old_document_and_error() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://old.test/", Owner::User));
+        hub.update(|h| {
+            let t = h.tab_mut(tab).unwrap();
+            t.title = "Old".into();
+            t.load_error = Some("earlier".into());
+            t.dom.replace_all(Some(DomNode { id: 1, tag: "body".into(), attrs: BTreeMap::new(), text: "old".into(), interactive: false, children: vec![] }));
+        });
+        hub.update(|h| h.navigation_started(tab, "https://new.test/"));
+        let t = hub.lock();
+        let t = t.tab(tab).unwrap();
+        assert_eq!(t.url, "https://new.test/");
+        assert!(t.title.is_empty() && t.dom.is_empty() && t.load_error.is_none());
     }
 
     #[test]
