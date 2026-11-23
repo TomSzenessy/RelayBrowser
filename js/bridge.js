@@ -128,7 +128,7 @@
   // whole document. Rust replaces subtrees by id and attrs by id.
   var dirty = new Set();
   var attrDirty = new Set();
-  var removed = [];
+  var removed = new Set();
   var scheduled = false;
   function schedule() {
     if (scheduled) return;
@@ -179,8 +179,17 @@
       else dropped = true;
       if (budget.dropped) dropped = true;
     });
-    var gone = removed;
-    removed = [];
+    var gone = [];
+    removed.forEach(function (id) {
+      var el = byId.get(id);
+      if (el && el.isConnected) {
+        byId.set(id, el);
+      } else {
+        byId.delete(id);
+        gone.push(id);
+      }
+    });
+    removed = new Set();
     if (dropped) {
       snapshot();
       return;
@@ -196,7 +205,7 @@
   function collectRemoved(node) {
     if (node.nodeType !== 1) return;
     var id = idOf.get(node);
-    if (id) { removed.push(id); byId.delete(id); }
+    if (id) removed.add(id);
     for (var c = node.firstElementChild; c; c = c.nextElementSibling) collectRemoved(c);
   }
 
