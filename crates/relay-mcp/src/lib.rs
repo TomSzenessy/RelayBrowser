@@ -1197,12 +1197,17 @@ fn validate_shell_setting(key: &str, value: &str) -> Result<(), ErrorData> {
                 return Err(ErrorData::invalid_params("sleep_minutes must be 0..=1440", None));
             }
         }
+        "keybindings" => {
+            if v.len() > 4096 || v.chars().any(|c| c.is_control()) {
+                return Err(ErrorData::invalid_params("keybindings must be <=4096 bytes and contain no control characters", None));
+            }
+        }
         "tabs_position" => {
             if !matches!(v, "left" | "top" | "right") {
                 return Err(ErrorData::invalid_params("tabs_position must be left, top, or right", None));
             }
         }
-        "mcp" | "shell_control" | "keybindings" | "agent_eval" => {
+        "mcp" | "shell_control" | "agent_eval" => {
             return Err(ErrorData::invalid_params(format!("{key} is reserved and cannot be changed by an agent"), None));
         }
         _ => return Err(ErrorData::invalid_params(format!("{key} is not an allowlisted shell setting"), None)),

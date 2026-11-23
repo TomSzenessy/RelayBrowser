@@ -314,9 +314,9 @@ impl Keymap {
             let Some((id, key)) = pair.split_once('=') else { continue };
             let (Some(id), Ok(parsed)) = (ActionId::parse(id.trim()), Keystroke::parse(key.trim())) else { continue };
             let key = canonical(&parsed);
-            if validate_key(&key).is_ok() {
-                map.overrides.insert(id, key);
-            }
+            // Skip conflict/reserved overrides instead of silently accepting a
+            // map that would bind two actions to one key.
+            let _ = map.set(id, &key);
         }
         map
     }
@@ -407,6 +407,15 @@ pub fn display_key(keystroke: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_setting_skips_reserved_and_conflicting_overrides() {
+        let map = Keymap::from_setting(Some("new-tab=secondary-q;close-tab=secondary-shift-9;reload=secondary-shift-9"));
+        assert_eq!(map.key(ActionId::NewTab), ActionId::NewTab.default_key(), "⌘Q stays reserved for Quit");
+        assert!(map.key(ActionId::CloseTab).ends_with("shift-9"), "{}", map.key(ActionId::CloseTab));
+        assert_ne!(map.key(ActionId::CloseTab), ActionId::CloseTab.default_key());
+        assert_eq!(map.key(ActionId::Reload), ActionId::Reload.default_key(), "conflicting key is skipped");
+    }
 
     #[test]
     fn defaults_cover_every_action_once() {

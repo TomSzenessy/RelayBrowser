@@ -3216,6 +3216,9 @@ impl RelayApp {
             }
             "tabs_folded" => self.strip.folded = setting_enabled(Some(value)),
             "restore_session" => self.session_enabled = setting_enabled(Some(value)),
+            "keybindings" => {
+                self.keymap = Keymap::from_setting(Some(value));
+            }
             _ => {}
         }
     }
