@@ -183,6 +183,14 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## MCP tools: keys and storage
+
+`press_key {tab_id?, key, modifiers?}` dispatches a key to the focused element
+with ctrl/alt/shift/meta; it is a mutating op, so Read-only/Block policies
+refuse it. `get_storage {tab_id?}` reads localStorage/sessionStorage, redacting
+names that look like secrets and capping values at 16 KB/200 keys. Both write
+one audit row, never the key or storage values.
+
 ## Agent audit
 
 Every MCP tool writes one row to `agent_audit`: tool, host, tab, outcome

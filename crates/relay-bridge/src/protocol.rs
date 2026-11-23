@@ -175,6 +175,11 @@ pub enum Op {
     /// Read the page's icon as a small PNG/JPEG/WebP/GIF data URL. Same
     /// untrusted-data rules as `WebApp`; SVG/ICO are refused.
     Favicon,
+    /// Dispatch a key press to the focused element (or `<body>`). Modifiers
+    /// are `ctrl`, `alt`, `shift`, `meta`; text entry stays `type_text`.
+    PressKey { key: String, #[serde(default)] modifiers: Vec<String> },
+    /// Read localStorage/sessionStorage with size and secret-name caps.
+    Storage,
 }
 
 fn yes() -> bool {
@@ -184,7 +189,7 @@ fn yes() -> bool {
 impl Op {
     /// Ops that change the page; refused while a tab waits for a human.
     pub fn mutates(&self) -> bool {
-        matches!(self, Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. })
+        matches!(self, Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. })
     }
 }
 

@@ -56,6 +56,22 @@ pub struct NavigateArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct PressKeyArgs {
+    /// Tab id; defaults to the active tab.
+    pub tab_id: Option<TabId>,
+    /// Key name such as Enter, Escape, Tab, ArrowDown, or a single character.
+    pub key: String,
+    /// Any of ctrl, alt, shift, meta.
+    pub modifiers: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StorageArgs {
+    /// Tab id; defaults to the active tab.
+    pub tab_id: Option<TabId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReadDomArgs {
     pub tab_id: Option<TabId>,
     /// Element id to start from (default: <body>).
@@ -359,6 +375,8 @@ fn op_tool(op: &Op) -> &'static str {
         Op::Markdown => "read_markdown",
         Op::WebApp => "web_app",
         Op::Favicon => "favicon",
+        Op::PressKey { .. } => "press_key",
+        Op::Storage => "get_storage",
         _ => "op",
     }
 }
@@ -567,6 +585,38 @@ impl RelayMcp {
         reply(async {
             let tab = self.tab(a.tab_id)?;
             Ok(json(&self.op(tab, Op::Scroll { x: 0.0, y: a.dy }).await?))
+        }.await)
+    }
+
+    #[tool(description = "Press a key (Enter, Escape, Tab, ArrowDown, or a character) on the focused element, with optional ctrl/alt/shift/meta modifiers.")]
+    async fn press_key(&self, Parameters(a): Parameters<PressKeyArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        reply(async {
+            let tab = self.tab(a.tab_id)?;
+            if a.key.is_empty() || a.key.chars().count() > 40 {
+                return Err(HubError::Browser("key is empty or too long".into()));
+            }
+            let mut modifiers = vec![];
+            for m in a.modifiers.unwrap_or_default() {
+                let m = m.to_ascii_lowercase();
+                if !matches!(m.as_str(), "ctrl" | "alt" | "shift" | "meta") {
+                    return Err(HubError::Browser(format!("unknown modifier {m:?}; use ctrl, alt, shift, meta")));
+                }
+                if !modifiers.contains(&m) {
+                    modifiers.push(m);
+                }
+            }
+            let v = self.op(tab, Op::PressKey { key: a.key.clone(), modifiers }).await?;
+            Ok(json(&v))
+        }.await)
+    }
+
+    #[tool(description = "Read localStorage and sessionStorage (values capped at 16 KB; names that look secret are redacted).")]
+    async fn get_storage(&self, Parameters(a): Parameters<StorageArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        reply(async {
+            let tab = self.tab(a.tab_id)?;
+            Ok(json(&self.op(tab, Op::Storage).await?))
         }.await)
     }
 

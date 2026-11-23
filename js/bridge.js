@@ -566,7 +566,27 @@
       return { url: location.href, title: document.title, scroll_x: window.scrollX, scroll_y: window.scrollY };
     },
     web_app: webApp,
-    favicon: favicon
+    favicon: favicon,
+    press_key: function (c) {
+      var key = String(c.key || "");
+      if (!key || key.length > 40) throw new Error("key is empty or too long");
+      var mods = c.modifiers || [];
+      if (!Array.isArray(mods)) throw new Error("modifiers must be an array");
+      var opts = {
+        key: key, bubbles: true, cancelable: true,
+        ctrlKey: mods.indexOf("ctrl") !== -1, altKey: mods.indexOf("alt") !== -1,
+        shiftKey: mods.indexOf("shift") !== -1, metaKey: mods.indexOf("meta") !== -1
+      };
+      var target = document.activeElement || document.body;
+      var down = new KeyboardEvent("keydown", opts);
+      target.dispatchEvent(down);
+      if (key === "Enter" && target.form && !down.defaultPrevented) {
+        if (target.form.requestSubmit) target.form.requestSubmit(); else target.form.submit();
+      }
+      target.dispatchEvent(new KeyboardEvent("keyup", opts));
+      return { key: key, tag: target.tagName ? target.tagName.toLowerCase() : "", prevented: down.defaultPrevented };
+    },
+    storage: storageSummary
   };
 
   var maxIconBytes = 2 * 1024 * 1024;
@@ -668,6 +688,26 @@
       .catch(function (e) {
         return { available: false, reason: "Could not read the web app manifest: " + String(e && e.message || e) };
       });
+  }
+
+  function storageSummary() {
+    function dump(area) {
+      var values = {}, count = 0, total = 0, redacted = 0, truncated = false;
+      var secret = /pass|token|secret|auth|key|credential/i;
+      try {
+        for (var i = 0; i < area.length; i++) {
+          var k = area.key(i);
+          var v = area.getItem(k) || "";
+          if (count >= 200 || total + v.length > 16384) { truncated = true; break; }
+          if (secret.test(k)) { v = "[redacted]"; redacted++; }
+          values[k] = v;
+          count++;
+          total += v.length;
+        }
+      } catch (e) { return { values: {}, truncated: true, redacted: 0, error: String(e && e.message || e) }; }
+      return { values: values, truncated: truncated, redacted: redacted };
+    }
+    return { local: dump(localStorage), session: dump(sessionStorage), url: location.href };
   }
 
   var maxFaviconBytes = 256 * 1024;

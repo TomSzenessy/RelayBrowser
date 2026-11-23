@@ -52,6 +52,12 @@ impl Browser for SimPage {
             "click" => json!({"id": cmd["target"], "tag": "button", "text": "Pay now"}),
             "type" => json!({"id": cmd["target"], "tag": "input", "text": cmd["text"]}),
             "read_text" => json!("Your cart\nPay now"),
+            "press_key" => json!({"key": cmd["key"], "tag": "input", "prevented": false}),
+            "storage" => json!({
+                "local": {"values": {"cart": "1"}, "truncated": false, "redacted": 0},
+                "session": {"values": {}, "truncated": false, "redacted": 0},
+                "url": "https://shop.test/cart"
+            }),
             "page_info" => json!({"url": "https://shop.test/cart", "title": "Checkout", "scroll_x": 0, "scroll_y": 120}),
             _ => Value::Null,
         };
@@ -95,7 +101,7 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let tools: Vec<String> = client.list_all_tools().await.unwrap().into_iter().map(|t| t.name.to_string()).collect();
     for t in [
         "navigate", "click_element", "type_text", "read_dom", "get_console_logs", "get_network_requests", "list_tabs", "open_tab", "wait_for",
-        "get_page_info",
+        "get_page_info", "press_key", "get_storage",
     ] {
         assert!(tools.contains(&t.to_string()), "missing tool {t}: {tools:?}");
     }

@@ -439,3 +439,25 @@ test("favicon returns a supported image and refuses non-images", async () => {
   assert.equal(result.value.available, false, "text/plain and ICO are refused");
   await p.close();
 });
+
+test("press_key dispatches a key and storage redacts secret names", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/keys/") return route.fulfill({ contentType: "text/html", body: '<body><input id="q"><script>window.keys=[];document.addEventListener("keydown",e=>window.keys.push(e.key))</script></body>' });
+    return route.fulfill({ status: 404 });
+  });
+  await p.goto(`${ORIGIN}/keys/`);
+  const key = await p.evaluate(() => window.__relay.exec({ id: 140, op: "press_key", key: "Enter", modifiers: ["shift"] }));
+  assert.equal(key.ok, true);
+  assert.equal(key.value.key, "Enter");
+  assert.deepEqual(await p.evaluate(() => window.keys), ["Enter"]);
+  await p.evaluate(() => { localStorage.setItem("theme", "dark"); localStorage.setItem("auth_token", "secret-value"); });
+  const storage = await p.evaluate(() => window.__relay.exec({ id: 141, op: "storage" }));
+  assert.equal(storage.ok, true);
+  assert.equal(storage.value.local.values.theme, "dark");
+  assert.equal(storage.value.local.values.auth_token, "[redacted]");
+  assert.equal(storage.value.local.redacted, 1);
+  await p.close();
+});

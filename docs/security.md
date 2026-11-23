@@ -136,6 +136,9 @@ known slow German legal site with a documented manual-review exception; a 403,
   (`agent_policies`) and enforced by the MCP before a tool resolves a tab
   (`Block`), before a mutating op (`Read only`), and before `open_tab`/
   `navigate`. A blocked `open_tab` creates no tab.
+- **MCP keys/storage:** `press_key` is mutating and follows the per-site
+  policy; `get_storage` is read-only, redacts secret-looking names, and caps
+  values at 16 KB. Neither stores its input in the audit log.
 - **Agent audit:** each MCP tool writes tool/host/tab/outcome/time to the
   local profile, capped at 5,000 rows, with no typed text, cookie values, or
   page content. The write is best-effort; `relay clear-data --audit`.

@@ -40,7 +40,7 @@ ordinary text/search fields keep their values for debugging.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`, `markdown`, `web_app`, `favicon`. Element ids are
+`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
 `markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub; an MCP tool for it is Tier 2.
@@ -59,6 +59,15 @@ a 3 s timeout, a 256 KB cap, and a PNG/JPEG/WebP/GIF whitelist. It replies
 `{available: true, data: "data:<mime>;base64,…", mime}` or
 `{available: false}`; SVG, ICO, and text are refused. The shell validates the
 prefix, mime, and decoded size before caching and painting it.
+
+`press_key` dispatches keydown/keyup to the focused element (or `<body>`),
+with `ctrl`/`alt`/`shift`/`meta`; Enter submits a focused form unless the page
+prevented the event. It never inserts text.
+
+`storage` reads localStorage/sessionStorage as
+`{local:{values,truncated,redacted},session:…,url}`; keys matching
+`/pass|token|secret|auth|key|credential/i` are `[redacted]`, values stop at
+16 KB/200 keys, and access errors become `truncated: true`.
 
 `exec` reply is a placeholder (`value: null`) for an async op; wait for the
 `result` message.
