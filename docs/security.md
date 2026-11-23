@@ -160,7 +160,8 @@ on this repository); never use a public issue for an unpatched report.
   agent is attached.
 - **Shell writes:** theme/accent/start-section and an allowlist of settings
   are off by default, require an explicit plan id (single-use, 60 s), reject
-  `mcp`/`shell_control`/`agent_eval`, re-validate shortcut conflicts, and push bounded hub
+  `mcp`/`shell_control`/`agent_eval`, re-validate shortcut conflicts, allow only
+  inspector/agents/off for the sidebar, and push bounded hub
   changes; `shell_apply` records the MCP client name, plan id, and before/after
   hashes, not values. No arbitrary code or shortcut writes.
 - **Shell read tools:** `shell_*` tools return a bounded allowlist of settings,
