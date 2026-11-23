@@ -8,7 +8,9 @@
 use relay_bridge::{run_op, Browser, ConsoleLevel, HubError, NodeId, Op, Owner, SharedHub, TabId};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig},
+    model::{CallToolResult, ContentBlock, Implementation, InitializeRequestParams, InitializeResult, ServerCapabilities, ServerConfig},
+    service::RequestContext,
+    RoleServer,
     tool, tool_handler, tool_router, ErrorData, ServerHandler, ServiceExt,
 };
 use schemars::JsonSchema;
@@ -36,6 +38,7 @@ pub struct RelayMcp {
     audit: Option<Arc<Mutex<relay_extensions::store::Store>>>,
     plans: Arc<Mutex<HashMap<u64, PendingPlan>>>,
     next_plan: Arc<AtomicU64>,
+    client_name: Arc<Mutex<Option<String>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -337,7 +340,7 @@ fn reply(r: Result<CallToolResult, HubError>) -> Result<CallToolResult, ErrorDat
 
 impl RelayMcp {
     pub fn new(hub: SharedHub, browser: Arc<dyn Browser>) -> Self {
-        Self { hub, browser, audit: None, plans: Arc::new(Mutex::new(HashMap::new())), next_plan: Arc::new(AtomicU64::new(1)), tool_router: Self::tool_router() }
+        Self { hub, browser, audit: None, plans: Arc::new(Mutex::new(HashMap::new())), next_plan: Arc::new(AtomicU64::new(1)), client_name: Arc::new(Mutex::new(None)), tool_router: Self::tool_router() }
     }
 
     /// Attach the profile store so every tool call writes one lean audit row.
@@ -540,6 +543,9 @@ impl RelayMcp {
         // Record compact before/after hashes for every changed key. Values are
         // never stored in the audit; only the key names and 64-bit hashes.
         let mut audit = format!("plan={}", a.plan_id);
+        if let Some(client) = self.client_name() {
+            audit = format!("client={client} {audit}");
+        }
         let mut changed: Vec<(&str, Option<String>, Option<String>)> = vec![];
         if let Some(theme) = &plan.theme { changed.push(("theme", store.setting("theme").ok().flatten(), Some(theme.clone()))); }
         if let Some(accent) = &plan.accent { changed.push(("accent", store.setting("accent").ok().flatten(), Some(accent.clone()))); }
@@ -631,6 +637,12 @@ impl RelayMcp {
     async fn shell_version(&self) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
         Ok(json(&serde_json::json!({ "name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION") })))
+    }
+
+    fn client_name(&self) -> Option<String> {
+        let name = self.client_name.lock().ok()?.clone()?;
+        let clean: String = name.chars().filter(|c| !c.is_control()).take(80).collect();
+        (!clean.is_empty()).then_some(clean)
     }
 
     fn shell_store(&self) -> Result<Arc<Mutex<relay_extensions::store::Store>>, ErrorData> {
@@ -1110,6 +1122,14 @@ impl RelayMcp {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for RelayMcp {
+    async fn initialize(&self, request: InitializeRequestParams, context: RequestContext<RoleServer>) -> Result<InitializeResult, ErrorData> {
+        if let Ok(mut name) = self.client_name.lock() {
+            *name = Some(request.client_info.name.clone());
+        }
+        context.peer.set_peer_info(request.clone());
+        self.negotiate_initialize(&request)
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("relay", env!("CARGO_PKG_VERSION")))
