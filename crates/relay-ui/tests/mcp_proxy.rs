@@ -113,6 +113,13 @@ fn relay_mcp_stdio_proxy_reaches_a_running_browser() {
     let text = tabs["result"]["content"][0]["text"].as_str().unwrap_or_default();
     assert!(text.contains("Checkout") && text.contains("shop.test"), "{tabs}");
 
+    // A final request followed immediately by stdin EOF: the proxy must keep
+    // reading the server's reply instead of closing the socket first.
+    send(&mut child, serde_json::json!({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}));
+    drop(child.stdin.take());
+    let late = recv(&mut reader, 4);
+    assert!(late["result"]["tools"].as_array().is_some_and(|t| !t.is_empty()), "{late}");
+
     let _ = child.kill();
     let _ = child.wait();
     drop(runtime);

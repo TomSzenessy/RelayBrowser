@@ -183,6 +183,13 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## Stdio proxy
+
+`relay mcp` keeps its socket write half alive after stdin EOF and waits up to
+5 s for the server's final reply before exiting, so an agent that closes stdin
+immediately after a request does not lose the response. The socket read half
+is still copied concurrently.
+
 ## Navigation failures
 
 `webView:didStartProvisionalNavigation:` clears the tab's previous DOM, title,

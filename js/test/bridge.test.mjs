@@ -587,3 +587,26 @@ test("a moved element keeps a resolvable id; a removed one stays gone", async ()
   assert.match(gone.error, /not found/);
   await p.close();
 });
+
+test("fetch body capture stops at the bridge cap", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  const large = "x".repeat(200 * 1024);
+  await p.route(`${ORIGIN}/**`, route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/large") return route.fulfill({ contentType: "text/plain", body: large });
+    return route.fulfill({ contentType: "text/html", body: PAGE });
+  });
+  await p.goto(`${ORIGIN}/large-page/`);
+  let entry;
+  await p.evaluate(() => fetch("/large").then(r => r.text()));
+  for (let i = 0; i < 100 && !entry; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    entry = msgs.find(m => m.kind === "network" && m.url.endsWith("/large"));
+    if (!entry) await p.waitForTimeout(25);
+  }
+  assert.ok(entry, "large fetch entry");
+  assert.ok(entry.response_body.length <= 4100, `body capped, got ${entry.response_body.length}`);
+  assert.match(entry.response_body, /…$/);
+  await p.close();
+});

@@ -19,7 +19,7 @@ with the Rust parser.
 | `dom_patch` | MutationObserver, coalesced per timer tick | `nodes` (re-serialized subtrees by id), `removed` ids |
 | `dom_attrs` | attribute mutation on a node the store already knows | `nodes`: `{id, attrs}`; replaces that node's attribute map only |
 | `console` | `console.*`, `error`, `unhandledrejection` | `level`, `args` (strings, ≤2 KB each), `source` |
-| `network` | fetch/XHR completion; PerformanceObserver resources | method, url, status, duration, bodies ≤4 KB (text/JSON only) |
+| `network` | fetch/XHR completion; PerformanceObserver resources | method, url, status, duration, bodies ≤4 KB (text/JSON only); fetch bodies are streamed and cancelled at the cap |
 | `challenge` | a CAPTCHA iframe or one-time-code input appears or disappears | `challenge`: `captcha`, `two_factor`, or `null` |
 | `media` | audible audio/video starts or stops | `playing` |
 | `markdown` | reply to the `markdown` op: Markdown of the main content | `text` (stored in the Hub; `Hub::page_markdown(tab)`, cleared on load) |

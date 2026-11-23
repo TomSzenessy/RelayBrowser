@@ -258,6 +258,31 @@
     if (contentType && !/json|text|xml|javascript|form/.test(contentType)) return null;
     return text.length > MAX_BODY ? text.slice(0, MAX_BODY) + "…" : text;
   }
+  function readCappedBody(res, contentType) {
+    if (!res.body || typeof res.body.getReader !== "function") {
+      return res.text().then(function (t) { return bodyText(t, contentType); });
+    }
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder();
+    var text = "";
+    var bytes = 0;
+    function pump() {
+      return reader.read().then(function (chunk) {
+        if (chunk.done) {
+          text += decoder.decode();
+          return bodyText(text, contentType);
+        }
+        bytes += chunk.value ? chunk.value.length : 0;
+        text += decoder.decode(chunk.value || new Uint8Array(), { stream: true });
+        if (text.length > MAX_BODY || bytes > MAX_BODY * 4) {
+          try { reader.cancel(); } catch (e) { /* already closed */ }
+          return text.slice(0, MAX_BODY) + "…";
+        }
+        return pump();
+      });
+    }
+    return pump();
+  }
   function absUrl(u) { try { return new URL(u, location.href).href; } catch (e) { return String(u); } }
 
   var origFetch = window.fetch;
@@ -274,7 +299,7 @@
           content_type: res.headers.get("content-type"), response_body: null, error: null };
         var ct = entry.content_type || "";
         if (/json|text/.test(ct)) {
-          res.clone().text().then(function (t) { entry.response_body = bodyText(t, ct); post(entry); },
+          readCappedBody(res.clone(), ct).then(function (body) { entry.response_body = body; post(entry); },
             function () { post(entry); });
         } else {
           post(entry);
