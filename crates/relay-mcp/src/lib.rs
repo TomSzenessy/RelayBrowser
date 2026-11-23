@@ -72,6 +72,16 @@ pub struct StorageArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetCookieArgs {
+    /// Tab id; defaults to the active tab.
+    pub tab_id: Option<TabId>,
+    /// Cookie name (letters, digits, `_`, `-`, `.`; max 64).
+    pub name: String,
+    /// Cookie value (max 4 KB; newlines refused).
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvalArgs {
     /// Tab id; defaults to the active tab.
     pub tab_id: Option<TabId>,
@@ -416,6 +426,7 @@ fn op_tool(op: &Op) -> &'static str {
         Op::PressKey { .. } => "press_key",
         Op::Storage => "get_storage",
         Op::Eval { .. } => "eval_js",
+        Op::SetCookie { .. } => "set_cookie",
         _ => "op",
     }
 }
@@ -549,6 +560,21 @@ impl RelayMcp {
         }.await);
         self.audit("wait_for", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
         result
+    }
+
+    #[tool(description = "Set one cookie on the tab's own origin (path /, SameSite=Lax, Secure on https). Cannot set HttpOnly or another domain.")]
+    async fn set_cookie(&self, Parameters(a): Parameters<SetCookieArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        reply(async {
+            let tab = self.tab(a.tab_id)?;
+            if a.name.is_empty() || a.name.len() > 64 || !a.name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+                return Err(HubError::Browser("cookie name must be 1-64 letters, digits, '_', '-', or '.'".into()));
+            }
+            if a.value.len() > 4096 || a.value.contains('\n') || a.value.contains('\r') {
+                return Err(HubError::Browser("cookie value is longer than 4 KB or has a newline".into()));
+            }
+            Ok(json(&self.op(tab, Op::SetCookie { name: a.name, value: a.value }).await?))
+        }.await)
     }
 
     #[tool(description = "Evaluate one JavaScript expression in a tab and return its JSON value. Disabled unless the user enables agent JavaScript in Settings and the site policy is Allow.")]

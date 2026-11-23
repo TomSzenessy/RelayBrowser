@@ -183,6 +183,14 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## MCP tool: set_cookie
+
+`set_cookie {tab_id?, name, value}` writes one cookie on the tab's own origin
+with `Path=/; SameSite=Lax` (Secure on https). It is mutating, so Read-only/
+Block policies refuse it; it cannot set another domain or HttpOnly, and rejects
+names outside `[A-Za-z0-9_.-]`, newlines, and >4 KB values. The audit row has
+only tool/host/tab/outcome/time, never the value.
+
 ## MCP tool: eval_js
 
 `eval_js {tab_id?, script}` evaluates one JavaScript expression in the page and

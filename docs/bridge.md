@@ -40,7 +40,7 @@ ordinary text/search fields keep their values for debugging.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`. Element ids are
+`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`, `set_cookie`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
 `markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub; an MCP tool for it is Tier 2.
@@ -68,6 +68,10 @@ prevented the event. It never inserts text.
 `{local:{values,truncated,redacted},session:…,url}`; keys matching
 `/pass|token|secret|auth|key|credential/i` are `[redacted]`, values stop at
 16 KB/200 keys, and access errors become `truncated: true`.
+
+`set_cookie {name, value}` writes one cookie on the tab's own origin with
+`Path=/; SameSite=Lax` (and `Secure` on https); it cannot set domain-wide or
+HttpOnly cookies, and refuses bad names, newlines, and values over 4 KB.
 
 `eval_js` evaluates one expression with `new Function` in the page and returns
 its JSON value (functions/cycles stringified; 100 KB result cap). The shell

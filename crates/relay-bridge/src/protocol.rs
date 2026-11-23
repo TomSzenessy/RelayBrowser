@@ -183,6 +183,9 @@ pub enum Op {
     /// Evaluate one JavaScript expression in the page and return its JSON
     /// value. Gated by the shell's `agent_eval` setting and the Allow policy.
     Eval { script: String },
+    /// Set one cookie on the tab's own origin via `document.cookie` (never
+    /// HttpOnly/domain-wide).
+    SetCookie { name: String, value: String },
 }
 
 fn yes() -> bool {
@@ -192,7 +195,7 @@ fn yes() -> bool {
 impl Op {
     /// Ops that change the page; refused while a tab waits for a human.
     pub fn mutates(&self) -> bool {
-        matches!(self, Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. } | Op::Eval { .. })
+        matches!(self, Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. } | Op::Eval { .. } | Op::SetCookie { .. })
     }
 }
 

@@ -476,3 +476,19 @@ test("eval_js returns a JSON expression and refuses empty/oversized input", asyn
   assert.equal(big.ok, false);
   await p.close();
 });
+
+test("set_cookie writes only a scoped cookie on the page's own origin", async () => {
+  const p = await browser.newPage();
+  await p.addInitScript(BRIDGE);
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: "<body>cookies</body>" }));
+  await p.goto(`${ORIGIN}/cookies/`);
+  const ok = await p.evaluate(() => window.__relay.exec({ id: 160, op: "set_cookie", name: "relay_flag", value: "a b" }));
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(ok.value.set, true);
+  assert.match(await p.evaluate(() => document.cookie), /relay_flag=a%20b/);
+  const bad = await p.evaluate(() => window.__relay.exec({ id: 161, op: "set_cookie", name: "bad name", value: "x" }));
+  assert.equal(bad.ok, false);
+  const newline = await p.evaluate(() => window.__relay.exec({ id: 162, op: "set_cookie", name: "ok", value: "a\nb" }));
+  assert.equal(newline.ok, false);
+  await p.close();
+});

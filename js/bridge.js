@@ -587,6 +587,16 @@
       return { key: key, tag: target.tagName ? target.tagName.toLowerCase() : "", prevented: down.defaultPrevented };
     },
     storage: storageSummary,
+    set_cookie: function (c) {
+      var name = String(c.name || "");
+      var value = String(c.value || "");
+      if (!/^[A-Za-z0-9_\-.]{1,64}$/.test(name)) throw new Error("cookie name is not valid");
+      if (value.length > 4096 || /[\r\n]/.test(value)) throw new Error("cookie value is too long or has a newline");
+      var cookie = name + "=" + encodeURIComponent(value) + "; Path=/; SameSite=Lax";
+      if (location.protocol === "https:") cookie += "; Secure";
+      document.cookie = cookie;
+      return { name: name, set: true };
+    },
     eval_js: function (c) {
       var script = typeof c.script === "string" ? c.script.trim() : "";
       if (!script) throw new Error("script is empty");
