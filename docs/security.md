@@ -145,6 +145,10 @@ known slow German legal site with a documented manual-review exception; a 403,
 - **MCP keys/storage:** `press_key` is mutating and follows the per-site
   policy; `get_storage` is read-only, redacts secret-looking names, and caps
   values at 16 KB. Neither stores its input in the audit log.
+- **Screenshots:** `screenshot` captures only the visible tab, returns a JPEG
+  over the local socket, and stores nothing; it obeys Stop/Block. Like any
+  screenshot it can include private page pixels, so the user controls when an
+  agent is attached.
 - **Agent audit:** each MCP tool writes tool/host/tab/outcome/time to the
   local profile, capped at 5,000 rows, with no typed text, cookie values, or
   page content. The write is best-effort; `relay clear-data --audit`.

@@ -5,7 +5,6 @@
 use crate::hub::{Browser, TabId};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-#[derive(Debug, Clone, PartialEq)]
 pub enum BrowserRequest {
     Open { tab: TabId, url: String },
     Navigate { tab: TabId, url: String },
@@ -17,6 +16,7 @@ pub enum BrowserRequest {
     Eval { tab: TabId, script: String },
     RefreshCookies(TabId),
     OpenWebInspector(TabId),
+    Screenshot { tab: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> },
 }
 
 #[derive(Clone)]
@@ -47,4 +47,7 @@ impl Browser for ChannelBrowser {
     fn eval(&self, tab: TabId, script: String) { self.send(BrowserRequest::Eval { tab, script }) }
     fn refresh_cookies(&self, tab: TabId) { self.send(BrowserRequest::RefreshCookies(tab)) }
     fn open_web_inspector(&self, tab: TabId) { self.send(BrowserRequest::OpenWebInspector(tab)) }
+    fn screenshot(&self, tab: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let _ = self.tx.send(BrowserRequest::Screenshot { tab, done });
+    }
 }

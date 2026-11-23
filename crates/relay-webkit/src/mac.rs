@@ -503,6 +503,25 @@ impl Engine {
         unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
     }
 
+    /// Capture the visible tab as JPEG for the MCP `screenshot` tool.
+    pub fn screenshot(&self, tab: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let Some(t) = self.tabs.get(&tab) else {
+            done(Err(format!("tab {tab} is not awake")));
+            return;
+        };
+        let keep = RcBlock::new(move |img: *mut NSImage, err: *mut NSError| {
+            if let Some(e) = unsafe { err.as_ref() } {
+                done(Err(e.localizedDescription().to_string()));
+                return;
+            }
+            match unsafe { img.as_ref() }.and_then(jpeg_from_image) {
+                Some(jpeg) => done(Ok(jpeg)),
+                None => done(Err("could not encode the screenshot".into())),
+            }
+        });
+        unsafe { t.view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
+    }
+
     /// Register a tab restored from the saved session as already asleep: no
     /// WKWebView (0 MB) until [`Engine::wake`] loads `url` and restores scroll.
     pub fn restore_asleep(&mut self, tab: TabId, url: &str, scroll_y: f64) {

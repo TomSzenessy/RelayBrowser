@@ -109,6 +109,7 @@ mod imp {
                 BrowserRequest::Eval { tab, script } => self.engine.eval(tab, &script),
                 BrowserRequest::RefreshCookies(tab) => self.engine.refresh_cookies(tab),
                 BrowserRequest::OpenWebInspector(tab) => self.engine.open_web_inspector(tab),
+                BrowserRequest::Screenshot { tab, done } => self.engine.screenshot(tab, done),
             }
         }
 
@@ -232,7 +233,11 @@ mod imp {
         pub fn load_content_rules(&self, _json: &str) {}
         pub fn clear_content_rules(&self) {}
         pub fn load_content_rules_and_reload(&self, _json: &str, _tab: TabId) {}
-        pub fn apply(&mut self, _req: BrowserRequest) {}
+        pub fn apply(&mut self, req: BrowserRequest) {
+            if let BrowserRequest::Screenshot { done, .. } = req {
+                done(Err("screenshots need macOS WebKit".into()));
+            }
+        }
         pub fn wake(&mut self, _tab: TabId) {}
         pub fn after_load(&mut self, _tab: TabId) {}
         pub fn sleep(&mut self, _tab: TabId, _scroll: (f64, f64)) {}
