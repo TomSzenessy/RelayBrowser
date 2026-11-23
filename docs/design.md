@@ -90,6 +90,7 @@ none under Reduce Motion.
 | ⌘D | bookmark the page, or remove its bookmark |
 | ⌘F | find in page (↩ next, ⇧↩ previous, Esc closes) |
 | ⇧⌘. | pause / resume every agent tool call; a tinted banner with Resume appears |
+| ⌘⌥A | cycle agent access on this site: Allow → Read only → Block |
 | ⌘Y / ⇧⌘B | History / Bookmarks overlay (type to filter, ↑↓, ↩ opens, × deletes, move sets a folder) |
 | ⌘= / ⌘- / ⌘0 | zoom in / out / actual size, remembered per site |
 | ⌘S | fold / unfold the tab strip |

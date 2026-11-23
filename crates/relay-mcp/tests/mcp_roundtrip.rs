@@ -1,7 +1,7 @@
 //! End-to-end: a real MCP client talks to RelayMcp over an in-memory pipe,
 //! and a simulated page answers bridge commands exactly as bridge.js does.
 
-use relay_bridge::{Browser, Owner, SharedHub, TabId};
+use relay_bridge::{AgentPolicy, Browser, Owner, SharedHub, TabId};
 use relay_mcp::RelayMcp;
 use rmcp::{model::CallToolRequestParams, ServiceExt};
 use serde_json::{json, Value};
@@ -125,6 +125,27 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     let tab = hub.lock().tabs().next().unwrap().id;
     assert_eq!(hub.lock().tab(tab).unwrap().owner, Owner::Agent);
     hub.update(|h| h.set_active(tab));
+
+    // Read-only site: reads work, mutations and navigation are refused.
+    hub.set_agent_policy("shop.test", AgentPolicy::ReadOnly);
+    let (err, msg) = call(&client, "click_element", json!({"element_id": 4})).await;
+    assert!(err && msg.contains("read-only"), "{msg}");
+    let msg = call_message(&client, "navigate", json!({"url": "https://shop.test/other"})).await;
+    assert!(msg.contains("read-only"), "{msg}");
+    let (err, _) = call(&client, "read_dom", json!({})).await;
+    assert!(!err, "read-only still allows reads");
+
+    // Blocked site: even reads fail and opening a blocked tab creates nothing.
+    hub.set_agent_policy("shop.test", AgentPolicy::Block);
+    for tool in ["read_dom", "get_page_info", "get_console_logs"] {
+        let msg = call_message(&client, tool, json!({})).await;
+        assert!(msg.contains("blocked"), "{tool}: {msg}");
+    }
+    let count = hub.lock().tabs().count();
+    let msg = call_message(&client, "open_tab", json!({"url": "https://shop.test/cart"})).await;
+    assert!(msg.contains("blocked"), "{msg}");
+    assert_eq!(hub.lock().tabs().count(), count);
+    hub.set_agent_policy("shop.test", AgentPolicy::Allow);
 
     let (_, dom) = call(&client, "read_dom", json!({})).await;
     assert!(dom.contains("[2] h1 \"Your cart\"") && dom.contains("[3] input[type=email] \"Email\""), "{dom}");
