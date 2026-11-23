@@ -66,7 +66,7 @@ define_class!(
             *self.ivars().path.borrow_mut() = Some(path.clone());
             self.ivars().hub.update(|h| h.set_download_destination(self.ivars().id, &filename, &path));
             let url = NSURL::fileURLWithPath(&NSString::from_str(&path));
-            completion_handler.call((url.as_ptr(),));
+            completion_handler.call((&*url as *const NSURL as *mut NSURL,));
         }
 
         #[unsafe(method(downloadDidFinish:))]
@@ -146,7 +146,7 @@ define_class!(
             let id = self.ivars().hub.update(|h| h.begin_download(&url, &filename));
             let mtm = MainThreadMarker::new().expect("download callback is on the main thread");
             let handler = DownloadHandler::new(mtm, DownloadIvars { hub: self.ivars().hub.clone(), id, path: RefCell::new(None) });
-            download.setDelegate(Some(ProtocolObject::from_ref(&*handler)));
+            unsafe { download.setDelegate(Some(ProtocolObject::from_ref(&*handler))) };
             self.ivars().downloads.borrow_mut().push(handler);
         }
 
