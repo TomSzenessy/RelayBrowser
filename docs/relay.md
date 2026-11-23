@@ -210,11 +210,12 @@ CRX3 signatures are still not verified (residual).
 
 A navigation WebKit cannot display is accepted as a `WKDownload`; the delegate
 saves it under `~/Downloads/Relay` with a sanitized collision-safe name and
-records URL/filename/path/state in the hub. `⇧⌘J` (View → Downloads, palette)
-opens a panel with active/finished rows, the destination, Reveal in Finder, and
-Clear finished. The download metadata is in memory only; the file is the
-user's, outside the profile. Progress bytes, cancel/retry, and VoiceOver labels
-are not built yet (#54).
+records URL/filename/path/state and the owning tab in the hub. `⇧⌘J` (View →
+Downloads, palette) opens a panel with active/finished rows, the destination,
+Cancel for a running row, Reveal in Finder, and Clear finished. Cancel marks
+the row immediately and calls `WKDownload.cancel` through the tab's bridge
+handler. The metadata is in memory only; the file is the user's, outside the
+profile. Progress bytes, retry, and VoiceOver labels are not built yet (#54).
 
 ## Picture in Picture
 
