@@ -71,6 +71,9 @@ telemetry pipeline, crash-upload endpoint, or analytics SDK.
   the GUI; a directory that already exists with a wider mode is tightened.
   The temporary copy of Chrome's History is created `0600` in one step and
   removed on both success and failure.
+- **Agent audit:** when a local MCP client calls a tool, Relay stores the tool
+  name, normalized host, tab id, outcome, and time in `agent_audit` (5,000-row
+  cap). Typed text, cookie values, and page content are never included.
 - **Favicons:** while a page is open, Relay asks the page itself for its icon
   (`<link rel=icon>` or `/favicon.ico`) with `same-origin` credentials, a 3 s
   timeout, and a 256 KB cap; cross-origin icon URLs receive no cookies.

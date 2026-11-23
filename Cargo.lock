@@ -4745,6 +4745,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "relay-bridge",
+ "relay-extensions",
  "rmcp",
  "schemars",
  "serde",

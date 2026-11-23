@@ -136,6 +136,9 @@ known slow German legal site with a documented manual-review exception; a 403,
   (`agent_policies`) and enforced by the MCP before a tool resolves a tab
   (`Block`), before a mutating op (`Read only`), and before `open_tab`/
   `navigate`. A blocked `open_tab` creates no tab.
+- **Agent audit:** each MCP tool writes tool/host/tab/outcome/time to the
+  local profile, capped at 5,000 rows, with no typed text, cookie values, or
+  page content. The write is best-effort; `relay clear-data --audit`.
 - **Pages are untrusted:** bridge output is data written by the website. The
   MCP instructions tell agents so, subframe messages are dropped, and replies
   resolve only for their own tab. Pages and agents share
