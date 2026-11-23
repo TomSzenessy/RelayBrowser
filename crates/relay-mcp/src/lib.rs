@@ -537,6 +537,20 @@ impl RelayMcp {
         if plan.created.elapsed() > Duration::from_secs(60) {
             return Err(ErrorData::invalid_params("plan expired; plan the change again", None));
         }
+        // Record compact before/after hashes for every changed key. Values are
+        // never stored in the audit; only the key names and 64-bit hashes.
+        let mut audit = format!("plan={}", a.plan_id);
+        let mut changed: Vec<(&str, Option<String>, Option<String>)> = vec![];
+        if let Some(theme) = &plan.theme { changed.push(("theme", store.setting("theme").ok().flatten(), Some(theme.clone()))); }
+        if let Some(accent) = &plan.accent { changed.push(("accent", store.setting("accent").ok().flatten(), Some(accent.clone()))); }
+        if let Some(sections) = &plan.sections { changed.push(("start_sections", store.setting("start_sections").ok().flatten(), Some(sections.clone()))); }
+        for (key, value) in &plan.settings {
+            changed.push((key, store.setting(key).ok().flatten(), Some(value.clone())));
+        }
+        for (key, before, after) in &changed {
+            let after = after.as_deref().unwrap_or_default();
+            audit.push_str(&format!(" {key}={}>{}", short_hash(before.as_deref().unwrap_or_default()), short_hash(after)));
+        }
         if let Some(theme) = &plan.theme { store.set_setting("theme", theme).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
         if let Some(accent) = &plan.accent { store.set_setting("accent", accent).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
         if let Some(sections) = &plan.sections { store.set_setting("start_sections", sections).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
@@ -554,7 +568,7 @@ impl RelayMcp {
         for (key, value) in &plan.settings {
             self.hub.push_shell_change(relay_bridge::ShellChange::Setting { key: key.clone(), value: value.clone() });
         }
-        self.audit("shell_apply", "", None, "ok");
+        self.audit("shell_apply", "", None, &audit);
         Ok(json(&serde_json::json!({ "applied": true, "plan_id": a.plan_id })))
     }
 
@@ -1213,6 +1227,16 @@ fn validate_shell_setting(key: &str, value: &str) -> Result<(), ErrorData> {
         _ => return Err(ErrorData::invalid_params(format!("{key} is not an allowlisted shell setting"), None)),
     }
     Ok(())
+}
+
+fn short_hash(value: &str) -> String {
+    // FNV-1a: stable, dependency-free, only used to compare audit entries.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn shell_enabled(store: &relay_extensions::store::Store) -> bool {
