@@ -42,7 +42,9 @@ impl Browser for SimPage {
     fn reload(&self, _: TabId) {}
     fn close(&self, _: TabId) {}
     fn activate(&self, _: TabId) {}
-    fn refresh_cookies(&self, _: TabId) {}
+    fn refresh_cookies(&self, tab: TabId) {
+        self.hub.update(|h| h.set_cookies(tab, vec![]));
+    }
     fn open_web_inspector(&self, _: TabId) {}
     fn eval(&self, tab: TabId, script: String) {
         let payload = script.trim_start_matches("window.__relay && window.__relay.exec(").trim_end_matches("), void 0");

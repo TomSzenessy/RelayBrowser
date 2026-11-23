@@ -257,6 +257,14 @@ only and the disabled state all fail before evaluation. Results are capped at
 100 KB, the script at 50 KB, and the audit row contains only tool/host/tab/
 outcome/time.
 
+## MCP waits
+
+`get_cookies` records the tab's `cookies_seq`, asks WebKit for a refresh, and
+waits on the hub watch for a newer sequence (2 s cap) instead of sleeping
+150 ms. `wait_for` checks once, then waits on the same hub notification and
+re-checks only when state changes, with the caller's timeout; it no longer
+polls the whole tree every 50 ms.
+
 ## Shell read tools
 
 The MCP also exposes read-only shell state: `shell_settings` (a bounded

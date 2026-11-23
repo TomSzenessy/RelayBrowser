@@ -432,6 +432,8 @@ pub struct TabState {
     pub console: VecDeque<ConsoleEntry>,
     pub network: VecDeque<NetworkEntry>,
     pub cookies: Vec<Cookie>,
+    /// Increments whenever the native cookie store supplies a fresh list.
+    pub cookies_seq: u64,
     pub challenge: Option<Challenge>,
     /// Increments on every page load the bridge announces (`hello`).
     pub load_seq: u64,
@@ -461,6 +463,7 @@ impl TabState {
             console: VecDeque::new(),
             network: VecDeque::new(),
             cookies: vec![],
+            cookies_seq: 0,
             challenge: None,
             load_seq: 0,
             last_active_at: Instant::now(),
@@ -694,6 +697,25 @@ impl SharedHub {
         Ok((Command { id, op }.to_script(), rx))
     }
 
+    /// Wait until the native cookie store answers a refresh newer than
+    /// `after` (or timeout). Replaces the MCP's fixed sleep.
+    pub async fn wait_for_cookies(&self, tab: TabId, after: u64, timeout: Duration) -> Result<(), HubError> {
+        let mut rx = self.subscribe();
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            {
+                let h = self.lock();
+                let t = h.tab(tab).ok_or(HubError::NoTab(tab))?;
+                if t.cookies_seq > after {
+                    return Ok(());
+                }
+            }
+            if tokio::time::timeout_at(deadline, rx.changed()).await.is_err() {
+                return Err(HubError::Timeout(timeout));
+            }
+        }
+    }
+
     /// Wait until the tab announces a load newer than `after` (or timeout).
     pub async fn wait_for_load(&self, tab: TabId, after: u64, timeout: Duration) -> Result<(), HubError> {
         let mut rx = self.subscribe();
@@ -872,6 +894,7 @@ impl Hub {
     pub fn set_cookies(&mut self, tab: TabId, cookies: Vec<Cookie>) {
         if let Some(t) = self.tabs.get_mut(&tab) {
             t.cookies = cookies;
+            t.cookies_seq += 1;
         }
     }
 
@@ -1081,6 +1104,19 @@ mod tests {
         let snap = node(1, "body", "", kids);
         hub.ingest_json(tab, &serde_json::json!({"kind":"dom_snapshot","root":snap}).to_string()).unwrap();
         assert!(hub.lock().tab(tab).unwrap().dom.is_empty(), "oversized snapshot must not be accepted");
+    }
+
+    #[tokio::test]
+    async fn cookie_refresh_wait_uses_the_hub_tick() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://x.test/", Owner::User));
+        let waiter = {
+            let hub = hub.clone();
+            tokio::spawn(async move { hub.wait_for_cookies(tab, 0, Duration::from_secs(2)).await })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        hub.update(|h| h.set_cookies(tab, vec![]));
+        assert!(waiter.await.unwrap().is_ok());
     }
 
     #[test]
