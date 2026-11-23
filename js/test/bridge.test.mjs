@@ -527,7 +527,10 @@ test("reader builds an inert article overlay and removes it", async () => {
 test("picture_in_picture toggles a video or reports no support", async () => {
   const p = await browser.newPage();
   await p.addInitScript(BRIDGE);
-  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: '<body><video id="v"></video></body>' }));
+  await p.route(`${ORIGIN}/**`, route => {
+    const body = new URL(route.request().url()).pathname === "/novideo/" ? "<body>no video</body>" : '<body><video id="v"></video></body>';
+    return route.fulfill({ contentType: "text/html", body });
+  });
   await p.goto(`${ORIGIN}/video/`);
   await p.evaluate(() => {
     const v = document.getElementById("v");
