@@ -509,7 +509,10 @@ impl Engine {
             done(Err(format!("tab {tab} is not awake")));
             return;
         };
+        let done = std::rc::Rc::new(std::cell::RefCell::new(Some(done)));
+        let done_for_block = done.clone();
         let keep = RcBlock::new(move |img: *mut NSImage, err: *mut NSError| {
+            let Some(done) = done_for_block.borrow_mut().take() else { return };
             if let Some(e) = unsafe { err.as_ref() } {
                 done(Err(e.localizedDescription().to_string()));
                 return;
