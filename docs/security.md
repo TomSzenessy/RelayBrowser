@@ -132,6 +132,8 @@ known slow German legal site with a documented manual-review exception; a 403,
   Any process running as the user can drive the browser, including the user's
   logged-in sessions; this is the intended trust level for local coding
   agents. A second instance refuses to take over a live socket.
+- **MCP cookies:** `set_cookie` is origin-scoped, non-HttpOnly, path `/`, and
+  follows the per-site policy; values are never audited.
 - **Agent JavaScript:** `eval_js` is opt-in (Settings → Agent JavaScript) and
   additionally requires the Allow site policy; disabled, Block, and Read-only
   all fail before the page evaluates. This is the most powerful agent tool and
