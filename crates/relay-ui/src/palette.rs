@@ -51,10 +51,11 @@ pub enum Command {
     RemoveWebApp,
     ShowHistory,
     ShowBookmarks,
+    ToggleAgents,
 }
 
 impl Command {
-    pub const ALL: [Command; 30] = [
+    pub const ALL: [Command; 31] = [
         Command::NewTab,
         Command::CloseTab,
         Command::ReopenClosedTab,
@@ -85,6 +86,7 @@ impl Command {
         Command::RemoveWebApp,
         Command::ShowHistory,
         Command::ShowBookmarks,
+        Command::ToggleAgents,
     ];
 
     pub fn title(self) -> &'static str {
@@ -119,6 +121,7 @@ impl Command {
             Command::RemoveWebApp => "Remove This Site's App",
             Command::ShowHistory => "Show History",
             Command::ShowBookmarks => "Show Bookmarks",
+            Command::ToggleAgents => "Pause / Resume Agents",
         }
     }
 
@@ -154,6 +157,7 @@ impl Command {
             | Command::RemoveWebApp => "",
             Command::ShowHistory => "⌘Y",
             Command::ShowBookmarks => "⇧⌘B",
+            Command::ToggleAgents => "⇧⌘.",
         }
     }
 }
@@ -523,8 +527,8 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 30);
-        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks] {
+        assert_eq!(Command::ALL.len(), 31);
+        for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());
         }

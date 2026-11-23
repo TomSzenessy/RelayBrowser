@@ -438,6 +438,8 @@ pub enum HubError {
     Page(String),
     #[error("browser error: {0}")]
     Browser(String),
+    #[error("paused by the user; resume agents in Relay to continue")]
+    Paused,
 }
 
 #[derive(Default)]
@@ -456,6 +458,8 @@ pub struct Hub {
 pub struct SharedHub {
     inner: Arc<Mutex<Hub>>,
     changed: Arc<watch::Sender<u64>>,
+    /// User's Stop control: checked by every MCP tool before it touches a tab.
+    agents_paused: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for SharedHub {
@@ -467,7 +471,11 @@ impl Default for SharedHub {
 impl SharedHub {
     pub fn new() -> Self {
         let (tx, _) = watch::channel(0);
-        Self { inner: Arc::new(Mutex::new(Hub { next_tab: 1, next_cmd: 1, ..Default::default() })), changed: Arc::new(tx) }
+        Self {
+            inner: Arc::new(Mutex::new(Hub { next_tab: 1, next_cmd: 1, ..Default::default() })),
+            changed: Arc::new(tx),
+            agents_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Hub> {
@@ -483,6 +491,17 @@ impl SharedHub {
 
     pub fn subscribe(&self) -> watch::Receiver<u64> {
         self.changed.subscribe()
+    }
+
+    pub fn agents_paused(&self) -> bool {
+        self.agents_paused.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Stop or resume every MCP call. Ticks the watch so the shell repaints
+    /// the banner; page state itself is untouched.
+    pub fn set_agents_paused(&self, paused: bool) {
+        self.agents_paused.store(paused, std::sync::atomic::Ordering::SeqCst);
+        self.changed.send_modify(|v| *v = v.wrapping_add(1));
     }
 
     /// Drain page hotkeys without ticking subscribers. Reading a queue is not

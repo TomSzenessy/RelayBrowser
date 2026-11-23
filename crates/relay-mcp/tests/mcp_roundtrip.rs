@@ -66,6 +66,13 @@ fn text(r: &rmcp::model::CallToolResult) -> String {
     r.content.iter().filter_map(|c| c.as_text()).map(|t| t.text.clone()).collect::<Vec<_>>().join("\n")
 }
 
+async fn call_message(client: &rmcp::service::RunningService<rmcp::RoleClient, ()>, name: &'static str, args: Value) -> String {
+    match client.call_tool(CallToolRequestParams::new(name).with_arguments(args.as_object().unwrap().clone())).await {
+        Ok(r) => text(&r),
+        Err(e) => e.to_string(),
+    }
+}
+
 async fn call(client: &rmcp::service::RunningService<rmcp::RoleClient, ()>, name: &'static str, args: Value) -> (bool, String) {
     let r = client
         .call_tool(CallToolRequestParams::new(name).with_arguments(args.as_object().unwrap().clone()))
@@ -98,6 +105,19 @@ async fn agent_debugs_a_failing_checkout_without_screenshots() {
     // Agents may not open non-web schemes.
     let (err, msg) = call(&client, "open_tab", json!({"url": "file:///etc/passwd"})).await;
     assert!(err && msg.contains("only http(s)"), "{msg}");
+
+    // User Stop: every tool fails fast and nothing reaches the page.
+    hub.set_agents_paused(true);
+    let tabs_before = hub.lock().tabs().count();
+    for tool in ["list_tabs", "read_dom", "get_page_info", "click_element", "wait_for"] {
+        let args = if tool == "click_element" { json!({"element_id": 4}) } else if tool == "wait_for" { json!({"text": "x"}) } else { json!({}) };
+        let msg = call_message(&client, tool, args).await;
+        assert!(msg.contains("paused by the user"), "{tool}: {msg}");
+    }
+    let msg = call_message(&client, "open_tab", json!({"url": "https://shop.test/cart"})).await;
+    assert!(msg.contains("paused"), "{msg}");
+    assert_eq!(hub.lock().tabs().count(), tabs_before, "a paused open_tab creates nothing");
+    hub.set_agents_paused(false);
 
     let (err, msg) = call(&client, "open_tab", json!({"url": "https://shop.test/cart"})).await;
     assert!(!err, "{msg}");

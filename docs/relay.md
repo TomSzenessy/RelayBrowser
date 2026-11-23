@@ -185,6 +185,12 @@ back rather than hiding it.
 
 ## Agent safety (attached mode)
 
+- **Stop:** `⇧⌘.` (or Relay → Pause / Resume Agents) sets one atomic flag in
+  `SharedHub`. Every MCP tool checks it before resolving a tab or reading the
+  hub and fails fast with "paused by the user"; an `open_tab` creates nothing
+  while paused. The shell repaints a banner from the hub tick and Resume clears
+  the flag. It is not a page-level pause: the user can keep browsing.
+
 - Agent tabs (`Owner::Agent`) share the user's cookie store and live in a
   tinted group in the tab strip.
 - When the bridge reports a CAPTCHA or 2FA prompt (`challenge`) on any tab,
