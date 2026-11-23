@@ -295,3 +295,24 @@ fn doctor_distinguishes_a_stale_socket_from_a_listening_one() {
     assert!(text.contains("stale file"), "stale socket must not be called serving:\n{text}");
     assert!(text.contains("protocol v1"), "protocol version comes from the shared constant:\n{text}");
 }
+
+#[test]
+fn mcp_config_prints_each_client_and_rejects_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    for client in ["claude-code", "codex", "opencode", "cursor", "zed"] {
+        let out = relay(dir.path(), &["mcp-config", client]);
+        assert!(out.status.success(), "{client}: {}", String::from_utf8_lossy(&out.stderr));
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("mcp"), "{client}: {text}");
+        assert!(text.contains("relay"), "{client}: {text}");
+    }
+    let all = relay(dir.path(), &["mcp-config"]);
+    assert!(all.status.success());
+    let text = String::from_utf8_lossy(&all.stdout);
+    for name in ["Claude Code", "Codex", "OpenCode", "Cursor", "Zed"] {
+        assert!(text.contains(name), "missing {name} in:\n{text}");
+    }
+    let bad = relay(dir.path(), &["mcp-config", "vscode"]);
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown client"));
+}
