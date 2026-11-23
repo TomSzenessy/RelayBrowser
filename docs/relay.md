@@ -278,11 +278,13 @@ polls the whole tree every 50 ms.
 When Settings → Agent shell changes is on, an agent can call
 `shell_plan_change {theme?, accent?, start_sections?}` to get a one-time id and
 a human diff, then `shell_apply_change {plan_id}`. The plan expires after 60 s,
-is single-use, and only accepts system/light/dark, the four accents, and an
-ordered unique subset of recent/frequent/apps/bookmarks. Apply writes the
-setting, pushes a hub `ShellChange` the GPUI pump drains (theme/accent update
-live; start sections rebuild), and audits `shell_apply`. Off by default; no
-shortcut/arbitrary-code writes.
+is single-use. It accepts system/light/dark, the four accents, an ordered
+unique subset of recent/frequent/apps/bookmarks, and an allowlist of settings
+(`search`, `blocking`, `sleep_minutes`, `tabs_position`, `tabs_folded`,
+`restore_session`). `mcp`, `shell_control`, `keybindings`, and `agent_eval`
+are reserved. Apply writes the Store, pushes bounded `ShellChange`s the GPUI
+pump drains (theme/accent/settings update live; start sections rebuild), and
+audits `shell_apply`. Off by default; no shortcut or arbitrary-code writes.
 
 ## Shell read tools
 

@@ -13,7 +13,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -44,6 +44,7 @@ struct PendingPlan {
     theme: Option<String>,
     accent: Option<String>,
     sections: Option<String>,
+    settings: BTreeMap<String, String>,
     created: Instant,
 }
 
@@ -91,6 +92,9 @@ pub struct PlanChangeArgs {
     pub accent: Option<String>,
     /// Comma-separated ordered sections: recent, frequent, apps, bookmarks.
     pub start_sections: Option<String>,
+    /// Allowlisted shell settings (search, blocking, sleep_minutes,
+    /// tabs_position, tabs_folded, restore_session).
+    pub settings: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -495,7 +499,11 @@ impl RelayMcp {
                 return Err(ErrorData::invalid_params("start_sections must be an ordered comma list of recent, frequent, apps, bookmarks without duplicates", None));
             }
         }
-        if theme.is_none() && accent.is_none() && sections.is_none() {
+        let settings = a.settings.unwrap_or_default();
+        for (key, value) in &settings {
+            validate_shell_setting(key, value)?;
+        }
+        if theme.is_none() && accent.is_none() && sections.is_none() && settings.is_empty() {
             return Err(ErrorData::invalid_params("plan has no changes", None));
         }
         let old_theme = store.setting("theme").ok().flatten().unwrap_or_else(|| "system".into());
@@ -505,8 +513,12 @@ impl RelayMcp {
         if let Some(t) = &theme { diff.push_str(&format!("theme: {old_theme} -> {t}\n")); }
         if let Some(a) = &accent { diff.push_str(&format!("accent: {old_accent} -> {a}\n")); }
         if let Some(s) = &sections { diff.push_str(&format!("start_sections: {old_sections} -> {s}\n")); }
+        for (key, value) in &settings {
+            let old = store.setting(key).ok().flatten().unwrap_or_default();
+            diff.push_str(&format!("{key}: {old} -> {value}\n"));
+        }
         let id = self.next_plan.fetch_add(1, Ordering::SeqCst);
-        self.plans.lock().unwrap_or_else(|p| p.into_inner()).insert(id, PendingPlan { theme, accent, sections, created: Instant::now() });
+        self.plans.lock().unwrap_or_else(|p| p.into_inner()).insert(id, PendingPlan { theme, accent, sections, settings, created: Instant::now() });
         Ok(json(&serde_json::json!({ "plan_id": id, "diff": diff.trim_end(), "expires_in_seconds": 60 })))
     }
 
@@ -528,6 +540,9 @@ impl RelayMcp {
         if let Some(theme) = &plan.theme { store.set_setting("theme", theme).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
         if let Some(accent) = &plan.accent { store.set_setting("accent", accent).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
         if let Some(sections) = &plan.sections { store.set_setting("start_sections", sections).map_err(|e| ErrorData::internal_error(e.to_string(), None))?; }
+        for (key, value) in &plan.settings {
+            store.set_setting(key, value).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        }
         if plan.theme.is_some() || plan.accent.is_some() {
             let theme = plan.theme.clone().or_else(|| store.setting("theme").ok().flatten()).unwrap_or_else(|| "system".into());
             let accent = plan.accent.clone().or_else(|| store.setting("accent").ok().flatten()).unwrap_or_else(|| "blue".into());
@@ -535,6 +550,9 @@ impl RelayMcp {
         }
         if let Some(sections) = &plan.sections {
             self.hub.push_shell_change(relay_bridge::ShellChange::StartSections { sections: sections.clone() });
+        }
+        for (key, value) in &plan.settings {
+            self.hub.push_shell_change(relay_bridge::ShellChange::Setting { key: key.clone(), value: value.clone() });
         }
         self.audit("shell_apply", "", None, "ok");
         Ok(json(&serde_json::json!({ "applied": true, "plan_id": a.plan_id })))
@@ -1156,6 +1174,39 @@ pub async fn stdio_proxy(path: &Path) -> anyhow::Result<()> {
         }
     }
     let _ = w;
+    Ok(())
+}
+
+fn validate_shell_setting(key: &str, value: &str) -> Result<(), ErrorData> {
+    let v = value.trim();
+    match key {
+        "search" => {
+            let lower = v.to_ascii_lowercase();
+            if !v.contains("%s") || !(lower.starts_with("https://") || lower.starts_with("http://")) {
+                return Err(ErrorData::invalid_params("search must be an http(s) URL template containing %s", None));
+            }
+        }
+        "blocking" | "tabs_folded" | "restore_session" => {
+            if !matches!(v, "on" | "off" | "true" | "false" | "1" | "0") {
+                return Err(ErrorData::invalid_params(format!("{key} must be on or off"), None));
+            }
+        }
+        "sleep_minutes" => {
+            let n = v.parse::<u64>().map_err(|_| ErrorData::invalid_params("sleep_minutes must be an integer 0..=1440", None))?;
+            if n > 1440 {
+                return Err(ErrorData::invalid_params("sleep_minutes must be 0..=1440", None));
+            }
+        }
+        "tabs_position" => {
+            if !matches!(v, "left" | "top" | "right") {
+                return Err(ErrorData::invalid_params("tabs_position must be left, top, or right", None));
+            }
+        }
+        "mcp" | "shell_control" | "keybindings" | "agent_eval" => {
+            return Err(ErrorData::invalid_params(format!("{key} is reserved and cannot be changed by an agent"), None));
+        }
+        _ => return Err(ErrorData::invalid_params(format!("{key} is not an allowlisted shell setting"), None)),
+    }
     Ok(())
 }
 

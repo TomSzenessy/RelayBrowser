@@ -3,7 +3,8 @@
 <!-- index: extend | Comparable products, prior art, and Relay's angle | Scoping a feature or judging what to borrow. -->
 <!-- covers: docs/product/features.csv -->
 
-The current feature matrix is [`features.csv`](./features.csv). These sources
+The current feature matrix is [`features.csv`](./features.csv); the
+shell-write row now covers plan/apply for theme and allowlisted settings. These sources
 come from the owner's brief (2026-11-22) plus the primary docs
 for the APIs Relay uses. The owner named the three GitHub projects and asked
 for Search's daily-driver feel in particular. What Relay borrowed from Search

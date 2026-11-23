@@ -89,7 +89,7 @@ none under Reduce Motion.
 
 | Keys | Action |
 |---|---|
-| Settings → Agent shell changes | off by default; with it on, an agent can plan/apply theme, accent, and start sections; the shell applies them live |
+| Settings → Agent shell changes | off by default; with it on, an agent can plan/apply theme, accent, start sections, and allowlisted settings; the shell applies them live |
 | ⌘K | palette; ←/→/Home/End move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, click places the caret |
 | ⌘L | palette prefilled with the current URL |
 | ⌘T / ⌘W / ⌘⇧T | new tab / close tab / reopen closed tab |

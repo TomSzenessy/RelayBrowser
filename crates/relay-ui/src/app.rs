@@ -749,6 +749,10 @@ impl RelayApp {
                     self.refresh_start_page();
                     shell_changed = true;
                 }
+                relay_bridge::ShellChange::Setting { key, value } => {
+                    self.apply_shell_setting(&key, &value);
+                    shell_changed = true;
+                }
             }
         }
         if shell_changed {
@@ -3169,6 +3173,32 @@ impl RelayApp {
                 )
                 .child(list),
         )
+    }
+
+    fn apply_shell_setting(&mut self, key: &str, value: &str) {
+        match key {
+            "search" => self.search = value.to_string(),
+            "blocking" => {
+                self.blocking = setting_enabled(Some(value));
+                if self.blocking {
+                    self.web.borrow().load_content_rules(&rules_json(self.store.as_ref()));
+                } else {
+                    self.web.borrow().clear_content_rules();
+                }
+            }
+            "sleep_minutes" => {
+                self.sleep_minutes = value.parse::<u64>().unwrap_or(15).min(1440);
+                self.sleep_policy.idle_after = Duration::from_secs(self.sleep_minutes.saturating_mul(60));
+            }
+            "tabs_position" => {
+                if let Some(placement) = tabstrip::Placement::parse(value) {
+                    self.strip.placement = placement;
+                }
+            }
+            "tabs_folded" => self.strip.folded = setting_enabled(Some(value)),
+            "restore_session" => self.session_enabled = setting_enabled(Some(value)),
+            _ => {}
+        }
     }
 
     fn open_downloads(&mut self, cx: &mut Context<Self>) {
