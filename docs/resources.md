@@ -22,7 +22,7 @@ pinned `command`, `env_headers`, `enabled`, optional `pack`) is the single
 source for one agent tool server; `make new KIND=mcp` writes a disabled stub. The template enables three reviewed defaults so any agent can read
 current docs, search the web, and drive a browser: **Context7** (remote, library
 docs), **Exa** (remote, search and fetch), and **Playwright** (local, pinned
-`@playwright/mcp`). `make sync` renders the enabled routes of enabled packs into host
+`@playwright/mcp` 0.0.86). `make sync` renders the enabled routes of enabled packs into host
 configuration (`.mcp.json` for Claude Code). The generated settings do not
 pre-approve servers, so each person approves each project server once. `make capabilities` shows which routes can actually run here.
 
