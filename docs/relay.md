@@ -292,8 +292,8 @@ unique subset of recent/frequent/apps/bookmarks, and an allowlist of settings
 `Keymap::from_setting`, which skips reserved/conflicting keys. `mcp`,
 `shell_control`, and `agent_eval` are reserved. Apply writes the Store, pushes bounded `ShellChange`s the GPUI
 pump drains (theme/accent/settings update live; start sections rebuild), and
-audits `shell_apply` with the plan id and 64-bit before/after hashes for each
-changed key (values never enter the audit). Off by default; no shortcut or arbitrary-code writes.
+audits `shell_apply` with the MCP client name, plan id, and 64-bit before/after
+hashes for each changed key (values never enter the audit). Off by default; no shortcut or arbitrary-code writes.
 
 ## Shell read tools
 
