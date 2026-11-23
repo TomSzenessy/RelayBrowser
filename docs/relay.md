@@ -617,6 +617,8 @@ as stale, and prints the protocol version from
   native TLS (Security.framework on macOS), so no C cross-compilation is needed.
 - Linux builds of the `relay` binary need GPUI's system libraries (xkbcommon,
   wayland, xcb, fontconfig, freetype, vulkan headers). Linux CI installs the
-  subset it needs on ubuntu-24.04 (Playwright 1.56 does not support 26.04).
+  subset it needs on ubuntu-24.04. The image and the pinned Playwright
+  lockfile are validated together; moving to a newer Ubuntu image is a
+  separate CI change with its own WebKit run.
 - `third_party/xattr` is a patched copy of xattr 0.2.3 that fixes a Linux build
   break in gpui's dependency tree ([`../third_party/README.md`](../third_party/README.md)).

@@ -3,6 +3,10 @@
   "private": true,
   "description": "Tests for the injected bridge and Chrome shims, run in Playwright's WebKit build.",
   "type": "module",
-  "scripts": { "test": "node --test test/*.test.mjs" },
-  "devDependencies": { "playwright": "1.56.1" }
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.1"
+  }
 }
