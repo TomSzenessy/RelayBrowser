@@ -43,22 +43,6 @@ same declared commands. The venv path is made absolute without dereferencing
 its `bin/python` symlink, so the venv's own `site-packages` stay active. Only
 `argv[0]` is rewritten; the variable is exposed to a surface command that
 chooses to read it.
-The seams tightened last: `core` owns the shared primitives (one
-`DIRECTORY_ROLES` table for infrastructure/ignored directories, `KEBAB`,
-`today`, `default_branch`, `package_skill`), `gitinfo.run_git` is the one git
-entry point (unquoted paths, a timeout) and `core.today` computes one UTC day
-so every freshness rule agrees across machines (a "not in the future" rule
-compares with `core.latest_today`, UTC+14, so a local date always passes; `core.date_out_of_policy` is the one staleness policy), `checkrun.run_checks` is the one place a finding becomes blocking (gates name checks; a project may downgrade one in `[checks]`, validated by `registry.check_overrides`; `core.hygiene_allowlist` is the one parser of `[checks.file-hygiene] allow_paths`, which exempts single paths without downgrading the check, and `core.CODE_CONTENT_PATTERNS` is the literal-only credential scan used on tracked files), `registry.KINDS` and
-`session.HOOK_EVENTS` are the single lists their users derive from, and
-`structure` validates the vision and stack-decision records through one
-`_check_record`. `structure.discover_candidate_surfaces` lists a top-level directory as a product-surface candidate only when `core.repository_files` lists a tracked or untracked-but-not-ignored file beneath it, so a directory holding only git-ignored output (a leftover `.gocache`) is not a candidate; outside git nothing is known to be ignored. Behavior lives in standard-library modules under `tools/kit/`
-whose imports point toward the leaves (`gitinfo`, `names`, `helptext`) and never form a cycle:
-`tools/tests/test_import_graph.py` fails on any, function-local imports included. Only the lazy
-dispatch imports in `commands` are exempt, kept so `repoctl help` starts fast.
-`core.default_branch` retains its legacy default; callers needing an actual
-configured branch use `fallback=None` (missing, blank or non-string metadata
-returns `None`), without another value reader or a guessed branch:
-
 | Concern | Modules | Owner doc |
 |---|---|---|
 | Manifest, paths, worktree, text primitives, the shared Reviewer/date rule, conventional file names, hook events | `core`, `gitinfo`, `names` | this page |
@@ -82,9 +66,6 @@ returns `None`), without another value reader or a guessed branch:
 | Kit updates, the kit lock, and the golden-path test | `kitlock`, `kitupdate` | [`../kit-update.md`](../kit-update.md) |
 | Evals and build trials (one headless launcher) | `evals`, `trial` | [`../evals.md`](../evals.md) |
 | Failure signatures | `signatures` | [`../operations.md`](../operations.md) |
-
-For a copied project, replace the template row above with the real surfaces
-and keep this section only while the kit is part of the repository.
 
 A surface owns its `path` plus any `extra_paths` — the files its generator writes
 outside that directory, such as the root `index.html` a Vite app keeps beside

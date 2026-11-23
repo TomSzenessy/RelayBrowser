@@ -114,7 +114,7 @@ runs, so the job grants `actions: read`; a draft PR is skipped and the
 `ready_for_review` event starts its first non-draft run. The secret scan runs
 for same-repository non-draft PRs and default-branch pushes (the job grants
 `pull-requests: read` so Gitleaks can list PR commits); fork PRs stay
-credential-free by design.  the
+credential-free by design. The
 Lychee step sets `failIfEmpty: ${{ github.event_name != 'pull_request' }}`
 because a changed file may legitimately contain no links (the pinned action's
 default fails such pull requests on its `Total | 0` summary), while scheduled
@@ -213,8 +213,7 @@ on this repository); never use a public issue for an unpatched report.
   history.
 - Treat lockfile changes, install hooks, generated binaries, and workflow edits
   as security-sensitive changes.
-- Relay's Linux workflows run on GitHub-hosted `ubuntu-24.04` runners (pinned: the Playwright release here does not support 26.04) and the
-  macOS job runs on GitHub-hosted `macos-15` (`contents: read`, no secrets,
+- The macOS job runs on GitHub-hosted `macos-15` (`contents: read`, no secrets,
   path-filtered on pull requests and `main` pushes plus `workflow_dispatch`); a
   workflow job still runs code you did not write. Keep
   "Require approval for all outside collaborators" on for fork pull requests
