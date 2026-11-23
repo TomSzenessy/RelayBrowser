@@ -183,6 +183,13 @@ extension loading, and no MCP socket. `--app` accepts only http(s). A popup or
 More than one tab (only possible if a future feature adds one) brings the strip
 back rather than hiding it.
 
+## MCP tools: batch actions
+
+`batch_actions {tab_id?, actions:[…]}` runs sequential `click`, `type`,
+`press_key`, `scroll`, or `wait` steps in one tab. It stops at the first
+failure and reports the completed count; every inner op still passes the Stop
+and per-site policy checks and is audited, plus one `batch_actions` row.
+
 ## MCP tools: keys and storage
 
 `press_key {tab_id?, key, modifiers?}` dispatches a key to the focused element
