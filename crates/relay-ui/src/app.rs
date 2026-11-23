@@ -82,6 +82,7 @@ actions!(
         CycleAgentPolicy,
         ToggleReader,
         TogglePictureInPicture,
+        ShowDownloads,
     ]
 );
 
@@ -150,6 +151,8 @@ fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
                 sep(),
                 item("Reading Mode", ToggleReader),
                 item("Picture in Picture", TogglePictureInPicture),
+                sep(),
+                item("Downloads…", ShowDownloads),
                 item("Reload Page", Reload),
                 item("Zoom In", ZoomIn),
                 item("Zoom Out", ZoomOut),
@@ -306,6 +309,7 @@ pub struct RelayApp {
     inspector_open: bool,
     sidebar_tab: SidebarTab,
     connect_open: bool,
+    downloads_open: bool,
     reader_tabs: HashSet<TabId>,
     /// History/Bookmarks modal; `None` when closed.
     library: Option<Library>,
@@ -454,6 +458,7 @@ impl RelayApp {
             inspector_open: false,
             sidebar_tab: SidebarTab::Inspector,
             connect_open: false,
+            downloads_open: false,
             reader_tabs: HashSet::new(),
             library: None,
             panel: Panel::Elements,
@@ -1300,6 +1305,7 @@ impl RelayApp {
                 self.palette = None;
                 self.settings_open = false;
                 self.connect_open = false;
+                self.downloads_open = false;
                 self.find = None;
                 self.end_hints();
                 self.library = Some(lib);
@@ -1465,6 +1471,7 @@ impl RelayApp {
     fn open_palette(&mut self, prefill: Option<String>, new_tab: bool) {
         self.library = None;
         self.connect_open = false;
+        self.downloads_open = false;
         self.settings_open = false;
         self.find = None;
         self.confirm_clear_history = false;
@@ -1499,6 +1506,7 @@ impl RelayApp {
             self.palette = None;
             self.library = None;
             self.connect_open = false;
+            self.downloads_open = false;
             self.confirm_clear_history = false;
             self.settings_open = true;
             self.web.borrow().focus_shell();
@@ -1595,6 +1603,7 @@ impl RelayApp {
             Command::CycleAccent => self.cycle_accent(cx),
             Command::ToggleReader => self.toggle_reader(cx),
             Command::TogglePictureInPicture => self.toggle_picture_in_picture(cx),
+            Command::ShowDownloads => self.open_downloads(cx),
         }
     }
 
@@ -1775,6 +1784,14 @@ impl RelayApp {
         if self.connect_open {
             if k.key == "escape" {
                 self.close_connect();
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.downloads_open {
+            if k.key == "escape" {
+                self.close_downloads();
             }
             cx.stop_propagation();
             cx.notify();
@@ -3070,11 +3087,30 @@ impl RelayApp {
         )
     }
 
+    fn open_downloads(&mut self, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.settings_open = false;
+        self.library = None;
+        self.shortcuts = None;
+        self.connect_open = false;
+        self.find = None;
+        self.end_hints();
+        self.downloads_open = true;
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_downloads(&mut self) {
+        self.downloads_open = false;
+        self.focus_active_page();
+    }
+
     fn open_connect(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.settings_open = false;
         self.library = None;
         self.shortcuts = None;
+        self.downloads_open = false;
         self.find = None;
         self.end_hints();
         self.connect_open = true;
@@ -3092,6 +3128,7 @@ impl RelayApp {
         self.settings_open = false;
         self.library = None;
         self.connect_open = false;
+        self.downloads_open = false;
         self.find = None;
         self.end_hints();
         self.shortcuts = Some(ShortcutEditor { recording: None });
@@ -3171,6 +3208,122 @@ impl RelayApp {
         self.set_accent_choice(next);
         self.toast(format!("Accent: {}", next.label()));
         cx.notify();
+    }
+
+    fn render_downloads(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let downloads = self.hub.lock().downloads();
+        let mut rows = div().flex().flex_col();
+        if downloads.is_empty() {
+            rows = rows.child(div().px_4().py_6().text_size(px(13.)).text_color(t.muted).child("No downloads yet"));
+        }
+        for d in downloads {
+            let state = match &d.state {
+                relay_bridge::DownloadState::Downloading => "Downloading…".to_string(),
+                relay_bridge::DownloadState::Done => "Done".to_string(),
+                relay_bridge::DownloadState::Failed(e) => format!("Failed: {e}"),
+            };
+            let path = d.path.clone();
+            rows = rows.child(
+                div()
+                    .id(SharedString::from(format!("download-{}", d.id)))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .min_h(px(40.))
+                    .px_4()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .overflow_hidden()
+                            .child(div().text_size(px(12.)).text_color(t.text).whitespace_nowrap().text_ellipsis().child(SharedString::from(d.filename)))
+                            .child(div().text_size(px(10.)).text_color(t.muted).whitespace_nowrap().text_ellipsis().child(SharedString::from(format!("{state} · {}", d.url)))),
+                    )
+                    .child(
+                        div()
+                            .when(path.is_some(), |el| {
+                                el.child(
+                                    div()
+                                        .id(SharedString::from(format!("download-reveal-{}", d.id)))
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(4.))
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .text_size(px(10.))
+                                        .text_color(t.text)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover))
+                                        .on_click(cx.listener(move |app, _, _, cx| {
+                                            if let Some(path) = &path {
+                                                #[cfg(target_os = "macos")]
+                                                {
+                                                    let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+                                                }
+                                                #[cfg(not(target_os = "macos"))]
+                                                {
+                                                    app.toast("Reveal in Finder needs macOS");
+                                                }
+                                            }
+                                            cx.notify();
+                                        }))
+                                        .child("Reveal"),
+                                )
+                            }),
+                    ),
+            );
+        }
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(80.)).bg(t.scrim).child(
+            div()
+                .id("downloads")
+                .w(px(680.))
+                .flex()
+                .flex_col()
+                .rounded(px(10.))
+                .bg(t.surface)
+                .border_1()
+                .border_color(t.border)
+                .shadow_lg()
+                .overflow_hidden()
+                .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_downloads()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(44.))
+                        .px_4()
+                        .border_b_1()
+                        .border_color(t.border)
+                        .child(div().text_size(px(15.)).text_color(t.text).child("Downloads"))
+                        .child(
+                            div()
+                                .id("downloads-clear")
+                                .px_2()
+                                .py_0p5()
+                                .rounded(px(4.))
+                                .border_1()
+                                .border_color(t.border)
+                                .text_size(px(11.))
+                                .text_color(t.muted)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover))
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    let n = app.hub.update(|h| h.clear_finished_downloads());
+                                    app.toast(format!("Cleared {n} finished downloads"));
+                                    cx.notify();
+                                }))
+                                .child("Clear finished"),
+                        ),
+                )
+                .child(rows),
+        )
     }
 
     fn render_connect(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3693,7 +3846,7 @@ impl Render for RelayApp {
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
-        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some() || self.shortcuts.is_some() || self.connect_open;
+        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some() || self.shortcuts.is_some() || self.connect_open || self.downloads_open;
         if overlay_open {
             // Keep native views from covering the palette or settings overlay.
             self.web.borrow().layout(&[]);
@@ -3864,6 +4017,9 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &TogglePictureInPicture, _, cx| {
                 app.toggle_picture_in_picture(cx);
+            }))
+            .on_action(cx.listener(|app, _: &ShowDownloads, _, cx| {
+                app.open_downloads(cx);
             }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
@@ -3895,6 +4051,9 @@ impl Render for RelayApp {
         }
         if self.connect_open {
             root = root.child(self.render_connect(cx));
+        }
+        if self.downloads_open {
+            root = root.child(self.render_downloads(cx));
         }
         root
     }
@@ -4301,9 +4460,9 @@ mod tests {
     #[test]
     fn key_bindings_cover_documented_shortcuts() {
         let bindings = key_bindings();
-        assert_eq!(bindings.len(), 48);
+        assert_eq!(bindings.len(), 49);
         let bound: HashSet<&'static str> = bindings.iter().map(|b| b.action().name()).collect();
-        let required: [&'static str; 48] = [
+        let required: [&'static str; 49] = [
             OpenPalette.name(),
             OpenLocation.name(),
             NewTab.name(),
@@ -4352,6 +4511,7 @@ mod tests {
             CycleAgentPolicy.name(),
             ToggleReader.name(),
             TogglePictureInPicture.name(),
+            ShowDownloads.name(),
         ];
         for name in required {
             assert!(bound.contains(name), "missing key binding for {name}");

@@ -6,7 +6,7 @@ use crate::app::{
     Back, CloseTab, Copy, CopyCleanUrl, CopyMarkdown, Cut, CycleAgentPolicy, Find, Forward, LinkHints, Minimize,
     NewTab, NextTab, NextTabStripPosition, OpenLocation, OpenPalette, Paste, PrevTab, Quit, Redo, ReopenClosedTab, Reload,
     SelectAll, SelectTab1, SelectTab2, SelectTab3, SelectTab4, SelectTab5, SelectTab6, SelectTab7, SelectTab8, SelectTab9, ShowBookmarks,
-    ShowHistory, ToggleAgents, ToggleBookmark, ToggleInspector, TogglePictureInPicture, TogglePin, ToggleReader, ToggleSettings, ToggleSplit, ToggleTabStrip, Undo, WebInspector,
+    ShowDownloads, ShowHistory, ToggleAgents, ToggleBookmark, ToggleInspector, TogglePictureInPicture, TogglePin, ToggleReader, ToggleSettings, ToggleSplit, ToggleTabStrip, Undo, WebInspector,
     ZoomIn, ZoomOut, ZoomReset,
 };
 use gpui::{KeyBinding, Keystroke};
@@ -62,10 +62,11 @@ pub enum ActionId {
     CycleAgentPolicy,
     ToggleReader,
     TogglePictureInPicture,
+    ShowDownloads,
 }
 
 impl ActionId {
-    pub const ALL: [ActionId; 48] = [
+    pub const ALL: [ActionId; 49] = [
         ActionId::OpenPalette, ActionId::OpenLocation, ActionId::NewTab, ActionId::CloseTab, ActionId::ReopenClosedTab,
         ActionId::Reload, ActionId::Back, ActionId::Forward, ActionId::NextTab, ActionId::PrevTab, ActionId::ToggleInspector,
         ActionId::WebInspector, ActionId::ToggleSplit, ActionId::ToggleSettings, ActionId::LinkHints, ActionId::CopyCleanUrl,
@@ -77,6 +78,7 @@ impl ActionId {
         ActionId::CycleAgentPolicy,
         ActionId::ToggleReader,
         ActionId::TogglePictureInPicture,
+        ActionId::ShowDownloads,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -129,6 +131,7 @@ impl ActionId {
             ActionId::CycleAgentPolicy => "agent-policy",
             ActionId::ToggleReader => "reading-mode",
             ActionId::TogglePictureInPicture => "picture-in-picture",
+            ActionId::ShowDownloads => "downloads",
         }
     }
 
@@ -186,6 +189,7 @@ impl ActionId {
             ActionId::CycleAgentPolicy => "Cycle agent access on this site",
             ActionId::ToggleReader => "Reading mode",
             ActionId::TogglePictureInPicture => "Picture in Picture",
+            ActionId::ShowDownloads => "Show downloads",
         }
     }
 
@@ -239,6 +243,7 @@ impl ActionId {
             ActionId::CycleAgentPolicy => "secondary-alt-a",
             ActionId::ToggleReader => "secondary-shift-r",
             ActionId::TogglePictureInPicture => "secondary-shift-p",
+            ActionId::ShowDownloads => "secondary-shift-j",
         }
     }
 
@@ -292,6 +297,7 @@ impl ActionId {
             ActionId::CycleAgentPolicy => KeyBinding::new(keystroke, CycleAgentPolicy, None),
             ActionId::ToggleReader => KeyBinding::new(keystroke, ToggleReader, None),
             ActionId::TogglePictureInPicture => KeyBinding::new(keystroke, TogglePictureInPicture, None),
+            ActionId::ShowDownloads => KeyBinding::new(keystroke, ShowDownloads, None),
         }
     }
 }
@@ -407,7 +413,7 @@ mod tests {
         let map = Keymap::default();
         let keys: std::collections::HashSet<&str> = ActionId::ALL.iter().map(|id| map.key(*id)).collect();
         assert_eq!(keys.len(), ActionId::ALL.len(), "default shortcuts are unique");
-        assert_eq!(map.bindings().len(), 48);
+        assert_eq!(map.bindings().len(), 49);
         for id in ActionId::ALL {
             assert!(Keystroke::parse(map.key(id)).is_ok(), "{}", map.key(id));
         }
