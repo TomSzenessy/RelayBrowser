@@ -163,7 +163,8 @@ on this repository); never use a public issue for an unpatched report.
   initialize, managed in Settings → Connected agents) is required. Writes
   require an explicit plan id (single-use, 60 s), reject
   `mcp`/`shell_control`/`agent_eval`, re-validate shortcut conflicts, allow only
-  inspector/agents/off for the sidebar, and push bounded hub
+  inspector/agents/off for the sidebar, cap/control-strip the one start-page
+  widget, and push bounded hub
   changes; `shell_apply` records the MCP client name, plan id, and before/after
   hashes, not values. No arbitrary code or shortcut writes.
 - **Shell read tools:** `shell_*` tools return a bounded allowlist of settings,

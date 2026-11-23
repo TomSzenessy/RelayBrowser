@@ -303,6 +303,7 @@ pub struct RelayApp {
     blocking: bool,
     agent_eval: bool,
     shell_control: bool,
+    agent_widget: Option<(String, String)>,
     sleep_minutes: u64,
     mcp_enabled: bool,
     confirm_clear_history: bool,
@@ -391,6 +392,11 @@ impl RelayApp {
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
         let agent_eval = setting_enabled(store.as_ref().and_then(|s| s.setting("agent_eval").ok().flatten()).as_deref());
         let shell_control = setting_enabled(store.as_ref().and_then(|s| s.setting("shell_control").ok().flatten()).as_deref());
+        let agent_widget = store.as_ref().and_then(|s| {
+            let title = s.setting("agent_widget_title").ok().flatten()?;
+            let body = s.setting("agent_widget_body").ok().flatten().unwrap_or_default();
+            (!title.is_empty()).then_some((title, body))
+        });
         hub.set_agent_eval(agent_eval);
         let custom_bangs = store
             .as_ref()
@@ -456,6 +462,7 @@ impl RelayApp {
             blocking,
             agent_eval,
             shell_control,
+            agent_widget,
             sleep_minutes,
             mcp_enabled,
             confirm_clear_history: false,
@@ -760,6 +767,10 @@ impl RelayApp {
                 relay_bridge::ShellChange::Sidebar { open, tab } => {
                     self.inspector_open = open;
                     self.sidebar_tab = if tab == "agents" { SidebarTab::Agent } else { SidebarTab::Inspector };
+                    shell_changed = true;
+                }
+                relay_bridge::ShellChange::Widget { title, body } => {
+                    self.agent_widget = if title.is_empty() { None } else { Some((title, body)) };
                     shell_changed = true;
                 }
             }
@@ -2404,6 +2415,26 @@ impl RelayApp {
             .overflow_hidden()
             .child(div().text_size(px(28.)).text_color(t.text).child(SharedString::from(title)))
             .child(self.start_search(cx));
+        let mut page = page;
+        if let Some((title, body)) = &self.agent_widget {
+            page = page.child(
+                div()
+                    .id("agent-widget")
+                    .mt_4()
+                    .w(px(560.))
+                    .px_4()
+                    .py_3()
+                    .rounded(px(8.))
+                    .bg(t.surface)
+                    .border_1()
+                    .border_color(t.border)
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(div().text_size(px(12.)).text_color(t.accent).child(SharedString::from(title.clone())))
+                    .child(div().text_size(px(13.)).text_color(t.text).child(SharedString::from(body.clone()))),
+            );
+        }
         let body = if self.start_page.is_empty() { self.render_welcome(cx).into_any_element() } else { self.start_grid(cx) };
         page.child(div().id("start-body").flex_1().w_full().flex().justify_center().overflow_y_scroll().child(body)).into_any_element()
     }
