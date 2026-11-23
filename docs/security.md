@@ -153,6 +153,9 @@ known slow German legal site with a documented manual-review exception; a 403,
   over the local socket, and stores nothing; it obeys Stop/Block. Like any
   screenshot it can include private page pixels, so the user controls when an
   agent is attached.
+- **Shell read tools:** `shell_*` tools return a bounded allowlist of settings,
+  shortcut overrides, section order, installed apps, and version. They cannot
+  write or execute code; the page/agent boundary is unchanged.
 - **Agent audit:** each MCP tool writes tool/host/tab/outcome/time to the
   local profile, capped at 5,000 rows, with no typed text, cookie values, or
   page content. The write is best-effort; `relay clear-data --audit`.
