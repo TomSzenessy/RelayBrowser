@@ -13,7 +13,7 @@ frontends read it: the native Inspector and the local MCP server.
 |---|---|---|
 | `relay-bridge` | Page protocol (`protocol.rs`), the shared tab state `SharedHub` (`hub.rs`), the `Browser` trait the shell implements, `ChannelBrowser` for off-main-thread callers, `relay_home()` paths | portable |
 | `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy; `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback | policy portable, engine macOS |
-| `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
+| `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `login.rs`: pure origin, candidate, fill, and save/decline model with redacted secrets; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
 | `relay-mcp` | `RelayMcp` (rmcp 3.x tool router), user-only Unix socket server, `relay mcp` stdio proxy | portable (Unix) |
 | `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (native menu bar, tab strip with close buttons/agent group/fold/move, panes and split, ⌘K palette, ⌘, Settings overlay, Inspector with console/network filters, link hints, status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping, web app install/remove). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `tabstrip.rs`: placement/fold logic. `startpage.rs`: new-tab sections and rows. `webapp.rs`: manifest validation and `.app` bundle writer. `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: tokens from [`design.md`](./design.md) with WCAG AA contrast tests. `main.rs`: the CLI (`mcp`, `--app`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
 
@@ -35,6 +35,16 @@ RelayMcp ──Browser::eval/navigate──▶ ChannelBrowser ──▶ UI drain
 - **Threading.** WebKit lives on the main thread. The MCP server runs on a tokio
   runtime in a background thread and reaches WebKit only through
   `ChannelBrowser` requests, which the UI applies with the `Engine` methods.
+
+### Credential path
+
+Passwords enter Relay only through `relay import-passwords` (CSV to Keychain)
+or, if issue #57 is approved and implemented, the native login path. The pure
+model in `relay-extensions/src/login.rs` owns origin binding, candidate
+matching, explicit fill gating, the save/decline state, and redacted secrets;
+it never serializes a password. No bridge message, DOM snapshot, MCP tool, or
+audit row may carry one. The design and open owner decisions are in
+[`login-autofill.md`](./login-autofill.md).
 
 ## Shell loop
 

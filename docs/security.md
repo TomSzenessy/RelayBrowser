@@ -207,7 +207,12 @@ on this repository); never use a public issue for an unpatched report.
   and deletes the plaintext CSV once every login is saved. `Credential`'s
   `Debug` output redacts the password. `relay export` writes a 0600 JSON backup
   of bookmarks, history, settings, and extension metadata (never passwords), and
-  `relay clear-data` refuses to erase profile tables without `--yes`.
+  `relay clear-data` refuses to erase profile tables without `--yes`. Login
+  fill/save (issue #57) is **design-only** for now: the pure
+  `relay-extensions::login` model binds origins, matches candidates, gates fill
+  on a trusted gesture, and drops a captured secret on refusal, but no native
+  fill, save prompt, or new Keychain write exists. The design and its open
+  owner decisions are in [`login-autofill.md`](./login-autofill.md).
 
 ## Supply chain and CI
 
