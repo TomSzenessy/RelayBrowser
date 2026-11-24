@@ -245,6 +245,8 @@ pub enum EngineEvent {
     /// A trusted login submit succeeded on the same origin; offer to save
     /// `username` (the password remains strictly inside `Engine`).
     LoginSaveOffer { tab: TabId, url: String, username: String },
+    /// The user allowed or blocked camera/mic for a host (ordinary tabs only).
+    MediaPermission { host: String, kind: i64, granted: bool },
 }
 
 struct DownloadIvars {
@@ -700,6 +702,7 @@ define_class!(
                     let granted = alert.runModal() == NSAlertFirstButtonReturn;
                     if !self.ivars().private {
                         self.ivars().media_permissions.borrow_mut().insert(key, granted);
+                        (self.ivars().events)(EngineEvent::MediaPermission { host: host.clone(), kind, granted });
                     }
                     granted
                 }
@@ -1110,6 +1113,13 @@ impl Engine {
         unsafe {
             store.removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done);
         }
+    }
+
+    /// Replace the remembered camera/mic decisions at startup.
+    pub fn set_media_permissions(&mut self, entries: Vec<(String, i64, bool)>) {
+        let mut map = self.media_permissions.borrow_mut();
+        map.clear();
+        map.extend(entries.into_iter().map(|(host, kind, granted)| ((host, kind), granted)));
     }
 
     /// Drain a media key pressed while the app was active. 1 play, 2 pause,

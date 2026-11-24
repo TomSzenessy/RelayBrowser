@@ -110,6 +110,16 @@ fn byte_size_reads_naturally() {
 }
 
 #[test]
+fn media_permissions_round_trip_and_skip_bad_entries() {
+    let parsed = parse_media_permissions("a.test|0|1;b.test|1|0;bad;c.test|x|1;d.test|0|2");
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed.get(&("a.test".into(), 0)), Some(&true));
+    assert_eq!(parsed.get(&("b.test".into(), 1)), Some(&false));
+    assert_eq!(encode_media_permissions(&parsed), "a.test|0|1;b.test|1|0");
+    assert!(parse_media_permissions("").is_empty());
+}
+
+#[test]
 fn bookmarks_bar_optional_visibility() {
     assert!(!bookmarks_bar_shown(false, false, true));
     assert!(bookmarks_bar_shown(true, false, true));

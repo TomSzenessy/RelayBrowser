@@ -1411,6 +1411,9 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let forget_btn = btn("settings-forget-media", "Forget".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.forget_media_permissions(cx)))
+                    .into_any_element();
                 let site_label: SharedString = if self.confirm_clear_site_data { "Confirm sign out everywhere".into() } else { "Clear cookies & site data".into() };
                 let site_btn = btn("settings-clear-site-data", site_label, self.confirm_clear_site_data)
                     .on_click(cx.listener(|app, _, _, cx| {
@@ -1430,7 +1433,8 @@ impl RelayApp {
                     .child(row("Ad & tracker blocking", Some("Native WebKit content-rule blocker"), blocking_sw))
                     .child(row("Hide cookie banners", Some("Consent-platform selectors from the blocker; reload to apply"), cookie_sw))
                     .child(row("Browsing history & saved session", Some("Removes all visited pages and open session tabs"), clear_btn))
-                    .child(row("Cookies & site data", Some("Signs you out everywhere; clears cache and local storage"), site_btn));
+                    .child(row("Cookies & site data", Some("Signs you out everywhere; clears cache and local storage"), site_btn))
+                    .child(row("Camera & microphone choices", Some("Allow/Block decisions saved for ordinary sites"), forget_btn));
                 let active_url = self
                     .active()
                     .and_then(|id| self.hub.lock().tab(id).map(|s| s.url.clone()))

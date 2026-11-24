@@ -301,6 +301,8 @@ pub struct RelayApp {
     group_prompt: Option<GroupPrompt>,
     /// Group headings folded by the user; persisted as `collapsed_groups`.
     collapsed_groups: HashSet<String>,
+    /// Remembered camera/mic decisions: `(host, kind)` → allowed.
+    media_permissions: HashMap<(String, i64), bool>,
     settings_open: bool,
     settings_tab: SettingsTab,
     settings_dropdown: Option<SettingsDropdown>,
@@ -535,6 +537,12 @@ impl RelayApp {
             .and_then(|s| s.setting("collapsed_groups").ok().flatten())
             .map(|raw| collapsed_group_names(Some(&raw)))
             .unwrap_or_default();
+        let media_permissions = store
+            .as_ref()
+            .and_then(|s| s.setting("media_permissions").ok().flatten())
+            .map(|raw| parse_media_permissions(&raw))
+            .unwrap_or_default();
+        web.set_media_permissions(media_permissions.iter().map(|((host, kind), granted)| (host.clone(), *kind, *granted)).collect());
         let always_show_close = setting_on("always_show_close");
         let default_zoom = store
             .as_ref()
@@ -575,6 +583,7 @@ impl RelayApp {
             tab_menu: None,
             group_prompt: None,
             collapsed_groups,
+            media_permissions,
             settings_open: false,
             settings_tab: SettingsTab::General,
             settings_dropdown: None,
@@ -855,6 +864,10 @@ impl RelayApp {
                 WebEvent::SiteDataCleared => {
                     self.confirm_clear_site_data = false;
                     self.toast("Cookies and site data cleared");
+                }
+                WebEvent::MediaPermission { host, kind, granted } => {
+                    self.media_permissions.insert((host, kind), granted);
+                    self.persist_media_permissions();
                 }
                 WebEvent::DefaultBrowserSet { ok, error } => {
                     self.toast(if ok {
@@ -1987,6 +2000,22 @@ impl RelayApp {
             self.collapsed_groups.clear();
         }
         self.persist_collapsed_groups();
+        cx.notify();
+    }
+
+    fn persist_media_permissions(&self) {
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("media_permissions", &encode_media_permissions(&self.media_permissions));
+        }
+    }
+
+    fn forget_media_permissions(&mut self, cx: &mut Context<Self>) {
+        self.media_permissions.clear();
+        self.web.borrow_mut().clear_media_permissions();
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("media_permissions", "");
+        }
+        self.toast("Forgot camera and microphone choices");
         cx.notify();
     }
 
@@ -3539,6 +3568,33 @@ fn human_bytes(bytes: u64) -> String {
 
 /// Parse the comma-separated `collapsed_groups` setting. Names cannot contain
 /// commas (the hub normalizer maps them to spaces), so splitting is stable.
+/// `host|kind|1;host|kind|0`. Hosts cannot contain `|`; kind is WebKit's
+/// capture enum (0 camera, 1 microphone, 2 both).
+pub(crate) fn parse_media_permissions(raw: &str) -> HashMap<(String, i64), bool> {
+    let mut out = HashMap::new();
+    for entry in raw.split(';') {
+        let mut parts = entry.split('|');
+        let (Some(host), Some(kind), Some(value)) = (parts.next(), parts.next(), parts.next()) else { continue };
+        let (Ok(kind), Some(granted)) = (kind.parse::<i64>(), match value { "1" => Some(true), "0" => Some(false), _ => None }) else {
+            continue;
+        };
+        if !host.is_empty() {
+            out.insert((host.to_string(), kind), granted);
+        }
+    }
+    out
+}
+
+pub(crate) fn encode_media_permissions(map: &HashMap<(String, i64), bool>) -> String {
+    let mut entries: Vec<((&String, i64), bool)> = map.iter().map(|(k, v)| ((&k.0, k.1), *v)).collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+        .into_iter()
+        .map(|((host, kind), granted)| format!("{host}|{kind}|{}", i32::from(granted)))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 pub(crate) fn collapsed_group_names(raw: Option<&str>) -> HashSet<String> {
     raw.unwrap_or("").split(',').map(str::trim).filter(|g| !g.is_empty()).map(str::to_string).collect()
 }

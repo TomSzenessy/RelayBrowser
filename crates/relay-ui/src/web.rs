@@ -37,6 +37,8 @@ pub enum WebEvent {
     SiteDataCleared,
     /// LaunchServices answered a default-browser request.
     DefaultBrowserSet { ok: bool, error: Option<String> },
+    /// The user set a camera/mic decision for a host.
+    MediaPermission { host: String, kind: i64, granted: bool },
     /// Native-verified post-submit login save offer (never carries secrets).
     LoginSaveOffer { tab: TabId, url: String, username: String },
 }
@@ -73,6 +75,7 @@ mod imp {
                     EngineEvent::LoginFilled { tab, ok } => WebEvent::LoginFilled { tab, ok },
                     EngineEvent::SiteDataCleared => WebEvent::SiteDataCleared,
                     EngineEvent::DefaultBrowserSet { ok, error } => WebEvent::DefaultBrowserSet { ok, error },
+                    EngineEvent::MediaPermission { host, kind, granted } => WebEvent::MediaPermission { host, kind, granted },
                     EngineEvent::LoginSaveOffer { tab, url, username } => WebEvent::LoginSaveOffer { tab, url, username },
                 })
             });
@@ -318,6 +321,16 @@ mod imp {
             self.engine.set_default_browser();
         }
 
+        /// Seed remembered camera/mic decisions at startup.
+        pub fn set_media_permissions(&mut self, entries: Vec<(String, i64, bool)>) {
+            self.engine.set_media_permissions(entries);
+        }
+
+        /// Forget every remembered camera/mic decision in this process.
+        pub fn clear_media_permissions(&mut self) {
+            self.engine.set_media_permissions(Vec::new());
+        }
+
         /// Render this tab as a PDF and ask where to save it.
         pub fn export_pdf(&self, tab: TabId) {
             self.engine.export_pdf(tab);
@@ -395,6 +408,8 @@ mod imp {
         pub fn clear_site_data(&self) {}
         pub fn take_media_key(&self) -> Option<&'static str> { None }
         pub fn set_default_browser(&self) {}
+        pub fn set_media_permissions(&mut self, _entries: Vec<(String, i64, bool)>) {}
+        pub fn clear_media_permissions(&mut self) {}
         pub fn export_pdf(&self, _tab: TabId) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
             Ok(false)
