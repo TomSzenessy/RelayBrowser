@@ -352,6 +352,8 @@ pub struct RelayApp {
     show_address_bar: bool,
     /// Vertical strip shows only site icons in a narrow rail.
     tab_icons_only: bool,
+    /// Show enabled extensions as a compact toolbar.
+    extension_toolbar: bool,
     /// Host whose Site Card is open.
     site_card: Option<String>,
     /// Recently activated tabs, newest first; Ctrl+Tab walks this order.
@@ -557,6 +559,7 @@ impl RelayApp {
         let show_bookmarks_bar = setting_on("bookmarks_bar");
         let show_address_bar = setting_on("address_bar");
         let tab_icons_only = setting_on("tab_icons_only");
+        let extension_toolbar = setting_enabled(store.as_ref().and_then(|s| s.setting("extension_toolbar").ok().flatten()).as_deref());
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
         let bookmarks_new_tab_only = setting_on("bookmarks_new_tab_only");
         let collapsed_groups = store
@@ -639,6 +642,7 @@ impl RelayApp {
             show_bookmarks_bar,
             show_address_bar,
             tab_icons_only,
+            extension_toolbar,
             site_card: None,
             mru: Vec::new(),
             profile_name: std::env::var("RELAY_PROFILE").unwrap_or_default(),
@@ -3273,6 +3277,7 @@ impl RelayApp {
             "bookmarks_bar" => self.show_bookmarks_bar = setting_enabled(Some(value)),
             "address_bar" => self.show_address_bar = setting_enabled(Some(value)),
             "tab_icons_only" => self.tab_icons_only = setting_enabled(Some(value)),
+            "extension_toolbar" => self.extension_toolbar = setting_enabled(Some(value)),
             "bookmarks_icons_only" => self.bookmarks_icons_only = setting_enabled(Some(value)),
             "bookmarks_new_tab_only" => self.bookmarks_new_tab_only = setting_enabled(Some(value)),
             "always_show_close" => self.always_show_close = setting_enabled(Some(value)),
@@ -3514,6 +3519,11 @@ impl Render for RelayApp {
             let mut column = div().flex_1().h_full().flex().flex_col().overflow_hidden();
             if self.show_address_bar && !self.app_mode {
                 column = column.child(self.render_address_bar(cx));
+            }
+            if self.extension_toolbar && !self.app_mode {
+                if let Some(bar) = self.render_extension_toolbar(cx) {
+                    column = column.child(bar);
+                }
             }
             if bookmarks_bar_shown(self.show_bookmarks_bar, self.bookmarks_new_tab_only, self.active().is_some()) && !self.app_mode {
                 column = column.child(self.render_bookmarks_bar(cx));

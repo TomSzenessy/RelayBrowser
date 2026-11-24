@@ -828,6 +828,65 @@ impl RelayApp {
             .into_any_element()
     }
 
+    /// Enabled extensions as a compact right-aligned strip; clicking an icon
+    /// opens its action popup, and the gear opens Settings → Extensions.
+    pub(super) fn render_extension_toolbar(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let exts: Vec<_> = self
+            .store
+            .as_ref()?
+            .extensions()
+            .ok()?
+            .into_iter()
+            .filter(|e| e.enabled)
+            .collect();
+        if exts.is_empty() {
+            return None;
+        }
+        let t = self.theme;
+        let mut bar = div().id("extension-toolbar").h(px(24.)).w_full().flex().items_center().justify_end().gap_1().px_2().bg(t.surface);
+        for ext in exts {
+            let id = ext.id;
+            let letter = ext.name.chars().next().unwrap_or('?').to_uppercase().collect::<String>();
+            bar = bar.child(
+                div()
+                    .id(SharedString::from(format!("ext-tool-{id}")))
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .bg(t.well)
+                    .text_size(px(10.))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| app.open_extension_popup(&id, cx)))
+                    .child(SharedString::from(letter)),
+            );
+        }
+        bar = bar.child(
+            div()
+                .id("ext-tool-settings")
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .text_size(px(11.))
+                .text_color(t.muted)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .on_click(cx.listener(|app, _, _, cx| {
+                    app.settings_open = true;
+                    app.settings_tab = SettingsTab::Extensions;
+                    app.web.borrow().focus_shell();
+                    cx.notify();
+                }))
+                .child("⚙"),
+        );
+        Some(bar.into_any_element())
+    }
+
     /// The optional bookmarks bar: saved pages as one quiet row under the
     /// tab strip. Off by default; Settings → Tabs turns it on.
     pub(super) fn render_bookmarks_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {

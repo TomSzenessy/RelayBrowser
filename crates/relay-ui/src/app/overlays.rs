@@ -1976,6 +1976,15 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let toolbar_sw = switch("settings-extension-toolbar", self.extension_toolbar, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.extension_toolbar = !app.extension_toolbar;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("extension_toolbar", if app.extension_toolbar { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let ext_install_btn = btn("settings-ext-install-field", "Install".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.install_extension_from_input(cx);
@@ -2008,6 +2017,7 @@ impl RelayApp {
                 let actions_card = div()
                     .flex()
                     .flex_col()
+                    .child(row("Show extension toolbar", Some("Enabled extensions as a compact row above the page"), toolbar_sw))
                     .child(row("Import Chrome extensions", Some("Fetches your Chrome extensions via CRX3 and loads them in WebKit (macOS 15.4+)"), import_ext_btn))
                     .child(
                         div()
