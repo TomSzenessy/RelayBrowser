@@ -274,6 +274,8 @@ pub struct Palette {
     pub marked: Option<Range<usize>>,
     /// User-defined `(trigger, template-with-%s)` bangs; override built-ins.
     pub custom_bangs: Vec<(String, String)>,
+    /// Inline address suffix after a URL prefix; `None` when nothing matches.
+    pub completion: Option<String>,
 }
 
 /// Map a UTF-16 offset (the platform/IME unit) to a UTF-8 byte offset on a
@@ -317,6 +319,31 @@ fn char_boundary(text: &str, mut byte: usize) -> usize {
     byte
 }
 
+/// A URL prefix completion for the address field. Only a single token can
+/// complete (spaces mean a search query), and the suffix is the remainder of
+/// the first matching tab/bookmark/history URL. Full URLs are tried before the
+/// scheme-less form so typing `https://exa` completes the real address.
+fn inline_completion(query: &str, sources: &Sources) -> Option<String> {
+    let q = query.trim();
+    if q.chars().count() < 2 || q.chars().any(char::is_whitespace) || q.contains('=') {
+        return None;
+    }
+    let lower = q.to_ascii_lowercase();
+    let mut candidates: Vec<&str> = Vec::new();
+    candidates.extend(sources.tabs.iter().map(|(_, _, url)| url.as_str()));
+    candidates.extend(sources.bookmarks.iter().map(|(_, url)| url.as_str()));
+    candidates.extend(sources.history.iter().map(|(_, url)| url.as_str()));
+    for url in candidates.into_iter().take(800) {
+        for form in [url, url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).unwrap_or(url)] {
+            let low = form.to_ascii_lowercase();
+            if low.starts_with(&lower) && form.len() > q.len() {
+                return Some(form[q.len()..].to_string());
+            }
+        }
+    }
+    None
+}
+
 impl Palette {
     pub fn set_query(&mut self, query: String) {
         self.query = query;
@@ -324,6 +351,22 @@ impl Palette {
         self.anchor = None;
         self.marked = None;
         self.selected = 0;
+        self.completion = None;
+    }
+
+    /// Accept the inline address completion at the caret. Returns true when
+    /// something was appended; the caller refreshes the item list.
+    pub fn accept_completion(&mut self) -> bool {
+        let Some(suffix) = self.completion.take() else { return false };
+        if self.cursor != self.query.len() || self.selection().is_some() {
+            return false;
+        }
+        self.query.push_str(&suffix);
+        self.cursor = self.query.len();
+        self.anchor = None;
+        self.marked = None;
+        self.selected = 0;
+        true
     }
 
     /// The platform range to replace: an explicit UTF-16 range, else the
@@ -573,6 +616,11 @@ impl Palette {
         if q.is_empty() {
             items.extend(Command::ALL.iter().take(MAX_ITEMS.saturating_sub(items.len())).map(|c| Item::Command(*c)));
         }
+        self.completion = if self.cursor == self.query.len() && self.selection().is_none() && self.marked.is_none() {
+            inline_completion(q, sources)
+        } else {
+            None
+        };
         self.items = items;
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
     }
@@ -928,5 +976,35 @@ mod tests {
         p.set_query("youtube music".into());
         p.refresh(&sources, DEFAULT_SEARCH);
         assert!(matches!(&p.items[0], Item::Search { query, .. } if query == "youtube music"));
+    }
+
+    #[test]
+    fn inline_completion_appends_a_url_prefix_once() {
+        let sources = Sources {
+            tabs: vec![],
+            bookmarks: vec![("Docs".into(), "https://docs.rs/gpui/latest".into())],
+            history: vec![("Example".into(), "https://example.com/path".into())],
+        };
+        let mut p = Palette::default();
+        p.set_query("exa".into());
+        p.refresh(&sources, DEFAULT_SEARCH);
+        assert_eq!(p.completion.as_deref(), Some("mple.com/path"));
+        assert!(p.accept_completion());
+        assert_eq!(p.query, "example.com/path");
+        assert!(p.completion.is_none());
+
+        p.set_query("https://docs.rs/g".into());
+        p.refresh(&sources, DEFAULT_SEARCH);
+        assert_eq!(p.completion.as_deref(), Some("pui/latest"));
+
+        p.set_query("two words".into());
+        p.refresh(&sources, DEFAULT_SEARCH);
+        assert!(p.completion.is_none(), "a search query is not a URL prefix");
+
+        p.set_query("exa".into());
+        p.refresh(&sources, DEFAULT_SEARCH);
+        p.move_cursor_ext(-1, false, false);
+        p.refresh(&sources, DEFAULT_SEARCH);
+        assert!(p.completion.is_none(), "only complete with the caret at the end");
     }
 }

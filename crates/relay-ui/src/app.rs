@@ -2777,7 +2777,13 @@ impl RelayApp {
             "up" => p.move_selection(-1),
             "down" | "tab" => p.move_selection(1),
             "left" => p.move_cursor_ext(-1, k.modifiers.shift, k.modifiers.alt),
-            "right" => p.move_cursor_ext(1, k.modifiers.shift, k.modifiers.alt),
+            "right" => {
+                if p.cursor == p.query.len() && p.selection().is_none() && p.accept_completion() {
+                    p.refresh(&self.sources, &self.search);
+                } else {
+                    p.move_cursor_ext(1, k.modifiers.shift, k.modifiers.alt);
+                }
+            }
             "home" => p.set_cursor(0, k.modifiers.shift),
             "end" => p.set_cursor(p.query.len(), k.modifiers.shift),
             "delete" => {

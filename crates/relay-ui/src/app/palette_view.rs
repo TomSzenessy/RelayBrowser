@@ -17,6 +17,7 @@ struct PaletteTextPrepaint {
     line: ShapedLine,
     cursor: Pixels,
     selection: Option<(Pixels, Pixels)>,
+    completion: Option<ShapedLine>,
 }
 
 /// Split the query into text runs so the IME-marked range can be underlined
@@ -60,6 +61,7 @@ struct PaletteTextElement {
     cursor: usize,
     selection: Option<(usize, usize)>,
     marked: Option<Range<usize>>,
+    completion: Option<SharedString>,
 }
 
 impl IntoElement for PaletteTextElement {
@@ -127,8 +129,17 @@ impl Element for PaletteTextElement {
         } else {
             self.selection.map(|(start, end)| (line.x_for_index(start), line.x_for_index(end)))
         };
+        let completion = self.completion.as_ref().and_then(|suffix| {
+            if placeholder || self.selection.is_some() || self.marked.is_some() || self.cursor != self.query.len() {
+                return None;
+            }
+            let mut ghost = style.clone();
+            ghost.color = self.theme.muted;
+            let run = TextRun { len: suffix.len(), font: ghost.font(), color: ghost.color, background_color: None, underline: None, strikethrough: None };
+            Some(window.text_system().shape_line(suffix.clone(), ghost.font_size.to_pixels(window.rem_size()), &[run], None))
+        });
         *self.metrics.borrow_mut() = Some(PaletteTextMetrics { line: line.clone(), bounds, cursor });
-        PaletteTextPrepaint { line, cursor, selection }
+        PaletteTextPrepaint { line, cursor, selection, completion }
     }
 
     fn paint(
@@ -154,6 +165,10 @@ impl Element for PaletteTextElement {
             ));
         }
         prepaint.line.paint(bounds.origin, bounds.size.height, window, cx).ok();
+        if let Some(completion) = prepaint.completion.take() {
+            let origin = point(bounds.left() + prepaint.cursor, bounds.top());
+            completion.paint(origin, bounds.size.height, window, cx).ok();
+        }
         if focused {
             let caret_h = px(18.);
             let caret_y = bounds.top() + (bounds.size.height - caret_h) / 2.;
@@ -240,6 +255,7 @@ impl RelayApp {
             cursor: p.cursor,
             selection: p.selection(),
             marked: p.marked.clone(),
+            completion: p.completion.clone().map(SharedString::from),
         });
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
             div()

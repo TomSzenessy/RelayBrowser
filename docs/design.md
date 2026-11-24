@@ -204,7 +204,9 @@ Behaviour that is not a single action:
 
 - **⌘K palette:** each command shows its current custom shortcut; ←/→/Home/End
   move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, and a click
-  places the caret. ⌘L opens it prefilled with the current URL.
+  places the caret. ⌘L opens it prefilled with the current URL. Typing a URL
+  prefix shows the rest of the first matching tab/bookmark/history URL in
+  muted text; → at the end accepts it.
 - **Find:** ↩ goes to the next hit, ⇧↩ to the previous, ⌘G/⇧⌘G step
   outside the field, `Aa` toggles case sensitivity, Esc closes.
 - **Sidebar:** ⌘⌥I opens / closes it; × collapses it, and the Agent / Inspector
