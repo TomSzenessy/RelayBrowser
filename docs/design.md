@@ -171,6 +171,9 @@ Behaviour that is not a single action:
 - **Paused agents:** ⇧⌘. pauses or resumes every agent tool call and shows a
   tinted banner with Resume. A CAPTCHA/2FA challenge on the active page shows a
   separate "Agent is waiting for you" banner with Continue.
+  Login offers (#57) use a bottom banner above the status bar, outside the page
+  pane so the native web view never covers it: "Fill" (confirm per account) and
+  "Save password?" (Save / Not now), see [login-autofill.md](./login-autofill.md).
 - **Tab bar:** `×` closes (hover/active), a middle click closes, `♪` marks
   playing audio, `pin` a pinned tab, and `zz` a sleeping one. Pinned tabs sit
   at the top, never auto-sleep, and ⌘W sleeps them instead of closing.
