@@ -31,6 +31,7 @@ USAGE:
   relay config [list | get KEY | set KEY VALUE]
                                     inspect or update profile settings
   relay export [FILE]               export bookmarks, history, settings, and extensions as JSON
+  relay import FILE                 merge a Relay JSON backup into this profile
   relay clear-data [--history] [--session] [--bookmarks] [--audit] --yes
                                     delete stored history/session/bookmarks and/or the agent audit log
   relay audit [--limit N]           show the lean log of agent tool calls
@@ -150,6 +151,7 @@ fn main() -> anyhow::Result<()> {
         Some("mcp") => run_mcp_proxy(),
         Some("config") => config(&args[1..]),
         Some("export") => export_profile(args.get(1).map(String::as_str)),
+        Some("import") => import_profile(args.get(1).map(String::as_str)),
         Some("clear-data") => clear_data(&args[1..]),
         Some("audit") => audit(&args[1..]),
         Some("mcp-config") => mcp_config(&args[1..]),
@@ -470,6 +472,20 @@ fn config(args: &[String]) -> anyhow::Result<()> {
         }
         _ => bail!("usage: relay config [list | get KEY | set KEY VALUE]"),
     }
+}
+
+fn import_profile(file: Option<&str>) -> anyhow::Result<()> {
+    let file = std::path::Path::new(file.context("usage: relay import <relay-profile.json>")?);
+    let json = std::fs::read_to_string(file)?;
+    let summary = open_store()?.import_export_json(&json)?;
+    println!(
+        "Imported {} bookmarks, {} history rows, {} settings from {}.",
+        summary.bookmarks,
+        summary.history,
+        summary.settings,
+        file.display()
+    );
+    Ok(())
 }
 
 fn export_profile(file: Option<&str>) -> anyhow::Result<()> {

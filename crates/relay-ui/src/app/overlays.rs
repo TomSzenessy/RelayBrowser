@@ -1383,6 +1383,12 @@ impl RelayApp {
                 if sleep_open {
                     general_card = general_card.child(sleep_menu);
                 }
+                let backup_btn = btn("settings-backup", "Back up…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.backup_profile(cx)))
+                    .into_any_element();
+                let restore_btn = btn("settings-restore", "Restore…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.restore_profile(cx)))
+                    .into_any_element();
                 let safari_btn = btn("settings-import-safari", "Import Safari".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| app.import_safari(cx)))
                     .into_any_element();
@@ -1394,6 +1400,8 @@ impl RelayApp {
                     .into_any_element();
                 general_card = general_card.child(row("Browser bookmarks & history", Some("Chrome, Brave, Edge, Arc, Dia, or Chromium"), import_btn));
                 general_card = general_card.child(row("Safari bookmarks & history", Some("Needs Full Disk Access in System Settings → Privacy & Security"), safari_btn));
+                general_card = general_card.child(row("Back up profile", Some("Write bookmarks, history, and settings to a private JSON file"), backup_btn));
+                general_card = general_card.child(row("Restore profile", Some("Merge a Relay backup; local settings win"), restore_btn));
                 let default_btn = btn("settings-default-browser", "Make default".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         if app.web.borrow().renders_pages() {

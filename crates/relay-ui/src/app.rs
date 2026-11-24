@@ -2307,6 +2307,60 @@ impl RelayApp {
         }
     }
 
+    fn backup_profile(&mut self, cx: &mut Context<Self>) {
+        let Some(store) = &self.store else { return };
+        let json = match store.export_json() {
+            Ok(json) => json,
+            Err(e) => {
+                self.toast(format!("Could not export profile: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        let dir = relay_bridge::paths::relay_home();
+        let rx = cx.prompt_for_new_path(&dir, Some("relay-profile.json"));
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(path))) = rx.await {
+                let res = write_private_file(&path, json.as_bytes());
+                let _ = this.update(cx, |app, cx| {
+                    match res {
+                        Ok(()) => app.toast(format!("Backed up profile to {}", path.display())),
+                        Err(e) => app.toast(format!("Backup failed: {e}")),
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn restore_profile(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Restore Relay profile".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(Result::ok).flatten().and_then(|mut paths| paths.pop());
+            let Some(path) = picked else { return };
+            let json = std::fs::read_to_string(&path).ok();
+            let _ = this.update(cx, |app, cx| {
+                let Some(store) = &app.store else { return };
+                match json.as_deref().map(|j| store.import_export_json(j)) {
+                    Some(Ok(summary)) => app.toast(format!(
+                        "Restored {} bookmarks · {} history rows · {} settings",
+                        summary.bookmarks, summary.history, summary.settings
+                    )),
+                    Some(Err(e)) => app.toast(format!("Restore failed: {e}")),
+                    None => app.toast("Could not read that backup file"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn choose_download_folder(&mut self, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -4218,6 +4272,19 @@ fn zoom_step(current: f64, direction: i8) -> f64 {
         d if d > 0 => ZOOM_STEPS.iter().copied().find(|z| *z > current + 1e-6).unwrap_or(ZOOM_STEPS[ZOOM_STEPS.len() - 1]),
         _ => ZOOM_STEPS.iter().rev().copied().find(|z| *z < current - 1e-6).unwrap_or(ZOOM_STEPS[0]),
     }
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    f.write_all(bytes)
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, bytes)
 }
 
 /// "820 B", "14 KB" for toasts.

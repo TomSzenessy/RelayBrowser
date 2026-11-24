@@ -5,7 +5,7 @@
 use crate::chrome_import::{Bookmark, HistoryEntry};
 use crate::Error;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -13,6 +13,13 @@ const SCHEMA_VERSION: i64 = 1;
 
 pub struct Store {
     conn: Connection,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ImportSummary {
+    pub bookmarks: usize,
+    pub history: usize,
+    pub settings: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -474,6 +481,46 @@ impl Store {
 
     /// Pretty-printed JSON backup of bookmarks, history, settings, and
     /// installed extension metadata. Passwords are never stored or exported.
+    /// Merge a Relay export into this profile. Existing bookmarks/settings
+    /// win; history keeps the larger visit count/newer timestamp. Sessions and
+    /// extension paths are not imported.
+    pub fn import_export_json(&self, json: &str) -> Result<ImportSummary, Error> {
+        let export: BackupImport = serde_json::from_str(json)?;
+        if export.schema_version > SCHEMA_VERSION {
+            return Err(Error::Invalid(format!("backup schema {} is newer than this Relay", export.schema_version)));
+        }
+        let mut out = ImportSummary::default();
+        for b in export.bookmarks {
+            let bookmark = Bookmark { title: b.title, url: b.url, folder: b.folder };
+            if self.add_bookmark(&bookmark)? {
+                out.bookmarks += 1;
+            }
+        }
+        for v in export.history {
+            if !(v.url.starts_with("http://") || v.url.starts_with("https://")) {
+                continue;
+            }
+            let n = self.conn.execute(
+                "INSERT INTO history(url, title, visit_count, last_visit) VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(url) DO UPDATE SET
+                   visit_count = MAX(visit_count, excluded.visit_count),
+                   last_visit = MAX(last_visit, excluded.last_visit),
+                   title = CASE WHEN excluded.title = '' THEN title ELSE excluded.title END",
+                params![v.url, v.title, v.visit_count.max(1), v.last_visit],
+            )?;
+            if n > 0 {
+                out.history += 1;
+            }
+        }
+        for (key, value) in export.settings {
+            if self.setting(&key)?.is_none() {
+                self.set_setting(&key, &value)?;
+                out.settings += 1;
+            }
+        }
+        Ok(out)
+    }
+
     pub fn export_json(&self) -> Result<String, Error> {
         let bookmarks = self
             .bookmarks()?
@@ -771,14 +818,25 @@ fn read_prefs(r: &rusqlite::Row<'_>) -> SitePrefs {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+struct BackupImport {
+    schema_version: i64,
+    #[serde(default)]
+    bookmarks: Vec<ExportBookmark>,
+    #[serde(default)]
+    history: Vec<ExportVisit>,
+    #[serde(default)]
+    settings: BTreeMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize)]
 struct ExportBookmark {
     title: String,
     url: String,
     folder: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct ExportVisit {
     url: String,
     title: String,
@@ -1139,6 +1197,28 @@ mod tests {
         s.set_site_pref("b.test", SitePrefs { blocking_off: true, ..Default::default() }).unwrap();
         assert!(s.reset_site_pref("b.test").unwrap());
         assert!(!s.reset_site_pref("b.test").unwrap());
+    }
+
+    #[test]
+    fn backup_merge_keeps_local_values_and_imports_missing_rows() {
+        let a = Store::in_memory().unwrap();
+        a.toggle_bookmark("https://a.test/", "A").unwrap();
+        a.record_visit("https://a.test/", "A", 10).unwrap();
+        a.set_setting("theme", "dark").unwrap();
+        a.set_setting("search", "https://search.test/?q=%s").unwrap();
+        let json = a.export_json().unwrap();
+
+        let b = Store::in_memory().unwrap();
+        b.set_setting("theme", "light").unwrap();
+        let summary = b.import_export_json(&json).unwrap();
+        assert_eq!(summary.bookmarks, 1);
+        assert_eq!(summary.history, 1);
+        assert_eq!(summary.settings, 1, "missing search import, existing theme kept");
+        assert_eq!(b.setting("theme").unwrap().as_deref(), Some("light"));
+        assert!(b.setting("search").unwrap().is_some());
+        assert!(b.is_bookmarked("https://a.test/").unwrap());
+        assert_eq!(b.import_export_json(&json).unwrap().bookmarks, 0, "second import is idempotent");
+        assert!(b.import_export_json(r#"{"schema_version":99}"#).is_err());
     }
 
     #[test]

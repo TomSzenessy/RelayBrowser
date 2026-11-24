@@ -248,6 +248,9 @@ Behaviour that is not a single action:
   the native web view never covers it, lists one button per saved account and
   a "Save password?" offer (Save/Replace / Not now). The list and Delete only
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
+- **Backup/restore:** Settings → General writes a private JSON export via a
+  save panel and merges a chosen backup (local settings win; extensions and
+  session tabs are not imported). `relay import FILE` does the same.
 - **Profiles:** `relay --profile NAME` (or Settings → General → Profile →
   Switch) gives a separate `RELAY_HOME` with its own tabs, settings, history,
   logins (a per-profile Keychain domain), extensions, and MCP socket, plus a
