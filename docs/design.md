@@ -69,6 +69,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   Mode, Print, and Inspect Element, with the page's own link/image items
   preserved. The shell draws the tab menu as a floating panel when the strip
   is horizontal.
+- **Export:** File → Export as PDF… renders the page through WebKit's PDF
+  pipeline and opens a save panel with the page title.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
   Bookmarks, Tab, Window, Help) carry every shortcut; View names Tabs on the
   Left, Top, and Right explicitly, not only the cycling command.

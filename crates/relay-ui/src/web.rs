@@ -314,6 +314,11 @@ mod imp {
             self.engine.set_default_browser();
         }
 
+        /// Render this tab as a PDF and ask where to save it.
+        pub fn export_pdf(&self, tab: TabId) {
+            self.engine.export_pdf(tab);
+        }
+
         pub fn delete_saved_login(&self, url: &str, username: &str, path: &str) -> Result<bool, String> {
             let origin = relay_extensions::login::Origin::parse(url).map_err(|e| e.to_string())?;
             relay_extensions::mac::delete_login(&origin, username, path)
@@ -386,6 +391,7 @@ mod imp {
         pub fn set_login_capture(&mut self, _enabled: bool) {}
         pub fn clear_site_data(&self) {}
         pub fn set_default_browser(&self) {}
+        pub fn export_pdf(&self, _tab: TabId) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
             Ok(false)
         }

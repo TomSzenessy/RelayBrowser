@@ -14,12 +14,12 @@ use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMark
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
     NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPasteboard, NSPasteboardTypeString,
-    NSPrintInfo, NSTextField, NSUserInterfaceItemIdentification, NSView,
+    NSModalResponseOK, NSPrintInfo, NSSavePanel, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{
-    NSArray, NSBundle, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize,
-    NSString, NSURL, NSURLRequest, NSURLResponse,
+    NSArray, NSBundle, NSData, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect,
+    NSSize, NSString, NSURL, NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKContentWorld, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo,
@@ -1231,6 +1231,31 @@ impl Engine {
         self.uccs.borrow_mut().push(ucc.clone());
         self.tabs.insert(tab, WebTab { view, handler, login_handler, ucc });
         &self.tabs[&tab].view
+    }
+
+    /// Render `tab` as a PDF and let the user choose where to save it.
+    pub fn export_pdf(&self, tab: TabId) {
+        let Some(t) = self.tabs.get(&tab) else { return };
+        let mtm = MainThreadMarker::from(&*t.view);
+        let title = self.hub.lock().tab(tab).map(|s| s.title.clone()).unwrap_or_default();
+        let block = RcBlock::new(move |data: *mut NSData, err: *mut NSError| {
+            if let Some(e) = unsafe { err.as_ref() } {
+                eprintln!("relay: PDF export failed: {}", e.localizedDescription());
+                return;
+            }
+            let Some(data) = (unsafe { Retained::retain(data) }) else { return };
+            let panel = NSSavePanel::savePanel(mtm);
+            let name = if title.trim().is_empty() { "page.pdf".to_string() } else { format!("{}.pdf", title.trim()) };
+            panel.setNameFieldStringValue(&NSString::from_str(&name));
+            if panel.runModal() == NSModalResponseOK {
+                if let Some(url) = panel.URL() {
+                    if !data.writeToURL_atomically(&url, true) {
+                        eprintln!("relay: could not write PDF to {}", url.path().map(|p| p.to_string()).unwrap_or_default());
+                    }
+                }
+            }
+        });
+        unsafe { t.view.createPDFWithConfiguration_completionHandler(None, &block) };
     }
 
     /// Open the native macOS Print dialog for `tab`.

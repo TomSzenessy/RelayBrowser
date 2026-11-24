@@ -43,6 +43,7 @@ pub(super) fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
                 item("Reopen Closed Tab", ReopenClosedTab),
                 sep(),
                 item("Print…", Print),
+                item("Export as PDF…", ExportPdf),
                 sep(),
                 item("Install This Site as an App…", InstallWebApp),
                 item("Remove This Site's App", RemoveWebApp),

@@ -91,6 +91,7 @@ actions!(
         ShowDownloads,
         NewPrivateTab,
         Print,
+        ExportPdf,
         ToggleBottomBar,
         TabsOnLeft,
         TabsOnTop,
@@ -3156,6 +3157,14 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &Print, _, cx| {
                 app.run_command(Command::Print, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &ExportPdf, _, cx| {
+                if let Some(tab) = app.active() {
+                    app.web.borrow().export_pdf(tab);
+                } else {
+                    app.toast("Open a page to export it");
+                }
                 cx.notify();
             }));
         macro_rules! select {
