@@ -49,9 +49,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   row under the pointer show `×` (a middle click closes too). The user's tabs
   come first, then an "Agent" group header with tinted rows for agent-owned
   tabs. Asleep tabs are dimmed. A tab waiting for a human shows ⚠. `⌘S` folds
-  the strip to a thin, clickable rail (14 pt at the side, 10 pt at the top)
-  that brings it back; the edge and folded state persist in `tabs_position`
-  and `tabs_folded`.
+  the strip to a quiet floating chevron pill (and `» Tabs` when the status bar
+  is visible) that brings it back; the edge and folded state persist in
+  `tabs_position` and `tabs_folded`.
 - **AI & Agent sidebar:** the 340 px right sidebar has a pill-segmented
   **Agent | Inspector** switcher and a `×` close button, toggled via the single
   quiet `✦` icon in the tab strip (shown only when the sidebar is closed so
@@ -141,8 +141,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
   Bookmarks, Tab, Window, Help) carry every shortcut; View names Tabs on the
   Left, Top, and Right explicitly, not only the cycling command.
-- **Address bar:** off by default (absence of the setting means off); Settings → Appearance adds a 26 pt URL line
-  above the page. It shows a lock/warning, host, path, and ⌘L; clicking opens
+- **Address bar:** off by default (absence of the setting means off); Settings → Appearance adds a 30 pt URL line
+  inside the browser card top edge. It shows the site favicon, lock/warning, host, path, and ⌘L; clicking opens
   the palette with the URL selected so typing replaces it.
 - **Bookmarks bar:** off by default (absence means off); Settings → Tabs turns on a 24 pt row of
   saved pages under the strip, optionally icon-only or only on the new-tab page. Each row is a site icon and title, click to
@@ -182,7 +182,7 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 | surface (tab strip, panes) | `#232428` | `#ffffff` |
 | border | `#34363b` | `#e2e2e6` |
 | text | `#e6e6e9` | `#1c1c1f` |
-| muted text | `#9a9ca3` | `#6b6d75` |
+| muted text | `#9a9ca3` | `#5b5d66` |
 | accent (focus, active tab) | `#5b8cff` | `#245fe8` |
 | agent tint | `#b07cff` at 18% | `#7a3cff` at 12% |
 | error | `#ff6b6b` | `#c92f2f` |
@@ -369,7 +369,7 @@ built yet.
 - Inspector with no DOM yet: "Waiting for page…".
 - Closed tab: the `×` appears on hover and on the active row; closing a pinned
   tab sleeps it instead, and a middle click does the same.
-- Folded strip: a 14 pt side rail or 10 pt top rail with a chevron; clicking
+- Folded strip: a compact floating chevron pill (and `» Tabs` in the status bar when shown); clicking
   it restores the strip.
 - Web app install: the palette reports "Reading the web app manifest…", then
   "Installed … in ~/Applications", or a specific reason (no manifest,

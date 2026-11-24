@@ -217,6 +217,10 @@ mod imp {
             }
         }
 
+        pub fn shell_is_focused(&self) -> bool {
+            self.shell.as_deref().is_none_or(Engine::shell_is_focused)
+        }
+
         /// Route a standard Edit command to the focused WKWebView.
         pub fn edit(&self, action: EditAction) {
             let command = match action {
@@ -441,6 +445,7 @@ mod imp {
             true
         }
         pub fn focus_shell(&self) {}
+        pub fn shell_is_focused(&self) -> bool { true }
         pub fn edit(&self, _action: EditAction) {}
         pub fn minimize(&self) {}
         pub fn set_application_icon(&self, _path: &std::path::Path) {}

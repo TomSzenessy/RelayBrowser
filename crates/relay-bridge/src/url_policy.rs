@@ -49,15 +49,21 @@ impl AgentPolicy {
 }
 
 /// Lowercase scheme://authority host, without `www.`; `None` for non-web URLs.
+/// Preserves bracketed IPv6 literals such as `[fe80::1]` without truncating on `:`.
 pub fn host_of(url: &str) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
         return None;
     }
     let authority = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?;
-    let host = authority.split(':').next()?.trim().to_ascii_lowercase();
+    let host = if let Some(inner) = authority.strip_prefix('[') {
+        let end = inner.find(']')?;
+        format!("[{}]", inner[..end].trim().to_ascii_lowercase())
+    } else {
+        authority.split(':').next()?.trim().to_ascii_lowercase()
+    };
     let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
-    (!host.is_empty()).then_some(host)
+    (!host.is_empty() && host != "[]").then_some(host)
 }
 
 pub fn is_http_url(url: &str) -> bool {
@@ -94,6 +100,9 @@ mod tests {
         assert!(is_http_url("HTTP://x"));
         assert!(!is_http_url("about:blank"));
         assert_eq!(host_of("https://www.Example.com:8443/x"), Some("example.com".into()));
+        assert_eq!(host_of("http://[fe80::1]:8080/icon.png"), Some("[fe80::1]".into()));
+        assert_eq!(host_of("http://[::1]/favicon.ico"), Some("[::1]".into()));
+        assert_eq!(host_of("http://[]/x"), None);
         assert_eq!(host_of("about:blank"), None);
         assert_eq!(AgentPolicy::parse("read-only"), Some(AgentPolicy::ReadOnly));
         assert_eq!(AgentPolicy::Block.next(), AgentPolicy::Allow);

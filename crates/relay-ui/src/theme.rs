@@ -618,7 +618,7 @@ impl Theme {
             page: rgb(0xfbfbfc).into(),
             border: rgb(0xe2e2e6).into(),
             text: rgb(0x1c1c1f).into(),
-            muted: rgb(0x6b6d75).into(),
+            muted: rgb(0x5b5d66).into(),
             code: rgb(0x2a3a8f).into(),
             accent: rgb(0x245fe8).into(),
             on_accent: rgb(0xffffff).into(),
@@ -799,12 +799,14 @@ mod tests {
             for fill in &samples {
                 assert_eq!(SpaceFill::parse(&fill.to_setting()), *fill);
                 let look = SpaceLook { fill: fill.clone(), icon: SpaceIcon::Default };
-                if let Some((start, end)) = look.surface_stops(dark, theme.surface) {
-                    for (stop, bg) in [("start", start), ("end", end)] {
-                        let text_ratio = contrast_ratio(theme.text, bg);
-                        let muted_ratio = contrast_ratio(theme.muted, bg);
-                        assert!(text_ratio >= 4.5, "{mode} {fill:?} {stop} text {text_ratio:.2}:1 < 4.5");
-                        assert!(muted_ratio >= 4.5, "{mode} {fill:?} {stop} muted {muted_ratio:.2}:1 < 4.5");
+                for (layer, base) in [("surface", theme.surface), ("background", theme.background)] {
+                    if let Some((start, end)) = look.surface_stops(dark, base) {
+                        for (stop, bg) in [("start", start), ("end", end)] {
+                            let text_ratio = contrast_ratio(theme.text, bg);
+                            let muted_ratio = contrast_ratio(theme.muted, bg);
+                            assert!(text_ratio >= 4.5, "{mode} {layer} {fill:?} {stop} text {text_ratio:.2}:1 < 4.5");
+                            assert!(muted_ratio >= 4.5, "{mode} {layer} {fill:?} {stop} muted {muted_ratio:.2}:1 < 4.5");
+                        }
                     }
                 }
             }

@@ -562,6 +562,12 @@ impl RelayApp {
                             .whitespace_nowrap()
                             .cursor_text()
                             .on_click(cx.listener(|app, _, _, cx| app.focus_agent_input(cx)))
+                            .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                                if app.agent_input_focused {
+                                    app.agent_input_focused = false;
+                                    cx.notify();
+                                }
+                            }))
                             .child(SharedString::from(if input_text.is_empty() {
                                 "Ask about this page…".to_string()
                             } else {

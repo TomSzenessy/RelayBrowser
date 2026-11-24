@@ -894,12 +894,43 @@ fn bmp_dib_ico_decodes_to_valid_png_and_ssrf_favicon_urls_are_blocked() {
     assert!(favicon_bytes_to_payload(vec![0, 0, 1, 0, 1, 0]).is_none());
     assert!(favicon_bytes_to_payload(b"<html>not an icon</html>".to_vec()).is_none());
 
-    // SSRF guard: public CDN icons are allowed; local/private IPs are blocked unless same-host.
+    // SSRF guard: public CDN icons are allowed; local/private/CGNAT/IPv6/obfuscated IPs are blocked unless same-host.
     assert!(favicon_url_allowed("github.com", "https://github.githubassets.com/favicons/favicon.svg"));
     assert!(favicon_url_allowed("localhost", "http://localhost:3000/favicon.ico"));
-    assert!(!favicon_url_allowed("example.com", "http://127.0.0.1/favicon.ico"));
-    assert!(!favicon_url_allowed("example.com", "http://169.254.169.254/latest/meta-data/"));
-    assert!(!favicon_url_allowed("example.com", "http://192.168.1.1/icon.png"));
-    assert!(!favicon_url_allowed("example.com", "http://localhost/icon.png"));
-    assert!(!favicon_url_allowed("example.com", "file:///etc/passwd"));
+    assert!(favicon_url_allowed("[::1]", "http://[::1]:3000/favicon.ico"));
+    for blocked in [
+        "http://127.0.0.1/favicon.ico",
+        "http://127.1/favicon.ico",
+        "http://0x7f000001/favicon.ico",
+        "http://2130706433/favicon.ico",
+        "http://0177.0.0.1/favicon.ico",
+        "http://100.64.0.1/favicon.ico",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.1/icon.png",
+        "http://10.0.0.1/icon.png",
+        "http://[fe80::1]/icon.png",
+        "http://[fc00::1]:8080/icon.png",
+        "http://[::1]/icon.png",
+        "http://[::ffff:127.0.0.1]/icon.png",
+        "http://localhost/icon.png",
+        "file:///etc/passwd",
+    ] {
+        assert!(!favicon_url_allowed("example.com", blocked), "must block SSRF URL: {blocked}");
+    }
+    assert!(favicon_ip_public("1.1.1.1".parse().unwrap()));
+    assert!(!favicon_ip_public("100.64.0.1".parse().unwrap()));
+    assert!(!favicon_ip_public("fe80::1".parse().unwrap()));
+    assert!(!favicon_ip_public("fc00::1".parse().unwrap()));
+    assert!(!favicon_ip_public("::ffff:127.0.0.1".parse().unwrap()));
+}
+
+#[test]
+fn agent_composer_key_capture_yields_to_find_hints_modals_and_inspector() {
+    assert!(agent_composer_captures_keys(true, SidebarTab::Agent, true, false, false, false));
+    assert!(!agent_composer_captures_keys(false, SidebarTab::Agent, true, false, false, false), "closed sidebar");
+    assert!(!agent_composer_captures_keys(true, SidebarTab::Inspector, true, false, false, false), "inspector tab");
+    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, false, false, false, false), "unfocused input");
+    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, true, true, false, false), "modal overlay");
+    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, true, false, true, false), "find bar active");
+    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, true, false, false, true), "link hints active");
 }

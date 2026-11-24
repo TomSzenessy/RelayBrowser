@@ -438,8 +438,20 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| default.to_string())
             };
             println!("tabs_position = {}", setting("tabs_position", "left"));
-            println!("status_bar_position = {}", setting("status_bar_position", "hidden"));
-            println!("bottom_bar = {}", setting("bottom_bar", "off"));
+            let status_pos = store
+                .as_ref()
+                .and_then(|s| s.setting("status_bar_position").ok().flatten())
+                .unwrap_or_else(|| {
+                    let legacy = store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten());
+                    if legacy.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("on") || v == "1" || v.eq_ignore_ascii_case("true")) {
+                        "bottom".into()
+                    } else {
+                        "hidden".into()
+                    }
+                });
+            let bottom_val = if status_pos == "hidden" { "off" } else { "on" };
+            println!("status_bar_position = {status_pos}");
+            println!("bottom_bar = {bottom_val}");
             println!("login_fill = {}", setting("login_fill", "on"));
             println!("login_save = {}", setting("login_save", "on"));
             println!("autofill_logins = {}", setting("autofill_logins", "on"));

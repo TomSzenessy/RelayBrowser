@@ -1606,6 +1606,7 @@ impl RelayApp {
     }
 
     fn open_url(&mut self, url: String, new_tab: bool) {
+        self.agent_input_focused = false;
         let active = self.active();
         // A web app window always reuses its single page.
         let new_tab = new_tab && !self.app_mode;
@@ -1629,6 +1630,7 @@ impl RelayApp {
     }
 
     fn open_private_url(&mut self, url: String) {
+        self.agent_input_focused = false;
         let tab = self.hub.update(|h| {
             let id = h.create_private_tab(&url);
             h.set_active(id);
@@ -1744,6 +1746,7 @@ impl RelayApp {
 
     fn activate(&mut self, tab: TabId) {
         self.tab_menu = None;
+        self.agent_input_focused = false;
         if self.site_card.is_some() {
             let host = self.hub.lock().tab(tab).map(|t| crate::clean_url::host_of(&t.url)).unwrap_or_default();
             if self.site_card.as_deref() != Some(host.as_str()) {
@@ -1819,6 +1822,7 @@ impl RelayApp {
     }
 
     fn focus_active_page(&mut self) {
+        self.agent_input_focused = false;
         if let Some(tab) = self.active() {
             self.focus_pending = Some(tab);
             self.try_focus_pending();
@@ -2423,7 +2427,17 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused && !self.has_modal_overlay() && self.find.is_none() && self.hints.is_none() {
+        if self.agent_input_focused && !self.web.borrow().shell_is_focused() {
+            self.agent_input_focused = false;
+        }
+        if agent_composer_captures_keys(
+            self.inspector_open,
+            self.sidebar_tab,
+            self.agent_input_focused,
+            self.has_modal_overlay(),
+            self.find.is_some(),
+            self.hints.is_some(),
+        ) {
             if let Some(chat) = self.ai_chat.as_mut() {
                 match action {
                     EditAction::Paste => {
@@ -3808,11 +3822,14 @@ impl RelayApp {
             Command::Forward => active.into_iter().for_each(|t| self.web.borrow_mut().apply(BrowserRequest::GoForward(t))),
             Command::ToggleInspector => {
                 self.inspector_open = !self.inspector_open;
+                self.agent_input_focused = false;
                 self.hub.set_sidebar(self.inspector_open, self.sidebar_tab.as_str());
                 if self.inspector_open {
                     if let Some(t) = active {
                         self.web.borrow_mut().apply(BrowserRequest::RefreshCookies(t));
                     }
+                } else {
+                    self.focus_active_page();
                 }
             }
             Command::WebInspector => active.into_iter().for_each(|t| self.web.borrow_mut().apply(BrowserRequest::OpenWebInspector(t))),
@@ -4079,7 +4096,17 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused && !self.has_modal_overlay() && self.hints.is_none() && self.find.is_none() {
+        if self.agent_input_focused && !self.web.borrow().shell_is_focused() {
+            self.agent_input_focused = false;
+        }
+        if agent_composer_captures_keys(
+            self.inspector_open,
+            self.sidebar_tab,
+            self.agent_input_focused,
+            self.has_modal_overlay(),
+            self.find.is_some(),
+            self.hints.is_some(),
+        ) {
             match k.key.as_str() {
                 "escape" => self.unfocus_agent_input(),
                 "enter" => self.send_ai(cx),
@@ -6108,40 +6135,160 @@ fn favicon_candidate_urls(reply: Option<&serde_json::Value>, tab_host: &str) -> 
         .collect()
 }
 
-/// Allow only `http(s)` icon URLs and block private/loopback/link-local hosts
-/// unless the tab itself is loaded from that exact host (prevents SSRF).
+/// Whether the docked Agent chat composer currently owns shell key and edit
+/// commands (never while a modal, Find bar, Link Hints, or Inspector tab is active).
+fn agent_composer_captures_keys(
+    inspector_open: bool,
+    sidebar_tab: SidebarTab,
+    agent_input_focused: bool,
+    has_modal: bool,
+    find_open: bool,
+    hints_open: bool,
+) -> bool {
+    inspector_open && sidebar_tab == SidebarTab::Agent && agent_input_focused && !has_modal && !find_open && !hints_open
+}
+
+/// True only for globally routable unicast IP addresses (rejects loopback,
+/// RFC1918 private, CGNAT 100.64.0.0/10, link-local, ULA, site-local,
+/// IPv4-mapped IPv6, unspecified, broadcast, documentation, and multicast).
+pub(crate) fn favicon_ip_public(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            let is_zero = o[0] == 0;
+            let is_cgnat = o[0] == 100 && (64..=127).contains(&o[1]);
+            let is_doc = (o[0] == 192 && o[1] == 0 && o[2] == 2)
+                || (o[0] == 198 && o[1] == 51 && o[2] == 100)
+                || (o[0] == 203 && o[1] == 0 && o[2] == 113);
+            let is_bench = o[0] == 198 && (o[1] == 18 || o[1] == 19);
+            let is_reserved = o[0] >= 240;
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || is_zero
+                || is_cgnat
+                || is_doc
+                || is_bench
+                || is_reserved)
+        }
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                let _ = v4;
+                return false;
+            }
+            let s = v6.segments();
+            let is_ula = (s[0] & 0xfe00) == 0xfc00;
+            let is_link_local = (s[0] & 0xffc0) == 0xfe80;
+            let is_site_local = (s[0] & 0xffc0) == 0xfec0;
+            let is_doc = s[0] == 0x2001 && s[1] == 0x0db8;
+            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || is_ula || is_link_local || is_site_local || is_doc)
+        }
+    }
+}
+
+/// Reject legacy/obfuscated numeric IPv4 host forms (`127.1`, `0x7f000001`,
+/// `2130706433`, octal `0177.0.0.1`) that resolvers accept as loopback/LAN.
+fn looks_like_numeric_host(host: &str) -> bool {
+    if host.is_empty() {
+        return true;
+    }
+    let parts: Vec<&str> = host.split('.').collect();
+    let all_numeric_parts = parts.iter().all(|part| {
+        !part.is_empty()
+            && (part.chars().all(|c| c.is_ascii_digit())
+                || part.strip_prefix("0x").is_some_and(|hex| !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit())))
+    });
+    if all_numeric_parts {
+        // Only canonical dotted-quad IPv4 without leading zeros or hex is parsed as IpAddr.
+        let canonical = parts.len() == 4
+            && parts.iter().all(|p| !p.starts_with("0x") && (p.len() == 1 || !p.starts_with('0')));
+        return !canonical;
+    }
+    false
+}
+
+/// Parse `(raw_host_without_brackets, port)` from an `http(s)` URL authority.
+fn parse_favicon_authority(url: &str) -> Option<(String, u16)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let default_port = if scheme.eq_ignore_ascii_case("https") {
+        443
+    } else if scheme.eq_ignore_ascii_case("http") {
+        80
+    } else {
+        return None;
+    };
+    let authority = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?;
+    if let Some(inner) = authority.strip_prefix('[') {
+        let (host, tail) = inner.split_once(']')?;
+        let port = match tail {
+            "" => default_port,
+            t if t.starts_with(':') => t[1..].parse::<u16>().ok()?,
+            _ => return None,
+        };
+        let host = host.trim().to_ascii_lowercase();
+        (!host.is_empty()).then_some((host, port))
+    } else {
+        let (host, port) = match authority.rsplit_once(':') {
+            Some((h, p)) => (h, p.parse::<u16>().ok()?),
+            None => (authority, default_port),
+        };
+        let host = host.trim().to_ascii_lowercase();
+        (!host.is_empty()).then_some((host, port))
+    }
+}
+
+/// Allow only `http(s)` icon URLs and block private/loopback/link-local/CGNAT/
+/// obfuscated numeric hosts unless the tab itself is loaded from that exact host.
 pub(crate) fn favicon_url_allowed(tab_host: &str, url: &str) -> bool {
     if url.len() > 2048 || url.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return false;
     }
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return false;
-    }
-    let Some(cand_host) = host_of(url) else { return false };
-    let cand = cand_host.trim_matches(['[', ']']).to_ascii_lowercase();
-    if cand.is_empty() {
-        return false;
-    }
-    if cand == tab_host.trim_matches(['[', ']']).to_ascii_lowercase() {
+    let Some((raw_host, _port)) = parse_favicon_authority(url) else { return false };
+    let cand_norm = raw_host.strip_prefix("www.").unwrap_or(&raw_host);
+    let tab_norm = tab_host.trim_matches(['[', ']']).to_ascii_lowercase();
+    let tab_norm = tab_norm.strip_prefix("www.").unwrap_or(&tab_norm);
+    if cand_norm == tab_norm && !cand_norm.is_empty() {
         return true;
     }
-    if cand == "localhost" || cand.ends_with(".localhost") || cand.ends_with(".local") || cand.ends_with(".internal") {
+    if cand_norm == "localhost"
+        || cand_norm.ends_with(".localhost")
+        || cand_norm.ends_with(".local")
+        || cand_norm.ends_with(".internal")
+        || looks_like_numeric_host(&raw_host)
+    {
         return false;
     }
-    if let Ok(ip) = cand.parse::<std::net::IpAddr>() {
-        return match ip {
-            std::net::IpAddr::V4(v4) => {
-                !(v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast() || v4.is_multicast())
-            }
-            std::net::IpAddr::V6(v6) => {
-                let seg0 = v6.segments()[0];
-                let is_ula = (seg0 & 0xfe00) == 0xfc00;
-                let is_link_local = (seg0 & 0xffc0) == 0xfe80;
-                !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || is_ula || is_link_local || v6.to_ipv4_mapped().is_some())
-            }
-        };
+    if let Ok(ip) = raw_host.parse::<std::net::IpAddr>() {
+        return favicon_ip_public(ip);
     }
     true
+}
+
+/// Resolve `url` and verify EVERY returned IP before connecting, returning
+/// `(raw_host, port, pinned_ip)` so `curl --resolve` prevents DNS rebinding.
+fn resolve_safe_favicon_target(tab_host: &str, url: &str) -> Option<(String, u16, std::net::IpAddr)> {
+    use std::net::ToSocketAddrs;
+    if !favicon_url_allowed(tab_host, url) {
+        return None;
+    }
+    let (raw_host, port) = parse_favicon_authority(url)?;
+    let same_host = {
+        let cand_norm = raw_host.strip_prefix("www.").unwrap_or(&raw_host);
+        let tab_norm = tab_host.trim_matches(['[', ']']).to_ascii_lowercase();
+        let tab_norm = tab_norm.strip_prefix("www.").unwrap_or(&tab_norm);
+        cand_norm == tab_norm && !cand_norm.is_empty()
+    };
+    let addrs: Vec<std::net::IpAddr> = (raw_host.as_str(), port).to_socket_addrs().ok()?.map(|s| s.ip()).collect();
+    if addrs.is_empty() {
+        return None;
+    }
+    if !same_host && addrs.iter().any(|ip| !favicon_ip_public(*ip)) {
+        return None;
+    }
+    Some((raw_host, port, addrs[0]))
 }
 
 /// Detect, validate, and normalize raw favicon bytes fetched natively.
@@ -6176,19 +6323,24 @@ pub(crate) fn favicon_bytes_to_payload(mut bytes: Vec<u8>) -> Option<(Vec<u8>, &
 
 /// Cookie-free native fallback fetch for cross-origin CDN favicons (e.g.
 /// GitHub, Google, YouTube, Reddit) whose `fetch()` is blocked by CORS.
+/// Disables `.curlrc` (`-q`), disables auto-redirects (no 302 to LAN/metadata),
+/// resolves DNS upfront, validates every IP, and pins via `--resolve`.
 fn fetch_favicon_candidates(tab_host: &str, urls: &[String]) -> Option<(Vec<u8>, &'static str)> {
     use std::io::Read;
     for url in urls.iter().take(5) {
-        if !favicon_url_allowed(tab_host, url) {
+        let Some((raw_host, port, pinned_ip)) = resolve_safe_favicon_target(tab_host, url) else {
             continue;
-        }
+        };
+        let ip_arg = match pinned_ip {
+            std::net::IpAddr::V4(v4) => v4.to_string(),
+            std::net::IpAddr::V6(v6) => format!("[{v6}]"),
+        };
+        let resolve_arg = format!("{raw_host}:{port}:{ip_arg}");
         let mut child = std::process::Command::new("curl")
             .args([
+                "-q",
                 "--silent",
                 "--fail",
-                "--location",
-                "--max-redirs",
-                "3",
                 "--max-time",
                 "4",
                 "--max-filesize",
@@ -6196,6 +6348,8 @@ fn fetch_favicon_candidates(tab_host: &str, urls: &[String]) -> Option<(Vec<u8>,
                 "--proto",
                 "=http,https",
                 "--globoff",
+                "--resolve",
+                &resolve_arg,
                 "--",
                 url,
             ])
@@ -6254,6 +6408,12 @@ fn cache_favicon_file(host: &str, bytes: &[u8], ext: &str) {
         return;
     }
     let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    // Remove any older cached extension for this host so reload order on restart is deterministic.
+    for old_ext in ["png", "jpg", "webp", "gif", "svg"] {
+        if old_ext != ext {
+            let _ = std::fs::remove_file(dir.join(format!("{name}.{old_ext}")));
+        }
+    }
     let path = dir.join(format!("{name}.{ext}"));
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(path) {
         let _ = file.write_all(bytes);

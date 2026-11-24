@@ -1877,6 +1877,17 @@ impl Engine {
         }
     }
 
+    /// True when GPUI's shell view (not an embedded `WKWebView`) currently owns
+    /// AppKit first-responder focus. Clicking inside a live web page moves
+    /// first responder to WebKit, so shell inputs can immediately yield focus.
+    pub fn shell_is_focused(shell: &NSView) -> bool {
+        let Some(w) = shell.window() else { return true };
+        let Some(fr) = w.firstResponder() else { return true };
+        let fr_ptr: *const AnyObject = std::ptr::from_ref(&*fr).cast();
+        let shell_ptr: *const AnyObject = std::ptr::from_ref(shell).cast();
+        fr_ptr == shell_ptr
+    }
+
     /// Send a standard editing selector to the window's first responder.
     /// Deliberately not `NSApplication.sendAction:`: GPUI's app delegate also
     /// implements `copy:`/`paste:` for its own menu items, so the app-level
