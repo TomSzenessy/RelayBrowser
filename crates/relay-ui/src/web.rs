@@ -272,8 +272,7 @@ mod imp {
             if live.as_ref() != Some(&origin) {
                 return Err("The page changed; fill cancelled".into());
             }
-            let pw = relay_extensions::mac::read_login_password(&origin, username, path)
-                .map_err(|_| "Could not read login from Keychain".to_string())?;
+            let pw = relay_extensions::mac::read_login_password(&origin, username, path).map_err(keychain_message)?;
             self.engine.fill_login(tab, form_idx, username, pw.expose());
             Ok(())
         }
@@ -290,7 +289,7 @@ mod imp {
                 &path,
                 relay_extensions::login::Password::new(password.as_str()),
             );
-            relay_extensions::mac::save_login(&captured).map_err(|_| "Could not save login to Keychain".to_string())?;
+            relay_extensions::mac::save_login(&captured).map_err(keychain_message)?;
             Ok(username)
         }
 
@@ -321,8 +320,7 @@ mod imp {
 
         pub fn delete_saved_login(&self, url: &str, username: &str, path: &str) -> Result<bool, String> {
             let origin = relay_extensions::login::Origin::parse(url).map_err(|e| e.to_string())?;
-            relay_extensions::mac::delete_login(&origin, username, path)
-                .map_err(|_| "Could not delete login from Keychain".to_string())
+            relay_extensions::mac::delete_login(&origin, username, path).map_err(keychain_message)
         }
     }
 }
@@ -395,6 +393,19 @@ mod imp {
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
             Ok(false)
         }
+    }
+}
+
+/// A Keychain failure the user can act on. Denied means they cancelled the
+/// system prompt; Unavailable means the item/keychain could not be used.
+#[cfg(target_os = "macos")]
+fn keychain_message(failure: relay_extensions::login::SaveFailure) -> String {
+    use relay_extensions::login::SaveFailure;
+    match failure {
+        SaveFailure::Denied => "Keychain access was denied".to_string(),
+        SaveFailure::Unavailable => "The Keychain is unavailable".to_string(),
+        SaveFailure::InvalidItem => "That saved item is not a usable login".to_string(),
+        SaveFailure::Other => "The Keychain rejected the request".to_string(),
     }
 }
 

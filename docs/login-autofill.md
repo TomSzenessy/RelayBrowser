@@ -52,7 +52,8 @@ is an owner decision or a later issue, not an implicit part of #57.
   the capture helper compare against it, so a stale document or a page-world
   caller cannot answer for the current one.
 - Keychain failures distinguish **Denied** (user cancel/auth/interaction) from
-  **Unavailable**; a denied read is not retried against another path. Find's
+  **Unavailable**; a denied read is not retried against another path and the
+  banner says "Keychain access was denied" rather than a generic failure. Find's
   case mode, PDF export, and the native find callback are unrelated to this
   path.
 - Relay records the logins it writes (host, user, path) in the profile. The
