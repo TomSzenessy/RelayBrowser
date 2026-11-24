@@ -14,8 +14,10 @@ use crate::theme::{AccentChoice, Theme, ThemeChoice};
 use crate::web::{EditAction, WebEvent, WebHost};
 use crate::webapp;
 use gpui::{
-    actions, canvas, div, img, prelude::*, px, Bounds, ClipboardItem, Context, FocusHandle, Image, ImageFormat,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, Pixels, SharedString, Window,
+    actions, canvas, div, fill, img, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, DispatchPhase,
+    Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, GlobalElementId, Hsla, Image, ImageFormat,
+    InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem, MouseButton, MouseDownEvent, Pixels, ShapedLine,
+    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
 use relay_extensions::store::{SessionTab, Store, WebAppRecord};
@@ -23,6 +25,7 @@ use relay_webkit::downloads::FOLDER_LABEL;
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -307,6 +310,14 @@ pub struct RelayApp {
     shortcuts: Option<ShortcutEditor>,
     keymap: Keymap,
     palette: Option<Palette>,
+    /// True when the palette text element installed an IME input handler this
+    /// frame. Printable keys then go through that handler instead of
+    /// `key_char`, so composition is not swallowed and text is not inserted
+    /// twice.
+    palette_input_active: bool,
+    /// Last shaped query line and bounds, used by `EntityInputHandler` for the
+    /// IME candidate window and hit testing.
+    palette_metrics: Rc<RefCell<Option<PaletteTextMetrics>>>,
     /// ⌘T opens the palette for a new tab; ⌘K/⌘L target the current tab.
     palette_new_tab: bool,
     settings_open: bool,
@@ -382,6 +393,190 @@ pub struct RelayApp {
     /// Second click on "Remove This Site's App" within the toast window
     /// actually deletes the bundle.
     pending_remove_app: Option<(String, Instant)>,
+}
+
+/// The last shaped palette line and its window bounds. The input handler uses
+/// it to place the IME candidate window and to map clicks to character
+/// indices without re-shaping outside paint.
+#[derive(Clone)]
+struct PaletteTextMetrics {
+    line: ShapedLine,
+    bounds: Bounds<Pixels>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    cursor: Pixels,
+}
+
+struct PaletteTextPrepaint {
+    line: ShapedLine,
+    cursor: Pixels,
+    selection: Option<(Pixels, Pixels)>,
+}
+
+/// Split the query into text runs so the IME-marked range can be underlined
+/// without changing the rest of the line. Lengths are UTF-8 bytes, as
+/// `TextRun` expects.
+fn palette_text_runs(query: &str, marked: Option<Range<usize>>, base: &TextRun, accent: Hsla) -> Vec<TextRun> {
+    let Some(marked) = marked.filter(|range| {
+        range.start < range.end
+            && range.end <= query.len()
+            && query.is_char_boundary(range.start)
+            && query.is_char_boundary(range.end)
+    }) else {
+        return vec![base.clone()];
+    };
+    let mut runs = Vec::with_capacity(3);
+    if marked.start > 0 {
+        runs.push(TextRun { len: marked.start, ..base.clone() });
+    }
+    runs.push(TextRun {
+        len: marked.end - marked.start,
+        underline: Some(UnderlineStyle { thickness: px(1.), color: Some(accent), wavy: false }),
+        ..base.clone()
+    });
+    if marked.end < query.len() {
+        runs.push(TextRun { len: query.len() - marked.end, ..base.clone() });
+    }
+    runs.retain(|run| run.len > 0);
+    runs
+}
+
+/// The palette query as a real text element instead of one div per character.
+/// It shapes the line, renders the caret/selection/marked underline, installs
+/// the platform `InputHandler` during paint, and maps clicks back to the
+/// palette's byte cursor.
+struct PaletteTextElement {
+    app: Entity<RelayApp>,
+    focus: FocusHandle,
+    theme: Theme,
+    metrics: Rc<RefCell<Option<PaletteTextMetrics>>>,
+    query: SharedString,
+    cursor: usize,
+    selection: Option<(usize, usize)>,
+    marked: Option<Range<usize>>,
+}
+
+impl IntoElement for PaletteTextElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for PaletteTextElement {
+    type RequestLayoutState = ();
+    type PrepaintState = PaletteTextPrepaint;
+
+    fn id(&self) -> Option<ElementId> {
+        Some(ElementId::Name("palette-text".into()))
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = window.line_height().into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+        let placeholder = self.query.is_empty();
+        let text: SharedString = if placeholder { "Search or enter address…".into() } else { self.query.clone() };
+
+        let mut style = window.text_style();
+        style.font_family = ".SystemUIFont".into();
+        style.font_size = px(15.).into();
+        style.color = if placeholder { self.theme.muted } else { self.theme.text };
+        let base = TextRun {
+            len: text.len(),
+            font: style.font(),
+            color: style.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let runs = palette_text_runs(&self.query, self.marked.clone(), &base, self.theme.accent);
+        let line = window.text_system().shape_line(text, style.font_size.to_pixels(window.rem_size()), &runs, None);
+        let cursor = if placeholder { px(0.) } else { line.x_for_index(self.cursor.min(self.query.len())) };
+        let selection = if placeholder {
+            None
+        } else {
+            self.selection.map(|(start, end)| (line.x_for_index(start), line.x_for_index(end)))
+        };
+        *self.metrics.borrow_mut() = Some(PaletteTextMetrics { line: line.clone(), bounds, cursor });
+        PaletteTextPrepaint { line, cursor, selection }
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let focused = self.focus.is_focused(window);
+        if focused {
+            window.handle_input(&self.focus, ElementInputHandler::new(bounds, self.app.clone()), cx);
+        }
+        self.app.update(cx, |app, _| app.palette_input_active = focused);
+
+        if let Some((start, end)) = prepaint.selection.take() {
+            window.paint_quad(fill(
+                Bounds::new(point(bounds.left() + start, bounds.top()), size((end - start).max(px(1.)), bounds.size.height)),
+                self.theme.active,
+            ));
+        }
+        prepaint.line.paint(bounds.origin, bounds.size.height, window, cx).ok();
+        if focused {
+            window.paint_quad(fill(
+                Bounds::new(point(bounds.left() + prepaint.cursor, bounds.top()), size(px(1.5), px(18.))),
+                self.theme.accent,
+            ));
+        }
+
+        let app = self.app.clone();
+        let metrics = self.metrics.clone();
+        let hit_bounds = bounds;
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, _window, cx| {
+            if phase != DispatchPhase::Bubble || event.button != MouseButton::Left || !hit_bounds.contains(&event.position) {
+                return;
+            }
+            let byte = {
+                let metrics = metrics.borrow();
+                let Some(metrics) = metrics.as_ref() else { return };
+                metrics
+                    .line
+                    .index_for_x(event.position.x - metrics.bounds.left())
+                    .unwrap_or_else(|| metrics.line.len())
+            };
+            app.update(cx, |app, cx| {
+                if let Some(palette) = app.palette.as_mut() {
+                    palette.set_cursor(byte, event.modifiers.shift);
+                }
+                cx.notify();
+            });
+        });
+    }
 }
 
 impl RelayApp {
@@ -467,6 +662,8 @@ impl RelayApp {
             shortcuts: None,
             keymap,
             palette: None,
+            palette_input_active: false,
+            palette_metrics: Rc::default(),
             palette_new_tab: false,
             settings_open: false,
             blocking,
@@ -1573,8 +1770,8 @@ impl RelayApp {
                 .collect(),
             bookmarks: self.store.as_ref().and_then(|s| s.bookmarks().ok()).unwrap_or_default().into_iter().map(|b| (b.title, b.url)).collect(),
         };
-        let mut p = Palette { query: prefill.unwrap_or_default(), custom_bangs: self.custom_bangs.clone(), ..Default::default() };
-        p.cursor = p.query.len();
+        let mut p = Palette { custom_bangs: self.custom_bangs.clone(), ..Default::default() };
+        p.set_query(prefill.unwrap_or_default());
         p.refresh(&self.sources, &self.search);
         self.palette = Some(p);
         self.web.borrow().focus_shell();
@@ -2028,6 +2225,7 @@ impl RelayApp {
             }
             return;
         }
+        let input_active = self.palette_input_active;
         let Some(p) = self.palette.as_mut() else { return };
         match k.key.as_str() {
             "escape" => self.close_palette(),
@@ -2057,6 +2255,13 @@ impl RelayApp {
                 p.refresh(&self.sources, &self.search);
             }
             _ => {
+                // With the platform input handler installed, printable keys
+                // must reach NSTextInputClient so composition works; inserting
+                // key_char here would both swallow the IME and double-insert
+                // the committed text.
+                if input_active {
+                    return;
+                }
                 if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
                     p.insert(c);
                     p.refresh(&self.sources, &self.search);
@@ -3239,36 +3444,16 @@ impl RelayApp {
                     .child(div().text_size(px(12.)).text_color(t.muted).child(SharedString::from(custom_key))),
             );
         }
-        let cursor_el = || div().w(px(1.5)).h(px(18.)).bg(t.accent);
-        let selection = p.selection();
-        let mut query_row = div().flex().items_center().whitespace_nowrap();
-        if p.query.is_empty() {
-            query_row = query_row.child(cursor_el()).child("Search or enter address…");
-        } else {
-            for (start, ch) in p.query.char_indices() {
-                if p.cursor == start {
-                    query_row = query_row.child(cursor_el());
-                }
-                let end = start + ch.len_utf8();
-                let selected = selection.is_some_and(|(s, e)| start >= s && start < e);
-                query_row = query_row.child(
-                    div()
-                        .id(("pal-char", start))
-                        .when(selected, |d| d.bg(t.active))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |app, _, _, cx| {
-                            if let Some(p) = app.palette.as_mut() {
-                                p.set_cursor(end, false);
-                            }
-                            cx.notify();
-                        }))
-                        .child(SharedString::from(ch.to_string())),
-                );
-            }
-            if p.cursor == p.query.len() {
-                query_row = query_row.child(cursor_el());
-            }
-        }
+        let query_row = div().flex_1().h_full().overflow_hidden().child(PaletteTextElement {
+            app: cx.entity(),
+            focus: self.focus.clone(),
+            theme: t,
+            metrics: self.palette_metrics.clone(),
+            query: p.query.clone().into(),
+            cursor: p.cursor,
+            selection: p.selection(),
+            marked: p.marked.clone(),
+        });
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
             div()
                 .id("palette")
@@ -3294,8 +3479,6 @@ impl RelayApp {
                         .px_4()
                         .border_b_1()
                         .border_color(t.border)
-                        .text_size(px(15.))
-                        .text_color(if p.query.is_empty() { t.muted } else { t.text })
                         .child(query_row),
                 )
                 .child(list),
@@ -4261,8 +4444,126 @@ impl RelayApp {
     }
 }
 
+impl EntityInputHandler for RelayApp {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let palette = self.palette.as_ref()?;
+        let start = palette::utf16_to_byte(&palette.query, range_utf16.start);
+        let end = palette::utf16_to_byte(&palette.query, range_utf16.end);
+        let start = start.min(end);
+        let end = end.max(start);
+        *adjusted_range = Some(palette::byte_to_utf16(&palette.query, start)..palette::byte_to_utf16(&palette.query, end));
+        Some(palette.query[start..end].to_string())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let palette = self.palette.as_ref()?;
+        let (start, end) = palette.selection().unwrap_or((palette.cursor, palette.cursor));
+        Some(UTF16Selection {
+            range: palette::byte_to_utf16(&palette.query, start)..palette::byte_to_utf16(&palette.query, end),
+            reversed: palette.anchor.is_some_and(|anchor| anchor > palette.cursor),
+        })
+    }
+
+    fn marked_text_range(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Range<usize>> {
+        let palette = self.palette.as_ref()?;
+        palette
+            .marked
+            .as_ref()
+            .map(|range| palette::byte_to_utf16(&palette.query, range.start)..palette::byte_to_utf16(&palette.query, range.end))
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(palette) = self.palette.as_mut() {
+            palette.unmark();
+            cx.notify();
+        }
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(palette) = self.palette.as_mut() else { return };
+        let range = palette.replacement_range(range_utf16);
+        palette.replace_range(range, text);
+        palette.refresh(&self.sources, &self.search);
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(palette) = self.palette.as_mut() else { return };
+        let range = palette.replacement_range(range_utf16);
+        palette.replace_and_mark(range, new_text, new_selected_range);
+        palette.refresh(&self.sources, &self.search);
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        _element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let palette = self.palette.as_ref()?;
+        let metrics = self.palette_metrics.borrow();
+        let metrics = metrics.as_ref()?;
+        let start = palette::utf16_to_byte(&palette.query, range_utf16.start).min(palette.query.len());
+        let end = palette::utf16_to_byte(&palette.query, range_utf16.end).min(palette.query.len());
+        let start_x = metrics.line.x_for_index(start.min(end));
+        let end_x = metrics.line.x_for_index(end.max(start));
+        Some(Bounds::new(
+            point(metrics.bounds.left() + start_x, metrics.bounds.top()),
+            size((end_x - start_x).max(px(1.)), metrics.bounds.size.height),
+        ))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let palette = self.palette.as_ref()?;
+        let metrics = self.palette_metrics.borrow();
+        let metrics = metrics.as_ref()?;
+        let x = point.x - metrics.bounds.left();
+        let byte = if x <= px(0.) {
+            0
+        } else {
+            metrics.line.index_for_x(x).unwrap_or_else(|| metrics.line.len())
+        };
+        Some(palette::byte_to_utf16(&palette.query, byte.min(palette.query.len())))
+    }
+}
+
 impl Render for RelayApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.palette_input_active = false;
+        if self.palette.is_some() && !self.focus.is_focused(window) {
+            window.focus(&self.focus);
+        }
         self.theme = Theme::for_choice(window.appearance(), self.theme_choice, self.accent_choice);
         let title = if self.title_cache.0 == self.seen_version {
             self.title_cache.1.clone()
@@ -5077,5 +5378,259 @@ mod tests {
         assert_eq!(shorten_home("/Users/other/x", "/Users/u"), "/Users/other/x");
         assert_eq!(shorten_home("/Users/u2/x", "/Users/u"), "/Users/u2/x", "a shared prefix is not the home directory");
         assert_eq!(shorten_home("/tmp/a", ""), "/tmp/a");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn test_app(cx: &mut gpui::TestAppContext) -> gpui::WindowHandle<RelayApp> {
+        let (_requests, requests_rx) = tokio::sync::mpsc::unbounded_channel();
+        cx.add_window(move |window, cx| {
+            RelayApp::new(SharedHub::new(), requests_rx, None, "test".into(), true, None, None, window, cx)
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn key_event(key: &str) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: gpui::Keystroke {
+                key: key.into(),
+                key_char: (key.chars().count() == 1).then(|| key.into()),
+                ..Default::default()
+            },
+            is_held: false,
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn palette_edit_actions_select_copy_and_cut(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, _window, cx| {
+                app.open_palette(Some("hello world".into()), false);
+                app.apply_edit(EditAction::SelectAll, cx);
+                assert_eq!(app.palette.as_ref().unwrap().selection(), Some((0, 11)));
+                app.apply_edit(EditAction::Copy, cx);
+            })
+            .unwrap();
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("hello world"));
+
+        window
+            .update(cx, |app, _window, cx| {
+                app.open_palette(Some("abc".into()), false);
+                if let Some(p) = app.palette.as_mut() {
+                    p.set_cursor(1, false);
+                    p.set_cursor(3, true);
+                }
+                app.apply_edit(EditAction::Cut, cx);
+                let p = app.palette.as_ref().unwrap();
+                assert_eq!((p.query.as_str(), p.cursor), ("a", 1));
+            })
+            .unwrap();
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("bc"));
+    }
+
+    #[test]
+    fn marked_text_run_is_underlined_without_changing_other_bytes() {
+        let base = TextRun {
+            len: 9,
+            font: gpui::font(".SystemUIFont"),
+            color: gpui::black().into(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let runs = palette_text_runs("日本語", Some(0..3), &base, gpui::blue().into());
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].len, 3);
+        assert!(runs[0].underline.is_some(), "only the marked range is underlined");
+        assert_eq!(runs[1].len, 6);
+        assert!(runs[1].underline.is_none());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn ime_replacement_tracks_utf16_and_marked_range(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, window, cx| {
+                app.open_palette(Some("ab".into()), false);
+                app.replace_and_mark_text_in_range(Some(0..2), "日本", Some(1..2), window, cx);
+                {
+                    let palette = app.palette.as_ref().unwrap();
+                    assert_eq!(palette.query, "日本");
+                    assert_eq!(palette.marked, Some(0..6));
+                    assert_eq!(palette.selected_text().as_deref(), Some("本"));
+                }
+                let mut adjusted = None;
+                assert_eq!(app.text_for_range(0..2, &mut adjusted, window, cx).as_deref(), Some("日本"));
+                assert_eq!(adjusted, Some(0..2));
+                assert_eq!(app.marked_text_range(window, cx), Some(0..2));
+                let selection = app.selected_text_range(false, window, cx).unwrap();
+                assert_eq!((selection.range, selection.reversed), (1..2, false));
+
+                app.replace_text_in_range(Some(0..1), "X", window, cx);
+                let palette = app.palette.as_ref().unwrap();
+                assert_eq!(palette.query, "X本");
+                assert_eq!(palette.marked, None, "a normal commit clears the marked range");
+            })
+            .unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn palette_cursor_tracks_the_model_after_edits(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, _window, cx| {
+                app.open_palette(Some("ab".into()), false);
+                cx.notify();
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let before = window
+            .update(cx, |app, _window, _cx| {
+                let metrics = app.palette_metrics.borrow();
+                let metrics = metrics.as_ref().unwrap();
+                (metrics.cursor, metrics.line.x_for_index(2))
+            })
+            .unwrap();
+        assert_eq!(before.0, before.1, "the painted caret is at the model cursor");
+
+        window
+            .update(cx, |app, window, cx| {
+                app.replace_text_in_range(None, "c", window, cx);
+                cx.notify();
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |app, _window, _cx| {
+                let palette = app.palette.as_ref().unwrap();
+                assert_eq!((palette.query.as_str(), palette.cursor), ("abc", 3));
+                let metrics = app.palette_metrics.borrow();
+                let metrics = metrics.as_ref().unwrap();
+                assert_eq!(metrics.cursor, metrics.line.x_for_index(3), "the caret moved with the second edit");
+                assert!(metrics.cursor > px(0.));
+            })
+            .unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn palette_render_installs_the_input_handler(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, _window, cx| {
+                app.open_palette(Some("a".into()), false);
+                cx.notify();
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |app, window, cx| {
+                assert!(app.palette_input_active, "the palette text element must install the IME handler during paint");
+                let bounds = app
+                    .bounds_for_range(0..1, gpui::Bounds::default(), window, cx)
+                    .expect("the painted line must position the IME candidate window");
+                assert!(bounds.size.width > px(0.));
+                assert!(app.character_index_for_point(gpui::point(bounds.origin.x + px(1.), bounds.origin.y + px(1.)), window, cx).is_some());
+            })
+            .unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn palette_shortcuts_select_copy_and_cut(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, _window, cx| {
+                app.open_palette(Some("hello world".into()), false);
+                cx.notify();
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let mut visual = gpui::VisualTestContext::from_window(*window, cx);
+
+        visual.simulate_keystrokes("secondary-a");
+        window
+            .update(cx, |app, _window, _cx| {
+                assert_eq!(app.palette.as_ref().unwrap().selection(), Some((0, 11)));
+            })
+            .unwrap();
+        visual.simulate_keystrokes("secondary-c");
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("hello world"));
+
+        visual.simulate_keystrokes("secondary-x");
+        window
+            .update(cx, |app, _window, _cx| {
+                let palette = app.palette.as_ref().unwrap();
+                assert_eq!(palette.query, "");
+                assert_eq!(palette.cursor, 0);
+            })
+            .unwrap();
+        assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("hello world"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn palette_click_places_the_cursor_at_the_shaped_position(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, _window, cx| {
+                app.open_palette(Some("abc".into()), false);
+                cx.notify();
+            })
+            .unwrap();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let (bounds, x) = window
+            .update(cx, |app, _window, _cx| {
+                let metrics = app.palette_metrics.borrow();
+                let metrics = metrics.as_ref().expect("palette must have painted");
+                (metrics.bounds, metrics.line.x_for_index(2) - px(0.5))
+            })
+            .unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(*window, cx);
+        visual.simulate_click(point(bounds.left() + x, bounds.top() + px(4.)), gpui::Modifiers::default());
+        window
+            .update(cx, |app, _window, _cx| {
+                assert_eq!(app.palette.as_ref().unwrap().cursor, 1, "clicking between b and c places the caret there");
+            })
+            .unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn active_input_handler_owns_printable_keys(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, window, cx| {
+                app.open_palette(Some("a".into()), false);
+                app.palette_input_active = true;
+                app.on_key(&key_event("b"), window, cx);
+                assert_eq!(app.palette.as_ref().unwrap().query, "a", "key_char must not be inserted when the IME handler owns text");
+            })
+            .unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn closed_palette_does_not_consume_editing_keys(cx: &mut gpui::TestAppContext) {
+        let window = test_app(cx);
+        window
+            .update(cx, |app, window, cx| {
+                let tab = app.hub.update(|hub| hub.create_tab("https://example.test/", Owner::User));
+                app.hub.update(|hub| hub.set_active(tab));
+                app.on_key(&key_event("left"), window, cx);
+                app.on_key(&key_event("backspace"), window, cx);
+                app.on_key(&key_event("a"), window, cx);
+                assert!(app.palette.is_none(), "closed palette must not be opened by editing keys");
+                assert!(app.hints.is_none());
+            })
+            .unwrap();
     }
 }

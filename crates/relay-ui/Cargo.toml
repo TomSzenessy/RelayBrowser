@@ -29,3 +29,8 @@ raw-window-handle = "0.6"
 [dev-dependencies]
 relay-extensions = { workspace = true, features = ["test-support"] }
 tempfile = "3"
+
+[target.'cfg(not(target_os = "macos"))'.dev-dependencies]
+# GPUI's TestWindow has no AppKit window; app-level render tests run on Linux.
+# The macOS palette check is the manual input-source observation in #14.
+gpui = { workspace = true, features = ["test-support"] }

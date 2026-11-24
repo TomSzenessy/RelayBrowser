@@ -4,6 +4,7 @@
 
 use crate::keymap::{self, ActionId};
 use relay_bridge::TabId;
+use std::ops::Range;
 
 pub const DEFAULT_SEARCH: &str = "https://duckduckgo.com/?q=%s";
 
@@ -265,8 +266,53 @@ pub struct Palette {
     pub anchor: Option<usize>,
     pub selected: usize,
     pub items: Vec<Item>,
+    /// Byte range of text the IME is currently composing, if any. Always on
+    /// character boundaries. Rendering underlines this range; the platform
+    /// maps it to/from UTF-16 through the helpers below.
+    pub marked: Option<Range<usize>>,
     /// User-defined `(trigger, template-with-%s)` bangs; override built-ins.
     pub custom_bangs: Vec<(String, String)>,
+}
+
+/// Map a UTF-16 offset (the platform/IME unit) to a UTF-8 byte offset on a
+/// character boundary. An offset inside a surrogate pair or inside a
+/// multi-byte character floors to that character's start.
+pub fn utf16_to_byte(text: &str, utf16: usize) -> usize {
+    let mut units = 0;
+    for (byte, ch) in text.char_indices() {
+        if units >= utf16 {
+            return byte;
+        }
+        units += ch.len_utf16();
+        if units > utf16 {
+            return byte;
+        }
+    }
+    text.len()
+}
+
+/// Map a UTF-8 byte offset to the number of UTF-16 code units before it.
+/// An offset inside a multi-byte character floors to the character's start.
+pub fn byte_to_utf16(text: &str, byte: usize) -> usize {
+    let mut units = 0;
+    for (start, ch) in text.char_indices() {
+        if start >= byte {
+            return units;
+        }
+        if start + ch.len_utf8() > byte {
+            return units;
+        }
+        units += ch.len_utf16();
+    }
+    units
+}
+
+fn char_boundary(text: &str, mut byte: usize) -> usize {
+    byte = byte.min(text.len());
+    while byte > 0 && !text.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    byte
 }
 
 impl Palette {
@@ -274,7 +320,56 @@ impl Palette {
         self.query = query;
         self.cursor = self.query.len();
         self.anchor = None;
+        self.marked = None;
         self.selected = 0;
+    }
+
+    /// The platform range to replace: an explicit UTF-16 range, else the
+    /// marked text, else the selection/caret.
+    pub fn replacement_range(&self, range_utf16: Option<Range<usize>>) -> Range<usize> {
+        if let Some(range) = range_utf16 {
+            let start = utf16_to_byte(&self.query, range.start);
+            let end = utf16_to_byte(&self.query, range.end);
+            start.min(end)..start.max(end)
+        } else if let Some(marked) = &self.marked {
+            marked.clone()
+        } else {
+            let (start, end) = self.selection().unwrap_or((self.cursor, self.cursor));
+            start..end
+        }
+    }
+
+    /// Replace a byte range with `text` and return the inserted byte range.
+    /// This is the primitive behind both normal typing and IME replacement.
+    pub fn replace_range(&mut self, range: Range<usize>, text: &str) -> Range<usize> {
+        let start = char_boundary(&self.query, range.start);
+        let end = char_boundary(&self.query, range.end).max(start);
+        self.query.replace_range(start..end, text);
+        self.cursor = start + text.len();
+        self.anchor = None;
+        self.marked = None;
+        self.selected = 0;
+        start..self.cursor
+    }
+
+    /// Replace a range with IME-composed text and mark the replacement.
+    /// `selected` is relative to `text` in UTF-16 units.
+    pub fn replace_and_mark(&mut self, range: Range<usize>, text: &str, selected: Option<Range<usize>>) -> Range<usize> {
+        let inserted = self.replace_range(range, text);
+        if !text.is_empty() {
+            self.marked = Some(inserted.clone());
+        }
+        if let Some(selected) = selected {
+            let start = inserted.start + utf16_to_byte(text, selected.start);
+            let end = inserted.start + utf16_to_byte(text, selected.end);
+            self.cursor = end;
+            self.anchor = (start != end).then_some(start);
+        }
+        inserted
+    }
+
+    pub fn unmark(&mut self) {
+        self.marked = None;
     }
 
     pub fn selection(&self) -> Option<(usize, usize)> {
@@ -294,6 +389,7 @@ impl Palette {
     pub fn select_all(&mut self) {
         self.anchor = Some(0);
         self.cursor = self.query.len();
+        self.marked = None;
     }
 
     pub fn set_cursor(&mut self, cursor: usize, extend: bool) {
@@ -302,7 +398,8 @@ impl Palette {
         } else {
             self.anchor = None;
         }
-        self.cursor = cursor.min(self.query.len());
+        self.cursor = char_boundary(&self.query, cursor);
+        self.marked = None;
     }
 
     fn delete_selection(&mut self) -> bool {
@@ -310,6 +407,7 @@ impl Palette {
         self.query.replace_range(start..end, "");
         self.cursor = start;
         self.anchor = None;
+        self.marked = None;
         self.selected = 0;
         true
     }
@@ -324,15 +422,13 @@ impl Palette {
         self.query.clear();
         self.cursor = 0;
         self.anchor = None;
+        self.marked = None;
         self.selected = 0;
     }
 
     pub fn insert(&mut self, text: &str) {
-        self.delete_selection();
-        self.query.insert_str(self.cursor, text);
-        self.cursor += text.len();
-        self.anchor = None;
-        self.selected = 0;
+        let (start, end) = self.selection().unwrap_or((self.cursor, self.cursor));
+        self.replace_range(start..end, text);
     }
 
     pub fn backspace(&mut self) -> bool {
@@ -342,6 +438,7 @@ impl Palette {
         let Some((i, _)) = self.query[..self.cursor].char_indices().next_back() else { return false };
         self.query.remove(i);
         self.cursor = i;
+        self.marked = None;
         self.selected = 0;
         true
     }
@@ -354,10 +451,12 @@ impl Palette {
             return false;
         }
         self.query.remove(self.cursor);
+        self.marked = None;
         self.selected = 0;
         true
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn move_cursor(&mut self, delta: isize) {
         self.move_cursor_ext(delta, false, false);
     }
@@ -387,10 +486,12 @@ impl Palette {
         self.set_cursor(chars[next], extend);
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn cursor_home(&mut self) {
         self.set_cursor(0, false);
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn cursor_end(&mut self) {
         self.set_cursor(self.query.len(), false);
     }
@@ -528,6 +629,41 @@ mod tests {
         assert!(a > b);
         assert!(fuzzy_score("xyz", "GitHub").is_none());
         assert!(fuzzy_score("nt", "New Tab").unwrap() > fuzzy_score("nt", "Reopen Closed Tab").unwrap());
+    }
+
+    #[test]
+    fn utf16_offsets_handle_cjk_and_surrogate_pairs() {
+        let text = "aé中😀z";
+        assert_eq!(byte_to_utf16(text, 0), 0);
+        assert_eq!(byte_to_utf16(text, 2), 1, "inside é floors to its start");
+        assert_eq!(byte_to_utf16(text, 3), 2);
+        assert_eq!(byte_to_utf16(text, 6), 3);
+        assert_eq!(byte_to_utf16(text, 10), 5, "the emoji is two UTF-16 units");
+        assert_eq!(byte_to_utf16(text, 11), 6);
+        assert_eq!(utf16_to_byte(text, 2), 3);
+        assert_eq!(utf16_to_byte(text, 3), 6);
+        assert_eq!(utf16_to_byte(text, 4), 6, "inside a surrogate pair floors to the emoji's start");
+        assert_eq!(utf16_to_byte(text, 5), 10);
+        assert_eq!(utf16_to_byte(text, 6), 11);
+    }
+
+    #[test]
+    fn marked_replacement_tracks_utf16_ranges() {
+        let mut p = Palette::default();
+        p.set_query("ab".into());
+        p.select_all();
+        assert_eq!(p.replacement_range(None), 0..2, "selection is replaced when there is no marked text");
+        let inserted = p.replace_and_mark(0..2, "日本", Some(1..2));
+        assert_eq!(inserted, 0..6);
+        assert_eq!(p.query, "日本");
+        assert_eq!(p.marked, Some(0..6));
+        assert_eq!(p.cursor, 6);
+        assert_eq!(p.selection(), Some((3, 6)), "the relative UTF-16 selection becomes byte offsets");
+        assert_eq!(p.replacement_range(Some(0..1)), 0..3, "explicit UTF-16 ranges win over the marked range");
+        p.unmark();
+        assert_eq!(p.marked, None);
+        p.set_cursor(0, false);
+        assert_eq!(p.replacement_range(None), 0..0, "after unmark the caret is the replacement");
     }
 
     #[test]

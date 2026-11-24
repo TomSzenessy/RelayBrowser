@@ -32,6 +32,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   and `tabs_folded`.
 - **Palette:** one input with ranked rows (open tabs, history, bookmarks,
   commands). The first row is always "Open <typed URL>" or "Search <query>".
+  The query is a real text input: GPUI's platform handler supplies IME
+  composition, marked text is underlined, and the candidate window follows the
+  shaped line.
 - **Inspector:** a tab strip of four panels over monospace rows. Hovering an
   Elements row highlights the node in the page.
 - **Sidebar:** a 380 px right sidebar with **Agent** and **Inspector** tabs and

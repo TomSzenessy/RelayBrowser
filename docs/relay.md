@@ -540,11 +540,14 @@ The query has a byte-index cursor on a character boundary: ←/→/Home/End move
 it, ⌫ deletes the character before it, Delete removes the one after,
 Shift+←/→ extends a selection, Option+←/→ moves by word, ⌘A selects all,
 ⌘C/⌘X copy/cut, ⌘⌫/⌥⌫ clears all, pasted text replaces a selection, and
-clicking a character places the cursor. The caret and selection background are
-drawn at the model positions. `key_char` covers printable key events only. GPUI
-0.2.2 exposes macOS IME through `InputHandler`/`Window::handle_input`, but the
-palette installs no input handler: `on_key` reads `KeyDownEvent::key_char`, so
-composition and committed IME text do not reach the query (#14).
+clicking the shaped line places the cursor. The caret and selection background
+are drawn at the model positions. A custom text element calls
+`Window::handle_input` during paint and implements `EntityInputHandler`: IME
+marked text is stored as a byte range, underlined, and mapped to/from UTF-16;
+`bounds_for_range` positions the candidate window. `on_key` stops inserting
+`key_char` while that handler is active, so committed text is not duplicated.
+The real Japanese/Chinese input-source check on a Mac remains the external
+evidence for #14.
 
 ## Palette smart input
 
