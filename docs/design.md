@@ -248,6 +248,9 @@ Behaviour that is not a single action:
   the native web view never covers it, lists one button per saved account and
   a "Save password?" offer (Save/Replace / Not now). The list and Delete only
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
+- **Folder sync:** Settings → General can point at a Dropbox/iCloud folder;
+  launch merges the folder's profile file (local settings win) and the app
+  rewrites it immediately and every minute. **Sync now** merges on demand.
 - **Backup/restore:** Settings → General writes a private JSON export via a
   save panel and merges a chosen backup (local settings win; extensions and
   session tabs are not imported). `relay import FILE` does the same.

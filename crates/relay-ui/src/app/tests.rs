@@ -133,6 +133,12 @@ fn mru_cycle_wraps_and_falls_back_to_the_first() {
 }
 
 #[test]
+fn sync_file_names_are_profile_specific() {
+    assert_eq!(sync_file_name(""), "relay-profile-default.json");
+    assert_eq!(sync_file_name("Work"), "relay-profile-Work.json");
+}
+
+#[test]
 fn profile_names_are_short_and_directory_safe() {
     assert_eq!(profile_name("Work / Client"), "Work-Client");
     assert_eq!(profile_name("  personal  "), "personal");

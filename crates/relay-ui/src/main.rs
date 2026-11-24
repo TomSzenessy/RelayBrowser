@@ -345,6 +345,13 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             "off" => Ok("off".to_string()),
             _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
         },
+        "sync_folder" => {
+            let path = trimmed;
+            if !path.is_empty() && !path.starts_with('/') && !path.starts_with("~/") && path != "~" {
+                bail!("invalid sync_folder {value:?}: use an absolute path, ~/..., or empty to turn it off");
+            }
+            Ok(path.to_string())
+        }
         "downloads_dir" => {
             let path = trimmed;
             if path.is_empty() || (!path.starts_with('/') && !path.starts_with("~/") && path != "~") {
@@ -386,7 +393,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, sync_folder, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
     }
 }
 
@@ -419,6 +426,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("address_bar = {}", setting("address_bar", "off"));
             println!("tab_icons_only = {}", setting("tab_icons_only", "off"));
             println!("extension_toolbar = {}", setting("extension_toolbar", "on"));
+            println!("sync_folder = {}", setting("sync_folder", ""));
             println!("bookmarks_icons_only = {}", setting("bookmarks_icons_only", "off"));
             println!("bookmarks_new_tab_only = {}", setting("bookmarks_new_tab_only", "off"));
             println!("downloads_ask = {}", setting("downloads_ask", "off"));
@@ -448,6 +456,9 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                     println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
                 }
                 "compact_tabs" => println!("{}", store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).unwrap_or_else(|| "off".into())),
+                "sync_folder" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default())
+                }
                 "downloads_dir" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting("downloads_dir").ok().flatten()).unwrap_or_default())
                 }
@@ -456,7 +467,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 }
                 "bangs" => println!("{}", cfg.bangs),
                 "start_sections" => println!("{}", cfg.start_sections),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, sync_folder, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
             }
             Ok(())
         }

@@ -357,6 +357,9 @@ pub struct RelayApp {
     extension_toolbar: bool,
     /// Cached action icons from WebKit, keyed by extension id.
     ext_icons: HashMap<String, Arc<Image>>,
+    /// Optional shared folder for a merge-on-launch profile sync.
+    sync_folder: String,
+    last_sync: Instant,
     last_ext_icons: Instant,
     /// Host whose Site Card is open.
     site_card: Option<String>,
@@ -564,6 +567,7 @@ impl RelayApp {
         let show_address_bar = setting_on("address_bar");
         let tab_icons_only = setting_on("tab_icons_only");
         let extension_toolbar = setting_enabled(store.as_ref().and_then(|s| s.setting("extension_toolbar").ok().flatten()).as_deref());
+        let sync_folder = store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default();
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
         let bookmarks_new_tab_only = setting_on("bookmarks_new_tab_only");
         let collapsed_groups = store
@@ -648,6 +652,8 @@ impl RelayApp {
             tab_icons_only,
             extension_toolbar,
             ext_icons: HashMap::new(),
+            sync_folder,
+            last_sync: Instant::now(),
             last_ext_icons: Instant::now(),
             site_card: None,
             mru: Vec::new(),
@@ -727,6 +733,7 @@ impl RelayApp {
             app.session_enabled = false;
         } else {
             app.load_installed_extensions();
+            app.sync_profile_folder(true);
             app.restore_session();
         }
         let menus = match app_name.as_deref() {
@@ -1095,6 +1102,10 @@ impl RelayApp {
             cx.notify();
         }
         self.web.borrow_mut().poll_float_panel();
+        if !self.sync_folder.is_empty() && self.last_sync.elapsed() > Duration::from_secs(60) {
+            self.last_sync = Instant::now();
+            self.sync_profile_folder(false);
+        }
         if self.extension_toolbar && self.last_ext_icons.elapsed() > Duration::from_secs(2) {
             self.last_ext_icons = Instant::now();
             self.refresh_extension_icons();
@@ -2305,6 +2316,59 @@ impl RelayApp {
         if let Some(store) = &self.store {
             let _ = store.set_setting("active_space", self.hub.lock().current_space());
         }
+    }
+
+    /// Merge the shared folder's backup (local settings win), then write the
+    /// merged profile back. `import` is false for the periodic write.
+    fn sync_profile_folder(&mut self, import: bool) {
+        if self.sync_folder.is_empty() {
+            return;
+        }
+        let dir = std::path::PathBuf::from(&self.sync_folder);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let file = dir.join(sync_file_name(&self.profile_name));
+        let Some(store) = &self.store else { return };
+        if import && file.is_file() {
+            if let Ok(json) = std::fs::read_to_string(&file) {
+                let _ = store.import_export_json(&json);
+            }
+        }
+        if let Ok(json) = store.export_json() {
+            let _ = write_private_file(&file, json.as_bytes());
+        }
+    }
+
+    fn choose_sync_folder(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose a sync folder".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(Result::ok).flatten().and_then(|mut paths| paths.pop());
+            if let Some(path) = picked {
+                let _ = this.update(cx, |app, cx| {
+                    app.sync_folder = path.to_string_lossy().into_owned();
+                    if let Some(store) = &app.store {
+                        let _ = store.set_setting("sync_folder", &app.sync_folder);
+                    }
+                    app.sync_profile_folder(true);
+                    app.toast(format!("Syncing through {}", app.sync_folder));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn sync_now(&mut self, cx: &mut Context<Self>) {
+        self.sync_profile_folder(true);
+        self.last_sync = Instant::now();
+        self.toast(if self.sync_folder.is_empty() { "Choose a sync folder first" } else { "Profile synced" });
+        cx.notify();
     }
 
     fn backup_profile(&mut self, cx: &mut Context<Self>) {
@@ -4066,6 +4130,11 @@ pub(crate) fn profile_name(raw: &str) -> String {
         }
     }
     out.trim_matches('-').chars().take(32).collect()
+}
+
+/// Backup file name for a profile; Default gets an explicit suffix.
+pub(crate) fn sync_file_name(profile: &str) -> String {
+    if profile.is_empty() { "relay-profile-default.json".to_string() } else { format!("relay-profile-{profile}.json") }
 }
 
 /// Profile directories under the base home.

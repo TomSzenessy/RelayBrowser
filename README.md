@@ -28,7 +28,7 @@ Early development, built in the open. Honest evidence as of this commit:
 | Part | Evidence |
 |---|---|
 | Bridge (`js/bridge.js`) | Playwright WebKit 26.0 in Linux CI: 25 tests for DOM snapshots/patches, fetch/XHR bodies, console, errors, click/type/highlight, hints, 2FA detection, mute, and the async web-app manifest/icon and favicon ops |
-| Shared state, MCP server, Chrome import, CRX, rules, sleep, theme contrast, CLI | `cargo test --workspace` in CI (284 test functions), including the real `relay mcp` stdio proxy, `config`/`export`/`clear-data`/`doctor` CLI, and WCAG AA contrast tests |
+| Shared state, MCP server, Chrome import, CRX, rules, sleep, theme contrast, CLI | `cargo test --workspace` in CI (285 test functions), including the real `relay mcp` stdio proxy, `config`/`export`/`clear-data`/`doctor` CLI, and WCAG AA contrast tests |
 | macOS `WKWebView` engine + bridge | Type-checked for Apple Silicon (`scripts/mac-check.sh`); `.github/workflows/macos.yml` runs the workspace tests, real-WebKit `smoke` example, bridge suite, and `Relay.app` packaging on `macos-15` |
 | GPUI window | Builds and links on Linux CI and macOS CI; visual polish is still judged on a Mac |
 | `.app` bundle & DMG | `scripts/bundle-macos.sh` packages `Relay.app` (with `assets/AppIcon.icns`) and `Relay-macOS.dmg`; CI uploads both as artifacts and publishes `macos-latest` on GitHub Releases |
