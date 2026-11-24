@@ -658,6 +658,124 @@ impl RelayApp {
         )
     }
 
+    pub(super) fn render_profile_prompt(&self, prompt: &ProfilePrompt, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mut chips = div().flex().flex_wrap().gap_1();
+        let names = profile_names();
+        for name in &names {
+            if name == &self.profile_name {
+                continue;
+            }
+            let target = name.clone();
+            chips = chips.child(
+                div()
+                    .id(SharedString::from(format!("profile-pick-{name}")))
+                    .px_2()
+                    .py_1()
+                    .rounded(px(6.))
+                    .bg(t.background)
+                    .text_size(px(11.))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.profile_prompt = None;
+                        app.switch_profile(&target, cx);
+                    }))
+                    .child(SharedString::from(name.clone())),
+            );
+        }
+        if !self.profile_name.is_empty() {
+            chips = chips.child(
+                div()
+                    .id("profile-pick-default")
+                    .px_2()
+                    .py_1()
+                    .rounded(px(6.))
+                    .bg(t.background)
+                    .text_size(px(11.))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.profile_prompt = None;
+                        app.switch_profile("", cx);
+                    }))
+                    .child("Default"),
+            );
+        }
+        let text = if prompt.value.is_empty() { "New profile name".to_string() } else { prompt.value.clone() };
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(120.)).bg(t.scrim).child(
+            div()
+                .id("profile-prompt")
+                .w(px(420.))
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_5()
+                .rounded(px(12.))
+                .bg(t.raised)
+                .shadow_lg()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.close_profile_prompt();
+                    cx.notify();
+                }))
+                .child(div().text_size(px(15.)).text_color(t.text).child("Profiles"))
+                .child(div().text_size(px(11.)).text_color(t.muted).child("One profile per context. Switching relaunches Relay with that profile's tabs, cookies, logins, and extensions."))
+                .child(
+                    div()
+                        .h(px(34.))
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .rounded(px(8.))
+                        .bg(t.well)
+                        .text_size(px(13.))
+                        .text_color(if prompt.value.is_empty() { t.muted } else { t.text })
+                        .child(SharedString::from(text))
+                        .child(div().ml_0p5().text_color(t.accent).child("▏")),
+                )
+                .when(!names.is_empty(), |d| d.child(div().text_size(px(10.)).text_color(t.muted).child("EXISTING PROFILES")).child(chips))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1())
+                        .child(
+                            div()
+                                .id("profile-cancel")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(6.))
+                                .text_size(px(12.))
+                                .text_color(t.muted)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover).text_color(t.text))
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    app.close_profile_prompt();
+                                    cx.notify();
+                                }))
+                                .child("Cancel"),
+                        )
+                        .child(
+                            div()
+                                .id("profile-commit")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(6.))
+                                .bg(t.accent)
+                                .text_size(px(12.))
+                                .text_color(gpui::rgb(0xffffff))
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.9))
+                                .on_click(cx.listener(|app, _, _, cx| app.save_profile_prompt(cx)))
+                                .child("Create & switch"),
+                        ),
+                ),
+        )
+    }
+
     pub(super) fn render_space_prompt(&self, prompt: &SpacePrompt, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let current = self.hub.lock().current_space().to_string();
@@ -1250,7 +1368,13 @@ impl RelayApp {
                     );
                 }
 
+                let profile_btn = btn("settings-profile-switch", "Switch…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.open_profile_prompt(cx)))
+                    .into_any_element();
+                let profile_label = if self.profile_name.is_empty() { "Default".to_string() } else { self.profile_name.clone() };
                 let mut general_card = div().flex().flex_col();
+                general_card = general_card.child(row("Profile", Some("Each profile has its own tabs, data, logins, and extensions; switching relaunches Relay"), profile_btn));
+                general_card = general_card.child(row("Current profile", Some("The window's profile name"), div().text_size(px(12.)).text_color(t.text).child(SharedString::from(profile_label)).into_any_element()));
                 general_card = general_card.child(row("Search engine", Some("Used for non-URL queries in the ⌘K palette"), search_trigger));
                 if search_open {
                     general_card = general_card.child(search_menu);

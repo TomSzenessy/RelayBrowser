@@ -20,7 +20,7 @@ use objc2_app_kit::NSWorkspace;
 use objc2_media_player::{MPRemoteCommandCenter, MPRemoteCommandHandlerStatus};
 use objc2_foundation::{
     NSArray, NSBundle, NSData, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect,
-    NSSize, NSString, NSURL, NSURLRequest, NSURLResponse,
+    NSSize, NSString, NSURL, NSURLRequest, NSURLResponse, NSUUID,
 };
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKContentWorld, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo,
@@ -1106,6 +1106,8 @@ pub struct Engine {
     _media_targets: Vec<Retained<AnyObject>>,
     /// Session-level camera/microphone decisions for ordinary tabs.
     media_permissions: Rc<RefCell<HashMap<(String, i64), bool>>>,
+    /// Named-profile data store; `None` uses WebKit's default store.
+    profile_store: Option<Retained<WKWebsiteDataStore>>,
     downloads_dir: Rc<RefCell<std::path::PathBuf>>,
     downloads_ask: Rc<Cell<bool>>,
 }
@@ -1134,6 +1136,7 @@ impl Engine {
             media_key,
             _media_targets: media_targets,
             media_permissions: Rc::default(),
+            profile_store: None,
             downloads_dir: Rc::new(RefCell::new(default_download_folder())),
             downloads_ask: Rc::new(Cell::new(false)),
         }
@@ -1142,13 +1145,30 @@ impl Engine {
     /// Remove cookies, cache, and local storage for every site. Used by
     /// Settings → Privacy; completion is reported through `EngineEvent`.
     pub fn clear_site_data(&self) {
-        let store = unsafe { WKWebsiteDataStore::defaultDataStore(self.mtm) };
+        let store = match &self.profile_store {
+            Some(store) => store.clone(),
+            None => unsafe { WKWebsiteDataStore::defaultDataStore(self.mtm) },
+        };
         let types = unsafe { WKWebsiteDataStore::allWebsiteDataTypes(self.mtm) };
         let events = self.events.clone();
         let done = RcBlock::new(move || events(EngineEvent::SiteDataCleared));
         unsafe {
             store.removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done);
         }
+    }
+
+    /// Use a named profile's persistent website data store. The identifier is
+    /// a stable UUID string derived from the profile name by the shell.
+    pub fn set_profile_id(&mut self, id: &str) {
+        if !objc2::available!(macos = 14.0) {
+            eprintln!("relay: named profiles need macOS 14; using the default data store");
+            return;
+        }
+        let Some(uuid) = NSUUID::initWithUUIDString(NSUUID::alloc(), &NSString::from_str(id)) else {
+            eprintln!("relay: invalid profile data-store id; using the default store");
+            return;
+        };
+        self.profile_store = Some(unsafe { WKWebsiteDataStore::dataStoreForIdentifier(&uuid, self.mtm) });
     }
 
     /// Choose where downloads go and whether each one asks first.
@@ -1363,6 +1383,8 @@ impl Engine {
             if private {
                 let ephemeral = WKWebsiteDataStore::nonPersistentDataStore(mtm);
                 config.setWebsiteDataStore(&ephemeral);
+            } else if let Some(store) = &self.profile_store {
+                config.setWebsiteDataStore(store);
             }
             let prefs = config.preferences();
             let yes = NSNumber::new_bool(true);

@@ -239,6 +239,10 @@ Behaviour that is not a single action:
   the native web view never covers it, lists one button per saved account and
   a "Save password?" offer (Save/Replace / Not now). The list and Delete only
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
+- **Profiles:** `relay --profile NAME` (or Settings → General → Profile →
+  Switch) gives a separate `RELAY_HOME` with its own tabs, settings, history,
+  logins, extensions, and MCP socket, plus a stable WebKit website-data store
+  UUID. Switching relaunches Relay; Default uses the base home.
 - **Spaces:** named tab sets with their own pins and session entries. The
   current space is a small pill at the top of the strip; ⌘⇧E opens the switcher
   (type a new name, pick an existing space, or rename the current one—merging

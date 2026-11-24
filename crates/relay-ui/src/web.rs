@@ -79,6 +79,9 @@ mod imp {
                     EngineEvent::LoginSaveOffer { tab, url, username } => WebEvent::LoginSaveOffer { tab, url, username },
                 })
             });
+            if let Ok(id) = std::env::var("RELAY_PROFILE_ID") {
+                engine.set_profile_id(&id);
+            }
             // WKWebExtension needs macOS 15.4+; older systems browse without extensions.
             if objc2::available!(macos = 15.4) {
                 engine.set_extension_controller(unsafe { objc2_web_kit::WKWebExtensionController::new(mtm) });

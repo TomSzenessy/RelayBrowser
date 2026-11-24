@@ -124,6 +124,15 @@ fn byte_size_reads_naturally() {
 }
 
 #[test]
+fn profile_names_are_short_and_directory_safe() {
+    assert_eq!(profile_name("Work / Client"), "Work-Client");
+    assert_eq!(profile_name("  personal  "), "personal");
+    assert_eq!(profile_name("a/b\\c"), "a-b-c");
+    assert!(profile_name("///").is_empty());
+    assert_eq!(profile_name(&"x".repeat(40)).len(), 32);
+}
+
+#[test]
 fn download_directory_setting_expands_home_and_rejects_relative() {
     let home = std::env::var("HOME").unwrap_or_default();
     assert_eq!(download_dir_setting(Some("/tmp/relay-downloads")), std::path::PathBuf::from("/tmp/relay-downloads"));

@@ -176,6 +176,11 @@ struct SpacePrompt {
     confirm_delete: bool,
 }
 
+/// The modal that names a profile or picks an existing one.
+struct ProfilePrompt {
+    value: String,
+}
+
 struct FindBar {
     tab: TabId,
     query: String,
@@ -348,6 +353,9 @@ pub struct RelayApp {
     tab_icons_only: bool,
     /// Host whose Site Card is open.
     site_card: Option<String>,
+    /// Current named profile (empty is Default).
+    profile_name: String,
+    profile_prompt: Option<ProfilePrompt>,
     /// Bookmarks bar shows only site icons.
     bookmarks_icons_only: bool,
     /// Bookmarks bar appears only on the new-tab page.
@@ -629,6 +637,8 @@ impl RelayApp {
             show_address_bar,
             tab_icons_only,
             site_card: None,
+            profile_name: std::env::var("RELAY_PROFILE").unwrap_or_default(),
+            profile_prompt: None,
             bookmarks_icons_only,
             bookmarks_new_tab_only,
             always_show_close,
@@ -2013,6 +2023,59 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn open_profile_prompt(&mut self, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.profile_prompt = Some(ProfilePrompt { value: String::new() });
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_profile_prompt(&mut self) {
+        self.profile_prompt = None;
+        self.focus_active_page();
+    }
+
+    fn switch_profile(&mut self, name: &str, cx: &mut Context<Self>) {
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                self.toast(format!("Could not relaunch: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        let mut cmd = std::process::Command::new(exe);
+        if name.is_empty() {
+            // Default lives at the base home, not inside profiles/.
+            if let Some(base) = std::env::var_os("RELAY_BASE_HOME") {
+                cmd.env("RELAY_HOME", base);
+            } else {
+                cmd.env_remove("RELAY_HOME");
+            }
+            cmd.env_remove("RELAY_PROFILE").env_remove("RELAY_PROFILE_ID");
+        } else {
+            cmd.arg("--profile").arg(name);
+        }
+        match cmd.spawn() {
+            Ok(_) => cx.quit(),
+            Err(e) => {
+                self.toast(format!("Could not open profile: {e}"));
+                cx.notify();
+            }
+        }
+    }
+
+    fn save_profile_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(prompt) = self.profile_prompt.take() else { return };
+        let name = profile_name(&prompt.value);
+        if name.is_empty() {
+            self.toast("Enter a profile name");
+            cx.notify();
+            return;
+        }
+        self.switch_profile(&name, cx);
+    }
+
     fn open_site_card(&mut self, host: String) {
         self.site_card = Some(host);
         self.web.borrow().focus_shell();
@@ -2766,6 +2829,29 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.profile_prompt.is_some() {
+            match k.key.as_str() {
+                "escape" => self.close_profile_prompt(),
+                "enter" => self.save_profile_prompt(cx),
+                "backspace" => {
+                    if let Some(prompt) = self.profile_prompt.as_mut() {
+                        prompt.value.pop();
+                    }
+                }
+                _ => {
+                    if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                        if let Some(prompt) = self.profile_prompt.as_mut() {
+                            if prompt.value.chars().count() < 32 {
+                                prompt.value.push_str(c);
+                            }
+                        }
+                    }
+                }
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.site_card.is_some() && k.key.as_str() == "escape" {
             self.close_site_card();
             cx.stop_propagation();
@@ -3657,6 +3743,9 @@ impl Render for RelayApp {
         if let Some(prompt) = &self.space_prompt {
             root = root.child(self.render_space_prompt(prompt, cx));
         }
+        if let Some(prompt) = &self.profile_prompt {
+            root = root.child(self.render_profile_prompt(prompt, cx));
+        }
         if let Some(host) = &self.site_card {
             root = root.child(self.render_site_card(host, cx));
         }
@@ -3784,6 +3873,36 @@ fn human_bytes(bytes: u64) -> String {
 
 /// Parse the comma-separated `collapsed_groups` setting. Names cannot contain
 /// commas (the hub normalizer maps them to spaces), so splitting is stable.
+/// Safe profile directory name: letters/digits/-/_ only, 32 chars.
+pub(crate) fn profile_name(raw: &str) -> String {
+    let mut out = String::new();
+    for c in raw.trim().chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else if (c.is_whitespace() || c == '/' || c == '\\') && !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').chars().take(32).collect()
+}
+
+/// Profile directories under the base home.
+pub(crate) fn profile_names() -> Vec<String> {
+    let base = std::env::var_os("RELAY_BASE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("RELAY_HOME").map(std::path::PathBuf::from))
+        .unwrap_or_else(relay_bridge::paths::relay_home);
+    let mut names: Vec<String> = std::fs::read_dir(base.join("profiles"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
 /// Expand `~/...` and fall back to `~/Downloads/Relay` for an empty/invalid
 /// setting.
 pub(crate) fn download_dir_setting(raw: Option<&str>) -> std::path::PathBuf {

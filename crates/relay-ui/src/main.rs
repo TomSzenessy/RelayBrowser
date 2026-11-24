@@ -25,6 +25,7 @@ const HELP: &str = "relay — keyboard-first WebKit browser with a built-in MCP 
 
 USAGE:
   relay [URL]                       open the browser (optionally at URL)
+  relay --profile NAME [URL]        open a separate named profile (own tabs/data/login state)
   relay --app URL                   open URL as a single-page web app window (used by installed apps)
   relay mcp                         stdio MCP server for agents (connects to the running browser)
   relay config [list | get KEY | set KEY VALUE]
@@ -72,9 +73,70 @@ fn install_panic_log() {
     }));
 }
 
+/// Consume a leading `--profile NAME` / `--profile=NAME`. The subcommand
+/// `import-chrome --profile DIR` owns its own flag and is left alone.
+fn take_profile_flag(args: &mut Vec<String>) -> anyhow::Result<Option<String>> {
+    let Some(first) = args.first() else { return Ok(None) };
+    let name = if first == "--profile" {
+        if args.len() < 2 {
+            bail!("--profile needs a name");
+        }
+        args.remove(0);
+        args.remove(0)
+    } else if let Some(name) = first.strip_prefix("--profile=") {
+        let name = name.to_string();
+        args.remove(0);
+        name
+    } else {
+        return Ok(None);
+    };
+    let name = normalize_profile_name(&name);
+    if name.is_empty() {
+        bail!("profile name must contain a letter, digit, '-' or '_'");
+    }
+    Ok(Some(name))
+}
+
+fn normalize_profile_name(raw: &str) -> String {
+    let mut out = String::new();
+    for c in raw.trim().chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else if c.is_whitespace() || c == '/' || c == '\\' {
+            if !out.ends_with('-') && !out.is_empty() {
+                out.push('-');
+            }
+        }
+    }
+    out.trim_matches('-').chars().take(32).collect()
+}
+
+/// Give a named profile its own `RELAY_HOME` (tabs, settings, extensions,
+/// MCP socket) and a stable WebKit data-store UUID (cookies, cache, logins).
+fn apply_profile(name: &str) -> anyhow::Result<()> {
+    let base = std::env::var_os("RELAY_BASE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("RELAY_HOME").map(std::path::PathBuf::from))
+        .unwrap_or_else(relay_bridge::paths::relay_home);
+    let home = base.join("profiles").join(name);
+    std::fs::create_dir_all(&home)?;
+    // SAFETY: called once at process start, before any worker thread exists.
+    unsafe {
+        std::env::set_var("RELAY_BASE_HOME", &base);
+        std::env::set_var("RELAY_HOME", &home);
+        std::env::set_var("RELAY_PROFILE", name);
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes());
+        std::env::set_var("RELAY_PROFILE_ID", id.to_string());
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(name) = take_profile_flag(&mut args)? {
+        apply_profile(&name)?;
+    }
     install_panic_log();
-    let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("-h" | "--help" | "help") => {
             println!("{HELP}");
@@ -791,4 +853,22 @@ fn run_browser(initial_url: Option<String>, app_mode: bool, app_name: Option<Str
         }
         cx.activate(true);
     });
+}
+
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    #[test]
+    fn profile_flag_is_consumed_only_when_leading() {
+        let mut args = vec!["--profile".to_string(), "Work / A".to_string(), "export".to_string()];
+        assert_eq!(take_profile_flag(&mut args).unwrap().as_deref(), Some("Work-A"));
+        assert_eq!(args, vec!["export"]);
+        let mut args = vec!["import-chrome".to_string(), "--profile".to_string(), "/tmp/chrome".to_string()];
+        assert_eq!(take_profile_flag(&mut args).unwrap(), None);
+        assert_eq!(args, vec!["import-chrome", "--profile", "/tmp/chrome"]);
+        let mut args = vec!["--profile=Personal".to_string()];
+        assert_eq!(take_profile_flag(&mut args).unwrap().as_deref(), Some("Personal"));
+    }
 }
