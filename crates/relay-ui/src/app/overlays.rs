@@ -690,6 +690,26 @@ impl RelayApp {
         let text = if prompt.value.is_empty() { "New space name".to_string() } else { prompt.value.clone() };
         let wanted = super::Hub::normalize_space_name(&prompt.value).unwrap_or_default();
         let can_rename = !current.is_empty() && !wanted.is_empty() && wanted != current;
+        let can_delete = !current.is_empty();
+        let delete_label = if prompt.confirm_delete { "Confirm delete" } else { "Delete space" };
+        let delete_btn = div()
+            .id("space-delete")
+            .px_3()
+            .py_1p5()
+            .rounded(px(6.))
+            .text_size(px(12.))
+            .text_color(if prompt.confirm_delete { t.warn } else { t.muted })
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(|app, _, _, cx| {
+                if app.space_prompt.as_ref().is_some_and(|p| p.confirm_delete) {
+                    app.delete_current_space(cx);
+                } else if let Some(prompt) = app.space_prompt.as_mut() {
+                    prompt.confirm_delete = true;
+                    cx.notify();
+                }
+            }))
+            .child(delete_label);
         let rename_btn = div()
             .id("space-rename")
             .px_3()
@@ -742,6 +762,7 @@ impl RelayApp {
                         .flex()
                         .items_center()
                         .gap_2()
+                        .when(can_delete, |d| d.child(delete_btn))
                         .when(can_rename, |d| d.child(rename_btn))
                         .child(div().flex_1())
                         .child(

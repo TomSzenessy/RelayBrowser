@@ -1055,6 +1055,22 @@ impl Hub {
         moved
     }
 
+    /// Remove every tab in `space` and return their ids for native cleanup.
+    /// The current space is left for the shell to reset to Default.
+    pub fn take_space_tabs(&mut self, space: &str) -> Vec<TabId> {
+        let space = Self::normalize_space_name(space).unwrap_or_default();
+        let ids: Vec<TabId> = self.tabs().filter(|t| t.space == space).map(|t| t.id).collect();
+        for id in &ids {
+            self.tabs.remove(id);
+            self.pending.retain(|_, (tab, _)| tab != id);
+        }
+        self.order.retain(|id| !ids.contains(id));
+        if self.active.is_some_and(|id| ids.contains(&id)) {
+            self.active = None;
+        }
+        ids
+    }
+
     pub fn space_tab_ids(&self) -> Vec<TabId> {
         self.tabs().filter(|t| t.space == self.space).map(|t| t.id).collect()
     }
@@ -1666,6 +1682,9 @@ mod tests {
             assert_eq!(h.space_names(), vec!["".to_string(), "Project".to_string(), "Personal".to_string()]);
             assert_eq!(h.rename_space("Project", "Personal"), 1, "renaming onto another space merges it");
             assert_eq!(h.current_space(), "Personal");
+            let removed = h.take_space_tabs("Personal");
+            assert_eq!(removed.len(), 2);
+            assert!(h.space_names().iter().all(|s| s != "Personal"));
             assert_eq!(Hub::normalize_space_name("  A   B ").as_deref(), Some("A B"));
             assert_eq!(Hub::normalize_space_name("\u{0007}"), None);
         });

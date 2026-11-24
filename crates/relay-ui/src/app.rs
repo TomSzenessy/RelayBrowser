@@ -173,6 +173,7 @@ struct GroupPrompt {
 /// The small modal that names or picks a space.
 struct SpacePrompt {
     value: String,
+    confirm_delete: bool,
 }
 
 struct FindBar {
@@ -1994,7 +1995,7 @@ impl RelayApp {
         self.palette = None;
         self.tab_menu = None;
         self.group_prompt = None;
-        self.space_prompt = Some(SpacePrompt { value: self.hub.lock().current_space().to_string() });
+        self.space_prompt = Some(SpacePrompt { value: self.hub.lock().current_space().to_string(), confirm_delete: false });
         self.web.borrow().focus_shell();
         cx.notify();
     }
@@ -2031,6 +2032,35 @@ impl RelayApp {
             self.activate(tab);
         }
         self.toast(if moved == 0 { format!("Renamed to {new}") } else { format!("Renamed to {new} ({moved} tabs)") });
+        cx.notify();
+    }
+
+    fn delete_current_space(&mut self, cx: &mut Context<Self>) {
+        let name = self.hub.lock().current_space().to_string();
+        if name.is_empty() {
+            self.toast("Default space cannot be deleted");
+            cx.notify();
+            return;
+        }
+        let ids = self.hub.update(|h| h.take_space_tabs(&name));
+        for tab in &ids {
+            self.web.borrow_mut().apply(BrowserRequest::Close(*tab));
+            self.snapshots.remove(tab);
+            self.compat_tabs.remove(tab);
+            if self.split == Some(*tab) {
+                self.split = None;
+            }
+        }
+        self.space_prompt = None;
+        self.hub.update(|h| h.set_current_space(""));
+        self.persist_active_space();
+        let first = self.hub.lock().first_tab_in_space("");
+        if let Some(tab) = first {
+            self.activate(tab);
+        } else {
+            self.hub.update(|h| h.clear_active());
+        }
+        self.toast(format!("Deleted space {name} ({} tabs)", ids.len()));
         cx.notify();
     }
 
@@ -2712,6 +2742,7 @@ impl RelayApp {
                 "enter" => self.save_space_prompt(cx),
                 "backspace" => {
                     if let Some(prompt) = self.space_prompt.as_mut() {
+                        prompt.confirm_delete = false;
                         if k.modifiers.secondary() || k.modifiers.alt {
                             prompt.value.clear();
                         } else {
@@ -2722,6 +2753,7 @@ impl RelayApp {
                 _ => {
                     if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
                         if let Some(prompt) = self.space_prompt.as_mut() {
+                            prompt.confirm_delete = false;
                             if prompt.value.chars().count() < 24 {
                                 prompt.value.push_str(c);
                             }
