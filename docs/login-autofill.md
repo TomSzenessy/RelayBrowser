@@ -13,6 +13,10 @@ isolated `WKContentWorld("relay.login")` capture/fill in
 native offer/save/delete banners in `relay-ui` implement D1–D5 below. Passwords
 never enter `js/bridge.js`, `SharedHub`, `relay-mcp`, `profile.sqlite`, or logs.
 
+Named profiles use their own Keychain security domain
+(`relay-profile:<name>`) for reads, saves, deletes, and Chrome password
+imports; Default keeps the historical domain so existing items still work.
+
 ## Problem and scope
 
 Relay can import a Chrome password CSV into the macOS login Keychain, but it

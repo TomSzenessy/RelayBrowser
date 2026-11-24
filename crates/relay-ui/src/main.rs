@@ -690,7 +690,8 @@ fn import_passwords(file: Option<&str>) -> anyhow::Result<()> {
     let creds = chrome_import::read_password_csv(file)?;
     #[cfg(target_os = "macos")]
     {
-        let r = relay_extensions::mac::import_passwords(&creds);
+        let profile = std::env::var("RELAY_PROFILE").ok().filter(|p| !p.is_empty()).map(|p| format!("relay-profile:{p}"));
+        let r = relay_extensions::mac::import_passwords(&creds, profile.as_deref());
         if let Ok(store) = open_store() {
             for c in &creds {
                 if let Ok((origin, path)) = relay_extensions::login::Origin::parse_with_path(&c.url) {

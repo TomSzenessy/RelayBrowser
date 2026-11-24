@@ -278,7 +278,7 @@ mod imp {
             if live.as_ref() != Some(&origin) {
                 return Err("The page changed; fill cancelled".into());
             }
-            let pw = relay_extensions::mac::read_login_password(&origin, username, path).map_err(keychain_message)?;
+            let pw = relay_extensions::mac::read_login_password(&origin, username, path, keychain_profile().as_deref()).map_err(keychain_message)?;
             self.engine.fill_login(tab, form_idx, username, pw.expose());
             Ok(())
         }
@@ -295,7 +295,7 @@ mod imp {
                 &path,
                 relay_extensions::login::Password::new(pending.password.as_str()),
             );
-            relay_extensions::mac::save_login(&captured).map_err(keychain_message)?;
+            relay_extensions::mac::save_login(&captured, keychain_profile().as_deref()).map_err(keychain_message)?;
             Ok(pending.username)
         }
 
@@ -346,7 +346,7 @@ mod imp {
 
         pub fn delete_saved_login(&self, url: &str, username: &str, path: &str) -> Result<bool, String> {
             let origin = relay_extensions::login::Origin::parse(url).map_err(|e| e.to_string())?;
-            relay_extensions::mac::delete_login(&origin, username, path).map_err(keychain_message)
+            relay_extensions::mac::delete_login(&origin, username, path, keychain_profile().as_deref()).map_err(keychain_message)
         }
     }
 }
@@ -427,6 +427,13 @@ mod imp {
 }
 
 /// A Keychain failure the user can act on. Denied means they cancelled the
+/// Name profiles get their own Keychain security domain so a login saved in
+/// one profile cannot surface in another. Default keeps the historical domain.
+#[cfg(target_os = "macos")]
+fn keychain_profile() -> Option<String> {
+    std::env::var("RELAY_PROFILE").ok().filter(|p| !p.is_empty()).map(|p| format!("relay-profile:{p}"))
+}
+
 /// system prompt; Unavailable means the item/keychain could not be used.
 #[cfg(target_os = "macos")]
 fn keychain_message(failure: relay_extensions::login::SaveFailure) -> String {

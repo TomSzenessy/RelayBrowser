@@ -75,7 +75,7 @@ pub struct KeychainImport {
 
 /// Store each credential as an internet password (protocol HTTPS, HTML form),
 /// the item type Safari AutoFill reads.
-pub fn import_passwords(creds: &[Credential]) -> KeychainImport {
+pub fn import_passwords(creds: &[Credential], profile: Option<&str>) -> KeychainImport {
     use security_framework::passwords::set_internet_password;
     use security_framework_sys::keychain::{SecAuthenticationType, SecProtocolType};
     let mut r = KeychainImport::default();
@@ -85,7 +85,7 @@ pub fn import_passwords(creds: &[Credential]) -> KeychainImport {
             continue;
         };
         let proto = if https { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
-        match set_internet_password(&host, None, &c.username, &path, port, proto, SecAuthenticationType::HTMLForm, c.password.as_bytes()) {
+        match set_internet_password(&host, profile, &c.username, &path, port, proto, SecAuthenticationType::HTMLForm, c.password.as_bytes()) {
             Ok(()) => r.saved += 1,
             Err(e) => r.failed.push(format!("{host}: {e}")),
         }
@@ -172,6 +172,7 @@ pub fn read_login_password(
     origin: &crate::login::Origin,
     username: &str,
     path: &str,
+    profile: Option<&str>,
 ) -> Result<crate::login::Password, crate::login::SaveFailure> {
     use crate::login::{Password, SaveFailure};
     use security_framework::passwords::get_internet_password;
@@ -181,12 +182,12 @@ pub fn read_login_password(
         return Err(SaveFailure::InvalidItem);
     }
     let proto = if origin.is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
-    let bytes = match get_internet_password(origin.host(), None, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm) {
+    let bytes = match get_internet_password(origin.host(), profile, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm) {
         Ok(bytes) => bytes,
         // Only a missing exact path falls back to the origin root; do not
         // re-prompt a denied Keychain request.
         Err(e) if e.code() == -25300 => {
-            get_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm)
+            get_internet_password(origin.host(), profile, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm)
                 .map_err(failure_from)?
         }
         Err(e) => return Err(failure_from(e)),
@@ -196,7 +197,7 @@ pub fn read_login_password(
 }
 
 /// Write or update one captured login in the macOS login Keychain.
-pub fn save_login(login: &crate::login::CapturedLogin) -> Result<(), crate::login::SaveFailure> {
+pub fn save_login(login: &crate::login::CapturedLogin, profile: Option<&str>) -> Result<(), crate::login::SaveFailure> {
     use crate::login::SaveFailure;
     use security_framework::passwords::set_internet_password;
     use security_framework_sys::keychain::{SecAuthenticationType, SecProtocolType};
@@ -207,7 +208,7 @@ pub fn save_login(login: &crate::login::CapturedLogin) -> Result<(), crate::logi
     let proto = if login.origin().is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
     set_internet_password(
         login.origin().host(),
-        None,
+        profile,
         login.username(),
         login.path(),
         login.origin().port(),
@@ -219,7 +220,7 @@ pub fn save_login(login: &crate::login::CapturedLogin) -> Result<(), crate::logi
 }
 
 /// Delete one Keychain internet password for `origin` + `username`.
-pub fn delete_login(origin: &crate::login::Origin, username: &str, path: &str) -> Result<bool, crate::login::SaveFailure> {
+pub fn delete_login(origin: &crate::login::Origin, username: &str, path: &str, profile: Option<&str>) -> Result<bool, crate::login::SaveFailure> {
     use crate::login::SaveFailure;
     use security_framework::passwords::delete_internet_password;
     use security_framework_sys::keychain::{SecAuthenticationType, SecProtocolType};
@@ -228,10 +229,10 @@ pub fn delete_login(origin: &crate::login::Origin, username: &str, path: &str) -
         return Err(SaveFailure::InvalidItem);
     }
     let proto = if origin.is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
-    match delete_internet_password(origin.host(), None, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm) {
+    match delete_internet_password(origin.host(), profile, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm) {
         Ok(()) => Ok(true),
         Err(e) if e.code() == -25300 => {
-            match delete_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm) {
+            match delete_internet_password(origin.host(), profile, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm) {
                 Ok(()) => Ok(true),
                 Err(e) if e.code() == -25300 => Ok(false),
                 Err(e) => Err(failure_from(e)),

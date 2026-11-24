@@ -241,8 +241,8 @@ Behaviour that is not a single action:
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
 - **Profiles:** `relay --profile NAME` (or Settings → General → Profile →
   Switch) gives a separate `RELAY_HOME` with its own tabs, settings, history,
-  logins, extensions, and MCP socket, plus a stable WebKit website-data store
-  UUID. Switching relaunches Relay; Default uses the base home.
+  logins (a per-profile Keychain domain), extensions, and MCP socket, plus a
+  stable WebKit website-data store UUID. Switching relaunches Relay; Default uses the base home.
 - **Spaces:** named tab sets with their own pins and session entries. The
   current space is a small pill at the top of the strip; ⌘⇧E opens the switcher
   (type a new name, pick an existing space, or rename the current one—merging
