@@ -9,7 +9,6 @@ license.workspace = true
 relay-bridge.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-zeroize.workspace = true
 
 [dev-dependencies]
 # The smoke example drives the same oneshot command replies the shell uses.
@@ -22,5 +21,6 @@ objc2-foundation.workspace = true
 objc2-app-kit.workspace = true
 objc2-web-kit.workspace = true
 objc2-media-player = "0.3"
+zeroize.workspace = true
 objc2-core-foundation = "0.3"
 block2 = "0.6"
