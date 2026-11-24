@@ -61,12 +61,13 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   failed row Retry, and a finished row Reveal; Clear finished and the empty
   state (which says where files save) live with the panel. ↑/↓/Home/End move the
   selection in section order and ↩ runs the selected row's action.
-- **New tab:** with no active tab, a quiet page with the app name, one search
-  field (opens ⌘K), and two columns of Recent / Frequent / Apps / Bookmarks
-  rows. Rows are one line with a muted note; empty sections say "Nothing yet";
+- **New tab:** with no active tab, a quiet page with **no wordmark**, one
+  search field (opens ⌘K), and two columns of Recent / Frequent / Apps /
+  Bookmarks rows. Rows are one line with a muted note; empty sections say "Nothing yet";
   only a genuinely fresh profile shows the welcome card. `start_sections` owns the order and `none` hides the page's sections.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
-  Bookmarks, Tab, Window, Help) carry every shortcut. AppKit checks menu key
+  Bookmarks, Tab, Window, Help) carry every shortcut; View names Tabs on the
+  Left, Top, and Right explicitly, not only the cycling command. AppKit checks menu key
   equivalents before the first responder, so they work while WKWebView has
   focus; `Edit` forwards `⌘X`/`⌘C`/`⌘V`/`⌘A` to the page.
 - **Web app window:** an installed site runs `relay --app <url>`: one page,
@@ -94,7 +95,10 @@ surface. Settings → Appearance changes it live and stores `theme`/`accent`.
 
 Type: system UI font at 13 pt for chrome and 12 pt monospace for the Inspector.
 Corner radius is 6 pt and spacing uses a 4 pt grid. Motion is 150 ms, and is
-none under Reduce Motion.
+none under Reduce Motion. Surfaces carry the hierarchy: `background`,
+`surface`, `raised` (overlays and cards), and `well` (inputs), with shadows
+for elevation. A 1 px outline is not the default separator; only the tab-strip
+edge, split divider, and status edge keep a hairline.
 
 ## Keyboard map
 
@@ -158,6 +162,7 @@ and displayed shortcuts cannot drift either.
 | ⌘⇧J | Show downloads |
 | ⌘⇧N | New private tab |
 | ⌘P | Print page |
+| ⌘⌥B | Show / hide bottom bar |
 <!-- keymap:end -->
 
 Behaviour that is not a single action:

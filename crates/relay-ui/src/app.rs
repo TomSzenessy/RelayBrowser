@@ -89,6 +89,10 @@ actions!(
         ShowDownloads,
         NewPrivateTab,
         Print,
+        ToggleBottomBar,
+        TabsOnLeft,
+        TabsOnTop,
+        TabsOnRight,
     ]
 );
 
@@ -149,6 +153,8 @@ impl SidebarTab {
 
 struct ShortcutEditor {
     recording: Option<ActionId>,
+    /// Finds a shortcut by name or by the keys it currently uses.
+    query: String,
 }
 
 struct FindBar {
@@ -195,30 +201,39 @@ pub(super) enum SettingsTab {
     #[default]
     General,
     Appearance,
+    Tabs,
+    Passwords,
     Privacy,
     Extensions,
     Agents,
     Shortcuts,
+    About,
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [SettingsTab; 6] = [
+    pub(super) const ALL: [SettingsTab; 9] = [
         SettingsTab::General,
         SettingsTab::Appearance,
+        SettingsTab::Tabs,
+        SettingsTab::Passwords,
         SettingsTab::Privacy,
         SettingsTab::Extensions,
         SettingsTab::Agents,
         SettingsTab::Shortcuts,
+        SettingsTab::About,
     ];
 
     pub(super) fn label(self) -> &'static str {
         match self {
             SettingsTab::General => "General",
             SettingsTab::Appearance => "Appearance",
+            SettingsTab::Tabs => "Tabs",
+            SettingsTab::Passwords => "Passwords",
             SettingsTab::Privacy => "Privacy",
             SettingsTab::Extensions => "Extensions",
             SettingsTab::Agents => "Agents & MCP",
             SettingsTab::Shortcuts => "Shortcuts",
+            SettingsTab::About => "About",
         }
     }
 }
@@ -239,9 +254,11 @@ pub struct RelayApp {
     theme_choice: ThemeChoice,
     accent_choice: AccentChoice,
     last_web_dark: Option<bool>,
-    /// Decoded tab icons by host; `None` means the fetch failed and retrying
-    /// the same host this session is pointless.
+    /// Decoded tab icons by host. `None` means the last attempt failed; a new
+    /// load retries once instead of retrying every frame.
     favicons: HashMap<String, Option<Arc<Image>>>,
+    /// Host → `load_seq` whose icon request has been answered or timed out.
+    favicon_tried: HashMap<String, u64>,
     favicon_pending: HashSet<String>,
     bookmarked_urls: HashSet<String>,
     cmd_held: bool,
@@ -267,10 +284,24 @@ pub struct RelayApp {
     settings_tab: SettingsTab,
     settings_dropdown: Option<SettingsDropdown>,
     ext_busy: bool,
+    /// Load failures from WKWebExtension, shown in Settings → Extensions.
+    ext_errors: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     blocking: bool,
-    login_offers_enabled: bool,
+    /// Offer to fill a saved login when a sign-in field gets focus.
+    login_fill_enabled: bool,
+    /// Offer to save a login after a successful sign-in.
+    login_save_enabled: bool,
+    /// The status bar at the window's bottom edge; hide it for a quieter page
+    /// (⌘⌥B or Settings → Appearance).
+    show_bottom_bar: bool,
     /// Non-secret autofill offer: `(tab, url, form_idx, vec![(username, path)])`.
-    login_fill_prompt: Option<(TabId, String, usize, Vec<(String, String)>)>,
+    login_fill_prompt: Option<(TabId, String, i64, Vec<(String, String)>)>,
+    /// Fill a lone saved login as soon as a password field gets native focus.
+    autofill_logins: bool,
+    /// Draw site favicons in tabs; off shows deterministic letter badges.
+    tab_glyphs: bool,
+    /// 24 px tab rows instead of 28.
+    compact_tabs: bool,
     /// Non-secret save-login offer: `(tab, url, username)`. Password stays inside Engine.
     login_save_prompt: Option<(TabId, String, String)>,
     /// `(origin_display, username)` declined in this session; never re-prompted.
@@ -426,12 +457,25 @@ impl RelayApp {
         web.set_appearance(Some(web_dark));
         let keymap = Keymap::from_setting(store.as_ref().and_then(|s| s.setting("keybindings").ok().flatten()).as_deref());
         let show_tab_numbers = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_numbers").ok().flatten()).as_deref());
-        let login_offers_enabled = setting_enabled(store.as_ref().and_then(|s| s.setting("login_offers").ok().flatten()).as_deref());
+        // `login_offers` is the older combined switch; new profiles use the
+        // two independent rows (fill, save).
+        let legacy_offers = store.as_ref().and_then(|s| s.setting("login_offers").ok().flatten());
+        let login_fill_enabled = setting_enabled(
+            store.as_ref().and_then(|s| s.setting("login_fill").ok().flatten()).as_deref().or(legacy_offers.as_deref()),
+        );
+        let login_save_enabled = setting_enabled(
+            store.as_ref().and_then(|s| s.setting("login_save").ok().flatten()).as_deref().or(legacy_offers.as_deref()),
+        );
+        let autofill_logins = setting_enabled(store.as_ref().and_then(|s| s.setting("autofill_logins").ok().flatten()).as_deref());
+        let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
+        let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
+        let show_bottom_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).as_deref());
         let bookmarked_urls: HashSet<String> = store
             .as_ref()
             .and_then(|s| s.bookmarks().ok())
             .map(|list| list.into_iter().map(|b| b.url).collect())
             .unwrap_or_default();
+        web.set_login_capture(login_save_enabled);
         let mut app = Self {
             hub,
             web: Rc::new(RefCell::new(web)),
@@ -443,6 +487,7 @@ impl RelayApp {
             accent_choice,
             last_web_dark: Some(web_dark),
             favicons: cached_favicons(),
+            favicon_tried: HashMap::new(),
             favicon_pending: HashSet::new(),
             bookmarked_urls,
             cmd_held: false,
@@ -459,8 +504,14 @@ impl RelayApp {
             settings_tab: SettingsTab::General,
             settings_dropdown: None,
             ext_busy: false,
+            ext_errors: std::rc::Rc::default(),
             blocking,
-            login_offers_enabled,
+            login_fill_enabled,
+            login_save_enabled,
+            autofill_logins,
+            tab_glyphs,
+            compact_tabs,
+            show_bottom_bar,
             login_fill_prompt: None,
             login_save_prompt: None,
             declined_login_saves: HashSet::new(),
@@ -545,6 +596,15 @@ impl RelayApp {
             async {}
         })
         .detach();
+        // Closing the only window ends the process, as the owner expects from
+        // a single-window browser. `quit` is deferred: the platform is still
+        // inside its close decision and quitting re-enters window teardown.
+        window.on_window_should_close(cx, |_window, cx| {
+            if cx.windows().len() <= 1 {
+                cx.defer(|cx| cx.quit());
+            }
+            true
+        });
         app.start_pump(cx);
         app
     }
@@ -590,10 +650,15 @@ impl RelayApp {
 
     fn load_installed_extensions(&self) {
         let Some(store) = &self.store else { return };
+        let errors = self.ext_errors.clone();
         for (id, name, path) in store.enabled_extensions().unwrap_or_default() {
+            let errors = errors.clone();
+            let label = name.clone();
             self.web.borrow().load_extension(std::path::Path::new(&path), &id, move |r| {
                 if let Err(e) = r {
-                    eprintln!("relay: extension {name} failed to load: {e}");
+                    let line = format!("{label}: {e}");
+                    eprintln!("relay: extension {line}");
+                    errors.borrow_mut().push(line);
                 }
             });
         }
@@ -663,16 +728,32 @@ impl RelayApp {
                     }
                 }
                 WebEvent::LoginFocus { tab, url, form_idx } => {
-                    if self.login_offers_enabled {
+                    if self.login_fill_enabled {
                         let candidates = self.web.borrow().list_login_candidates(&url);
                         if !candidates.is_empty() {
+                            // One saved login is the common case: fill it now
+                            // (the focus was a real native gesture) instead of
+                            // asking again. Several logins still get the picker.
+                            if self.autofill_logins && candidates.len() == 1 {
+                                let (username, path) = candidates[0].clone();
+                                if self.web.borrow().fill_login(tab, &url, form_idx, &username, &path).is_ok() {
+                                    self.login_fill_prompt = None;
+                                    continue;
+                                }
+                            }
                             self.login_fill_prompt = Some((tab, url, form_idx, candidates));
                         }
                     }
                 }
+                WebEvent::LoginFilled { tab, ok } => {
+                    if self.login_fill_prompt.as_ref().is_some_and(|(t, _, _, _)| *t == tab) {
+                        self.login_fill_prompt = None;
+                    }
+                    self.toast(if ok { "Password filled" } else { "Could not fill this form" });
+                }
                 WebEvent::LoginSaveOffer { tab, url, username } => {
                     let origin_key = relay_extensions::login::Origin::parse(&url).ok().map(|o| o.to_string());
-                    let allowed = self.login_offers_enabled
+                    let allowed = self.login_save_enabled
                         && origin_key
                             .as_ref()
                             .is_some_and(|ok| !self.declined_login_saves.contains(&(ok.clone(), username.clone())));
@@ -816,27 +897,34 @@ impl RelayApp {
         self.request_favicons(cx);
     }
 
-    /// Fetch at most one icon per host from the page itself. Cross-origin
-    /// icons without CORS fail closed to the letter/dot fallback.
+    /// Fetch at most one icon per host from the page itself, after the page
+    /// has a DOM to read. A failed attempt is retried on the next load, never
+    /// on the next frame. Cross-origin icons without CORS fail closed to the
+    /// letter/dot fallback.
     fn request_favicons(&mut self, cx: &mut Context<Self>) {
-        let mut fetch: Vec<(TabId, String)> = vec![];
+        let mut fetch: Vec<(TabId, String, u64)> = vec![];
         {
             let h = self.hub.lock();
             for t in h.tabs() {
+                // Private tabs leave no icon on disk, so do not ask for one.
+                if t.private || t.dom.root().is_none() || t.load_error.is_some() {
+                    continue;
+                }
                 let Some(host) = host_of(&t.url) else { continue };
-                if !self.favicons.contains_key(&host) && !self.favicon_pending.contains(&host) {
-                    fetch.push((t.id, host));
+                let has_icon = matches!(self.favicons.get(&host), Some(Some(_)));
+                if favicon_due(has_icon, t.load_seq, self.favicon_tried.get(&host).copied(), self.favicon_pending.contains(&host)) {
+                    fetch.push((t.id, host, t.load_seq));
                 }
             }
         }
-        for (tab, host) in fetch {
+        for (tab, host, seq) in fetch {
             let Ok((script, rx)) = self.hub.begin_command(tab, Op::Favicon) else { continue };
             self.favicon_pending.insert(host.clone());
             self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
             cx.spawn(async move |this, cx| {
                 let reply = futures_timeout(rx, Duration::from_secs(4), cx).await;
                 let _ = this.update(cx, |app, cx| {
-                    app.finish_favicon(host, reply);
+                    app.finish_favicon(host, seq, reply);
                     cx.notify();
                 });
             })
@@ -844,14 +932,53 @@ impl RelayApp {
         }
     }
 
-    fn finish_favicon(&mut self, host: String, reply: Option<serde_json::Value>) {
+    fn finish_favicon(&mut self, host: String, seq: u64, reply: Option<serde_json::Value>) {
         self.favicon_pending.remove(&host);
+        self.favicon_tried.insert(host.clone(), seq);
         let payload = reply.as_ref().and_then(favicon_payload);
         if let Some((bytes, ext)) = &payload {
             cache_favicon_file(&host, bytes, ext);
         }
-        let image = payload.as_ref().map(|(bytes, ext)| Arc::new(favicon_decode(bytes, ext)));
-        self.favicons.insert(host, image);
+        match payload.as_ref().and_then(|(bytes, ext)| favicon_decode(bytes, ext).map(Arc::new)) {
+            Some(image) => {
+                self.favicons.insert(host, Some(image));
+            }
+            None => {
+                // A timeout or a page without an icon: keep a previously
+                // decoded icon, otherwise show the monogram until a reload.
+                self.favicons.entry(host).or_insert(None);
+            }
+        }
+    }
+
+    /// Which start-page sections are on, in their configured order.
+    pub(super) fn start_sections(&self) -> Vec<Section> {
+        let raw = self.store.as_ref().and_then(|s| s.setting("start_sections").ok().flatten());
+        crate::startpage::parse_sections(raw.as_deref())
+    }
+
+    /// Show or hide one start-page section. `none` is written when the last
+    /// one is switched off, so the page stays deliberately blank.
+    pub(super) fn toggle_start_section(&mut self, section: Section, cx: &mut Context<Self>) {
+        let mut sections = self.start_sections();
+        if let Some(pos) = sections.iter().position(|s| *s == section) {
+            sections.remove(pos);
+        } else {
+            sections.push(section);
+            let order = Section::ALL;
+            sections.sort_by_key(|s| order.iter().position(|x| x == s).unwrap_or(usize::MAX));
+        }
+        let value = if sections.is_empty() {
+            "none".to_string()
+        } else {
+            sections.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",")
+        };
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("start_sections", &value);
+        }
+        self.refresh_start_page();
+        self.toast(format!("{}: {}", section.title(), if sections.contains(&section) { "shown" } else { "hidden" }));
+        cx.notify();
     }
 
     /// Rebuild the new-tab cache after a profile change. Cheap: a few
@@ -1276,6 +1403,16 @@ impl RelayApp {
         self.persist_strip();
         self.toast(format!("Tab strip: {}", self.strip.placement.label()));
         cx.notify();
+    }
+
+    /// ⌘⌥B: hide or show the bottom status bar. A toast still reveals it for
+    /// a moment, because the native page covers the shell.
+    fn toggle_bottom_bar(&mut self) {
+        self.show_bottom_bar = !self.show_bottom_bar;
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("bottom_bar", if self.show_bottom_bar { "on" } else { "off" });
+        }
+        self.toast(if self.show_bottom_bar { "Bottom bar shown" } else { "Bottom bar hidden" });
     }
 
     pub(super) fn set_tab_strip_placement(&mut self, placement: tabstrip::Placement, cx: &mut Context<Self>) {
@@ -2194,8 +2331,35 @@ impl RelayApp {
                 } else if let Some(key) = keymap::from_keystroke(k) {
                     self.finish_recording(id, &key, cx);
                 }
-            } else if k.key == "escape" {
-                self.close_shortcuts();
+            } else {
+                match k.key.as_str() {
+                    "escape" => {
+                        let has_query = self.shortcuts.as_ref().is_some_and(|s| !s.query.is_empty());
+                        if has_query {
+                            if let Some(editor) = self.shortcuts.as_mut() {
+                                editor.query.clear();
+                            }
+                        } else {
+                            self.close_shortcuts(cx);
+                        }
+                    }
+                    "backspace" => {
+                        if let Some(editor) = self.shortcuts.as_mut() {
+                            if k.modifiers.secondary() || k.modifiers.alt {
+                                editor.query.clear();
+                            } else {
+                                editor.query.pop();
+                            }
+                        }
+                    }
+                    _ => {
+                        if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.modified()) {
+                            if let Some(editor) = self.shortcuts.as_mut() {
+                                editor.query.push_str(&c.to_lowercase());
+                            }
+                        }
+                    }
+                }
             }
             cx.stop_propagation();
             cx.notify();
@@ -2436,6 +2600,21 @@ impl RelayApp {
                 }
             }
             "tabs_folded" => self.strip.folded = setting_enabled(Some(value)),
+            "bottom_bar" => self.show_bottom_bar = setting_enabled(Some(value)),
+            "autofill_logins" => self.autofill_logins = setting_enabled(Some(value)),
+            "tab_glyphs" => self.tab_glyphs = setting_enabled(Some(value)),
+            "compact_tabs" => self.compact_tabs = setting_enabled(Some(value)),
+            "login_offers" => {
+                let on = setting_enabled(Some(value));
+                self.login_fill_enabled = on;
+                self.login_save_enabled = on;
+                self.web.borrow_mut().set_login_capture(on);
+            }
+            "login_fill" => self.login_fill_enabled = setting_enabled(Some(value)),
+            "login_save" => {
+                self.login_save_enabled = setting_enabled(Some(value));
+                self.web.borrow_mut().set_login_capture(self.login_save_enabled);
+            }
             "restore_session" => self.session_enabled = setting_enabled(Some(value)),
             "keybindings" => {
                 self.keymap = Keymap::from_setting(Some(value));
@@ -2528,15 +2707,16 @@ impl RelayApp {
         self.downloads_open = false;
         self.find = None;
         self.end_hints();
-        self.shortcuts = Some(ShortcutEditor { recording: None });
+        self.shortcuts = Some(ShortcutEditor { recording: None, query: String::new() });
         self.web.borrow().focus_shell();
         cx.notify();
     }
 
-    fn close_shortcuts(&mut self) {
+    fn close_shortcuts(&mut self, cx: &mut Context<Self>) {
         if self.shortcuts.as_ref().is_some_and(|s| s.recording.is_some()) {
-            // Restore the map that was active before recording.
-            self.restore_keymap();
+            // Recording cleared the bindings and menus; restore both, not
+            // only the saved setting, or every shortcut stays dead.
+            self.apply_keymap(cx);
         }
         self.shortcuts = None;
         self.focus_active_page();
@@ -2567,14 +2747,15 @@ impl RelayApp {
     }
 
     fn finish_recording(&mut self, id: ActionId, key: &str, cx: &mut Context<Self>) {
-        match self.keymap.set(id, key) {
-            Ok(()) => {
-                if let Some(editor) = self.shortcuts.as_mut() {
-                    editor.recording = None;
-                }
-                self.apply_keymap(cx);
-                self.toast(format!("{}: {}", id.label(), keymap::display_key(key)));
-            }
+        let result = self.keymap.set(id, key);
+        if let Some(editor) = self.shortcuts.as_mut() {
+            editor.recording = None;
+        }
+        // Always restore the bindings and the menu bar, also after a refused
+        // key: a failed rebind must never leave the app with no shortcuts.
+        self.apply_keymap(cx);
+        match result {
+            Ok(()) => self.toast(format!("{}: {}", id.label(), keymap::shortcut_label(key))),
             Err(e) => self.toast(e),
         }
         cx.notify();
@@ -2819,6 +3000,19 @@ impl Render for RelayApp {
             .on_action(cx.listener(|app, _: &ShowDownloads, _, cx| {
                 app.open_downloads(cx);
             }))
+            .on_action(cx.listener(|app, _: &ToggleBottomBar, _, cx| {
+                app.toggle_bottom_bar();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &TabsOnLeft, _, cx| {
+                app.set_tab_strip_placement(tabstrip::Placement::Left, cx);
+            }))
+            .on_action(cx.listener(|app, _: &TabsOnTop, _, cx| {
+                app.set_tab_strip_placement(tabstrip::Placement::Top, cx);
+            }))
+            .on_action(cx.listener(|app, _: &TabsOnRight, _, cx| {
+                app.set_tab_strip_placement(tabstrip::Placement::Right, cx);
+            }))
             .on_action(cx.listener(|app, _: &NewPrivateTab, _, cx| {
                 app.run_command(Command::NewPrivateTab, cx);
                 cx.notify();
@@ -2845,10 +3039,15 @@ impl Render for RelayApp {
         if let Some(banner) = self.render_login_save_banner(cx) {
             root = root.child(banner);
         }
-        if !self.app_mode || self.toast.is_some() || self.hints.is_some() {
+        // A hidden bar still appears for a toast or link hints: those messages
+        // have nowhere else to go while the native page covers the shell.
+        if (!self.app_mode && self.show_bottom_bar) || self.toast.is_some() || self.hints.is_some() {
             root = root.child(self.render_status(cx));
         }
-        if show_strip && self.strip.folded && !overlay_open && self.active().is_none() {
+        // The folded-strip pill is a small overlay over the page, not part of
+        // the layout: show it on a page too, or hiding the bottom bar leaves
+        // ⌘S as the only way back.
+        if show_strip && self.strip.folded && !overlay_open && !self.app_mode {
             root = root.child(self.render_folded_strip(cx));
         }
         if let Some(f) = &self.find {
@@ -3099,20 +3298,29 @@ fn byte_size(n: usize) -> String {
     }
 }
 
-/// What the saved session keeps (matches `Store::save_session`).
-/// Decode the bridge's untrusted `favicon` reply. Only PNG/JPEG/WebP/GIF
-/// under 256 KB is accepted; the data URL prefix and the mime must agree.
+/// Whether a host still needs an icon request: not cached, not in flight,
+/// and the page has not already answered for this load.
+fn favicon_due(has_icon: bool, load_seq: u64, tried_seq: Option<u64>, pending: bool) -> bool {
+    !has_icon && !pending && tried_seq.is_none_or(|tried| load_seq > tried)
+}
+
+/// Decode the bridge's untrusted `favicon` reply. PNG/JPEG/WebP/GIF/SVG and
+/// the PNG payload of an ICO under 256 KB are accepted; the data URL prefix
+/// and the mime must agree, and the bytes must carry the format's signature
+/// before they reach the renderer.
 fn favicon_payload(value: &serde_json::Value) -> Option<(Vec<u8>, &'static str)> {
     if value.get("available")?.as_bool()? != true {
         return None;
     }
     let data = value.get("data")?.as_str()?;
     let mime = value.get("mime")?.as_str()?;
-    let ext = match mime {
+    let mut ext = match mime {
         "image/png" => "png",
         "image/jpeg" => "jpg",
         "image/webp" => "webp",
         "image/gif" => "gif",
+        "image/svg+xml" => "svg",
+        "image/x-icon" | "image/vnd.microsoft.icon" => "ico",
         _ => return None,
     };
     let prefix = format!("data:{mime};base64,");
@@ -3120,24 +3328,159 @@ fn favicon_payload(value: &serde_json::Value) -> Option<(Vec<u8>, &'static str)>
     if payload.len() > 256 * 1024 * 4 / 3 {
         return None;
     }
-    let bytes = webapp::base64_decode(payload)?;
+    let mut bytes = webapp::base64_decode(payload)?;
+    if bytes.is_empty() || bytes.len() > 256 * 1024 || !favicon_signature(&bytes, ext) {
+        return None;
+    }
+    if ext == "ico" {
+        bytes = ico_png(&bytes)?;
+        ext = "png";
+    }
+    if !favicon_pixels_ok(&bytes, ext) {
+        return None;
+    }
     (bytes.len() <= 256 * 1024).then_some((bytes, ext))
 }
 
-fn favicon_decode(bytes: &[u8], ext: &str) -> Image {
+/// Reject decompression bombs before the renderer allocates pixels: the
+/// compressed cap alone allows a 256 KB PNG to decode into gigabytes.
+fn favicon_pixels_ok(bytes: &[u8], ext: &str) -> bool {
+    let Some((w, h)) = favicon_dimensions(bytes, ext) else {
+        // SVG without explicit dimensions is sized by the view box and safe.
+        return ext == "svg" && bytes.len() <= 256 * 1024;
+    };
+    w > 0 && h > 0 && w <= 1024 && h <= 1024 && u64::from(w) * u64::from(h) <= 2 * 1024 * 1024
+}
+
+fn favicon_dimensions(bytes: &[u8], ext: &str) -> Option<(u32, u32)> {
+    match ext {
+        "png" if bytes.len() >= 24 => {
+            Some((u32::from_be_bytes(bytes[16..20].try_into().ok()?), u32::from_be_bytes(bytes[20..24].try_into().ok()?)))
+        }
+        "gif" if bytes.len() >= 10 => Some((u16::from_le_bytes([bytes[6], bytes[7]]) as u32, u16::from_le_bytes([bytes[8], bytes[9]]) as u32)),
+        "jpg" => {
+            let mut i = 2;
+            while i + 9 < bytes.len() {
+                if bytes[i] != 0xff {
+                    i += 1;
+                    continue;
+                }
+                let marker = bytes[i + 1];
+                if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+                    let h = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
+                    let w = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]) as u32;
+                    return Some((w, h));
+                }
+                let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+                if len < 2 {
+                    return None;
+                }
+                i = i.checked_add(2 + len)?;
+            }
+            None
+        }
+        "webp" if bytes.len() >= 30 => match &bytes[12..16] {
+            b"VP8X" => {
+                let w = 1 + u32::from_le_bytes([0, bytes[24], bytes[25], bytes[26]]);
+                let h = 1 + u32::from_le_bytes([0, bytes[27], bytes[28], bytes[29]]);
+                Some((w, h))
+            }
+            b"VP8L" => {
+                let b = &bytes[21..25];
+                let w = 1 + ((u32::from(b[1]) & 0x3f) << 8 | u32::from(b[0]));
+                let h = 1 + ((u32::from(b[3]) & 0x0f) << 10 | u32::from(b[2]) << 2 | (u32::from(b[1]) & 0xc0) >> 6);
+                Some((w, h))
+            }
+            b"VP8 " => {
+                let w = u32::from(u16::from_le_bytes([bytes[26], bytes[27]])) & 0x3fff;
+                let h = u32::from(u16::from_le_bytes([bytes[28], bytes[29]])) & 0x3fff;
+                Some((w, h))
+            }
+            _ => None,
+        },
+        "svg" => {
+            let text = std::str::from_utf8(&bytes[..bytes.len().min(4096)]).ok()?.to_ascii_lowercase();
+            let attr = |name: &str| -> Option<u32> {
+                let start = text.find(name)? + name.len();
+                let rest = &text[start..];
+                let value = rest.split('"').nth(1).or_else(|| rest.split('\'').nth(1))?;
+                value.trim().trim_end_matches("px").parse().ok()
+            };
+            match (attr("width="), attr("height=")) {
+                (Some(w), Some(h)) => Some((w, h)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn favicon_signature(bytes: &[u8], ext: &str) -> bool {
+    match ext {
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        "svg" => std::str::from_utf8(&bytes[..bytes.len().min(4096)])
+            .is_ok_and(|text| text.trim_start_matches(['\u{feff}', ' ', '\n', '\r', '\t']).to_ascii_lowercase().contains("<svg")),
+        "ico" => bytes.len() >= 6 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 1 && bytes[3] == 0,
+        _ => false,
+    }
+}
+
+/// Pull the largest PNG-compressed image out of an ICO container. Old BMP
+/// entries are skipped rather than converted; most current sites ship PNG.
+fn ico_png(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !favicon_signature(bytes, "ico") {
+        return None;
+    }
+    let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+    if count == 0 || count > 64 || bytes.len() < 6 + count * 16 {
+        return None;
+    }
+    let mut best: Option<(u32, usize, usize)> = None;
+    for i in 0..count {
+        let entry = 6 + i * 16;
+        let width = match bytes[entry] {
+            0 => 256,
+            w => u32::from(w),
+        };
+        let height = match bytes[entry + 1] {
+            0 => 256,
+            h => u32::from(h),
+        };
+        let size = u32::from_le_bytes(bytes[entry + 8..entry + 12].try_into().ok()?) as usize;
+        let offset = u32::from_le_bytes(bytes[entry + 12..entry + 16].try_into().ok()?) as usize;
+        let end = offset.checked_add(size)?;
+        if size < 8 || end > bytes.len() || !bytes[offset..end].starts_with(b"\x89PNG\r\n\x1a\n") {
+            continue;
+        }
+        let area = width.saturating_mul(height);
+        if best.is_none_or(|(best_area, _, _)| area > best_area) {
+            best = Some((area, offset, size));
+        }
+    }
+    best.map(|(_, offset, size)| bytes[offset..offset + size].to_vec())
+}
+
+fn favicon_decode(bytes: &[u8], ext: &str) -> Option<Image> {
+    if !favicon_signature(bytes, ext) {
+        return None;
+    }
     let format = match ext {
         "jpg" => ImageFormat::Jpeg,
         "webp" => ImageFormat::Webp,
         "gif" => ImageFormat::Gif,
+        "svg" => ImageFormat::Svg,
         _ => ImageFormat::Png,
     };
-    Image::from_bytes(format, bytes.to_vec())
+    Some(Image::from_bytes(format, bytes.to_vec()))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
 fn favicon_image(value: &serde_json::Value) -> Option<Image> {
     let (bytes, ext) = favicon_payload(value)?;
-    Some(favicon_decode(&bytes, ext))
+    favicon_decode(&bytes, ext)
 }
 
 fn favicon_file_name(host: &str) -> String {
@@ -3171,14 +3514,16 @@ fn cached_favicons() -> HashMap<String, Option<Arc<Image>>> {
         let path = entry.path();
         let (Some(ext), Some(stem)) = (path.extension().and_then(|e| e.to_str()), path.file_stem().and_then(|s| s.to_str())) else { continue };
         let ext = ext.to_ascii_lowercase();
-        if !matches!(ext.as_str(), "png" | "jpg" | "webp" | "gif") {
+        if !matches!(ext.as_str(), "png" | "jpg" | "webp" | "gif" | "svg") {
             continue;
         }
         let Ok(bytes) = std::fs::read(&path) else { continue };
         if bytes.len() > 256 * 1024 {
             continue;
         }
-        out.insert(stem.to_string(), Some(Arc::new(favicon_decode(&bytes, &ext))));
+        if let Some(image) = favicon_decode(&bytes, &ext) {
+            out.insert(stem.to_string(), Some(Arc::new(image)));
+        }
     }
     out
 }

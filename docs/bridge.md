@@ -58,10 +58,16 @@ signature, and sizes again before writing an installed `.app`; the page is
 untrusted, so a manifest can never point the installer at another site. The
 `favicon` is async too: it tries the page's `<link rel=icon>` /
 `apple-touch-icon` URLs, then `/favicon.ico`, with `same-origin` credentials,
-a 3 s timeout, a 256 KB cap, and a PNG/JPEG/WebP/GIF whitelist. It replies
-`{available: true, data: "data:<mime>;base64,…", mime}` or
-`{available: false}`; SVG, ICO, and text are refused. The shell validates the
-prefix, mime, and decoded size before caching and painting it.
+a 3 s timeout, a 256 KB cap, and a PNG/JPEG/WebP/GIF/SVG/ICO whitelist
+(`image/x-icon` and `image/vnd.microsoft.icon` included). A blob with no
+`Content-Type` is typed from its URL, and the encoded payload is rebuilt with
+the declared mime. It replies `{available: true, data: "data:<mime>;base64,…",
+mime}` or `{available: false}`; text is refused. The shell validates the
+prefix, mime, byte signature, decoded size, and pixel dimensions (max 1024²,
+2 MP) before caching and painting it. An ICO's largest PNG-compressed entry is
+extracted; BMP-only ICOs fall back to the letter badge. The shell asks only
+after the page has a DOM and retries once per load, so the first request can
+no longer cache a negative answer for a blank tab.
 
 `press_key` dispatches keydown/keyup to the focused element (or `<body>`),
 with `ctrl`/`alt`/`shift`/`meta`; Enter submits a focused form unless the page

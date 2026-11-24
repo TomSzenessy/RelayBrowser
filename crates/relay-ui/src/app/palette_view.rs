@@ -248,10 +248,8 @@ impl RelayApp {
                 .max_h(px(480.))
                 .flex()
                 .flex_col()
-                .rounded(px(10.))
-                .bg(t.surface)
-                .border_1()
-                .border_color(t.border)
+                .rounded(px(12.))
+                .bg(t.raised)
                 .shadow_lg()
                 .overflow_hidden()
                 .on_mouse_down_out(cx.listener(|app, _, _, cx| {
@@ -264,8 +262,6 @@ impl RelayApp {
                         .items_center()
                         .h(px(44.))
                         .px_4()
-                        .border_b_1()
-                        .border_color(t.border)
                         .child(query_row),
                 )
                 .child(list),

@@ -43,10 +43,11 @@ pub fn manifest_from_result(value: &Value, page_url: &str) -> Result<Manifest, S
         return Err(reason.to_string());
     }
     let start_raw = value.get("start_url").and_then(Value::as_str).unwrap_or(page_url);
-    if Origin::parse(start_raw).is_none() {
-        return Err("The web app's start address is not an http(s) URL.".to_string());
-    }
-    if Origin::parse(start_raw).as_ref() != Some(&page) {
+    let start = Origin::parse(start_raw).ok_or_else(|| "The web app's start address is not an http(s) URL.".to_string())?;
+    // A manifest may start on https while the page was opened on http, or on
+    // the bare host while the page used www.; those are the same site and the
+    // app must still be installable. An unrelated host is refused.
+    if !start.same_site(&page) {
         return Err("The web app starts on a different site; open that site and install it from there.".to_string());
     }
     let raw_name = value
@@ -146,6 +147,16 @@ impl Origin {
         }
         let (host, port) = split_authority(authority, scheme)?;
         Some(Self { scheme, host: host.to_ascii_lowercase(), port })
+    }
+
+    /// Same registrable host (ignoring `www.`/`m.`/`app.` and an http→https
+    /// upgrade) and port. Used for the manifest's start URL only; deletion
+    /// still compares exact origins.
+    pub fn same_site(&self, other: &Self) -> bool {
+        fn bare(host: &str) -> &str {
+            host.strip_prefix("www.").or_else(|| host.strip_prefix("m.")).or_else(|| host.strip_prefix("app.")).unwrap_or(host)
+        }
+        bare(&self.host) == bare(&other.host) && self.port == other.port
     }
 }
 
@@ -353,6 +364,20 @@ pub fn write_bundle(plan: &BundlePlan) -> io::Result<PathBuf> {
         fs::write(&icns, FALLBACK_ICNS)?;
     }
     fs::write(marker_path(&plan.path), plan.marker.as_bytes())?;
+    #[cfg(target_os = "macos")]
+    {
+        // A folder of files is not a launchable app until macOS sees a
+        // signature and LaunchServices knows the bundle. Ad-hoc signing is
+        // enough for a locally created app; failures are not fatal because
+        // the user may run on a system without the developer tools.
+        let bundle = plan.path.display().to_string();
+        let _ = run("codesign", &["--force".into(), "--deep".into(), "--sign".into(), "-".into(), bundle.clone()]);
+        let _ = run("xattr", &["-dr".into(), "com.apple.quarantine".into(), bundle.clone()]);
+        let _ = run(
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+            &["-f".into(), bundle],
+        );
+    }
     Ok(plan.path.clone())
 }
 
@@ -430,14 +455,17 @@ fn launcher(start_url: &str, source_binary: &Path, name: &str, icon: &Path) -> S
     let url = shell_quote(start_url);
     let name = shell_quote(name);
     let icon = format!(" --app-icon {}", shell_quote(&icon.to_string_lossy()));
+    let args = format!("--app {url} --app-name {name}{icon}");
     format!(
         "#!/bin/sh\n\
-         # Relay web app. Runs the installed Relay so the app shares its session,\n\
-         # cookies, and updates; --app-name/--app-icon give it the site's identity.\n\
+         # Relay web app. Resolve Relay when the app launches, not when it was\n\
+         # installed: a moved or updated Relay.app must still open this site.\n\
          set -eu\n\
-         if [ -x {src} ]; then exec {src} --app {url} --app-name {name}{icon}; fi\n\
-         # Relay moved: let LaunchServices find it by name and pass the same args.\n\
-         exec open -a Relay --args --app {url} --app-name {name}{icon}\n"
+         for candidate in /Applications/Relay.app/Contents/MacOS/relay \"$HOME/Applications/Relay.app/Contents/MacOS/relay\" {src}; do\n\
+           if [ -x \"$candidate\" ]; then exec \"$candidate\" {args}; fi\n\
+         done\n\
+         # Last resort: LaunchServices by bundle id, then by name.\n\
+         exec open -b dev.relay.browser --args {args} 2>/dev/null || exec open -a Relay --args {args}\n"
     )
 }
 
@@ -546,6 +574,13 @@ mod tests {
         let cross = json!({"available":true,"name":"Evil","start_url":"https://evil.test/app"});
         assert!(manifest_from_result(&cross, PAGE).unwrap_err().contains("different site"));
 
+        // The same site on the bare host, or upgraded to https, is the same
+        // app: a manifest commonly starts on a canonical host.
+        let canonical = json!({"available":true,"name":"Shop","start_url":"https://www.shop.relay.test/app"});
+        assert_eq!(manifest_from_result(&canonical, PAGE).unwrap().start_url, "https://www.shop.relay.test/app");
+        let upgraded = json!({"available":true,"name":"Shop","start_url":"http://shop.relay.test/app"});
+        assert!(manifest_from_result(&upgraded, PAGE).is_ok());
+
         let js = json!({"available":true,"name":"JS","start_url":"javascript:alert(1)"});
         assert!(manifest_from_result(&js, PAGE).is_err());
 
@@ -622,7 +657,9 @@ mod tests {
         assert!(plan.launcher.contains("--app 'https://shop.relay.test/app'"));
         assert!(plan.launcher.contains("--app-name 'Relay Shop'"));
         assert!(plan.launcher.contains("--app-icon '/tmp/apps/Relay Shop.app/Contents/Resources/AppIcon.icns'"));
-        assert!(plan.launcher.contains("exec '/Applications/Relay.app/Contents/MacOS/relay'"));
+        assert!(plan.launcher.contains("/Applications/Relay.app/Contents/MacOS/relay"));
+        assert!(plan.launcher.contains("exec \"$candidate\""));
+        assert!(plan.launcher.contains("open -b dev.relay.browser"));
     }
 
     #[test]

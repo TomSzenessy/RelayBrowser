@@ -91,8 +91,6 @@ impl RelayApp {
             .flex_col()
             .rounded(px(10.))
             .bg(t.surface)
-            .border_1()
-            .border_color(t.border)
             .shadow_lg()
             .overflow_hidden()
             .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_library()))
@@ -103,8 +101,6 @@ impl RelayApp {
                     .justify_between()
                     .h(px(40.))
                     .px_4()
-                    .border_b_1()
-                    .border_color(t.border)
                     .child(div().text_size(px(14.)).text_color(t.text).child(lib.mode.title()))
                     .child(
                         div()
@@ -118,8 +114,6 @@ impl RelayApp {
                                         .px_2()
                                         .py_0p5()
                                         .rounded(px(4.))
-                                        .border_1()
-                                        .border_color(t.border)
                                         .text_size(px(11.))
                                         .text_color(t.text)
                                         .cursor_pointer()
@@ -139,8 +133,6 @@ impl RelayApp {
                     .items_center()
                     .h(px(42.))
                     .px_4()
-                    .border_b_1()
-                    .border_color(t.border)
                     .text_size(px(14.))
                     .text_color(if lib.query.is_empty() { t.muted } else { t.text })
                     .child(SharedString::from(title))
@@ -154,8 +146,6 @@ impl RelayApp {
                     .gap_2()
                     .h(px(38.))
                     .px_4()
-                    .border_b_1()
-                    .border_color(t.border)
                     .text_size(px(12.))
                     .text_color(t.text)
                     .child("Move to folder:")
@@ -237,8 +227,6 @@ impl RelayApp {
                     .min_h(px(52.))
                     .px_4()
                     .py_1()
-                    .border_b_1()
-                    .border_color(t.border)
                     .when(selected, |el| el.bg(t.hover))
                     .child(
                         div()
@@ -260,8 +248,6 @@ impl RelayApp {
                                         .px_2()
                                         .py_0p5()
                                         .rounded(px(4.))
-                                        .border_1()
-                                        .border_color(t.border)
                                         .text_size(px(10.))
                                         .text_color(t.text)
                                         .cursor_pointer()
@@ -281,8 +267,6 @@ impl RelayApp {
                                         .px_2()
                                         .py_0p5()
                                         .rounded(px(4.))
-                                        .border_1()
-                                        .border_color(t.border)
                                         .text_size(px(10.))
                                         .text_color(t.text)
                                         .cursor_pointer()
@@ -302,8 +286,6 @@ impl RelayApp {
                                         .px_2()
                                         .py_0p5()
                                         .rounded(px(4.))
-                                        .border_1()
-                                        .border_color(t.border)
                                         .text_size(px(10.))
                                         .text_color(t.text)
                                         .cursor_pointer()
@@ -329,8 +311,6 @@ impl RelayApp {
                 .flex_col()
                 .rounded(px(10.))
                 .bg(t.surface)
-                .border_1()
-                .border_color(t.border)
                 .shadow_lg()
                 .overflow_hidden()
                 .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_downloads()))
@@ -341,8 +321,6 @@ impl RelayApp {
                         .justify_between()
                         .h(px(44.))
                         .px_4()
-                        .border_b_1()
-                        .border_color(t.border)
                         .child(div().text_size(px(15.)).text_color(t.text).child("Downloads"))
                         .child(
                             div()
@@ -350,8 +328,6 @@ impl RelayApp {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(px(4.))
-                                .border_1()
-                                .border_color(t.border)
                                 .text_size(px(11.))
                                 .text_color(t.muted)
                                 .cursor_pointer()
@@ -382,8 +358,6 @@ impl RelayApp {
                     .min_h(px(46.))
                     .px_4()
                     .py_1()
-                    .border_b_1()
-                    .border_color(t.border)
                     .child(
                         div()
                             .flex()
@@ -420,8 +394,6 @@ impl RelayApp {
                             .px_2p5()
                             .py_1()
                             .rounded(px(5.))
-                            .border_1()
-                            .border_color(if just_copied { t.accent } else { t.border })
                             .bg(if just_copied { t.active } else { t.background })
                             .text_size(px(11.))
                             .text_color(if just_copied { t.accent } else { t.text })
@@ -446,8 +418,6 @@ impl RelayApp {
                 .flex_col()
                 .rounded(px(10.))
                 .bg(t.surface)
-                .border_1()
-                .border_color(t.border)
                 .shadow_lg()
                 .overflow_hidden()
                 .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_connect()))
@@ -458,8 +428,6 @@ impl RelayApp {
                         .justify_between()
                         .h(px(44.))
                         .px_4()
-                        .border_b_1()
-                        .border_color(t.border)
                         .child(div().text_size(px(15.)).text_color(t.text).child("Connect an agent"))
                         .child(div().text_size(px(11.)).text_color(t.muted).child("Copy the text; Relay changes no files")),
                 )
@@ -469,87 +437,161 @@ impl RelayApp {
 
     pub(super) fn render_shortcuts(&self, editor: &ShortcutEditor, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let mut list = div().id("shortcuts-list").flex().flex_col().max_h(px(460.)).overflow_y_scroll();
-        for (i, id) in ActionId::ALL.iter().copied().enumerate() {
-            let recording = editor.recording == Some(id);
+        let query = editor.query.trim().to_lowercase();
+        let mut list = div().id("shortcuts-list").flex().flex_col().gap_0p5().max_h(px(474.)).overflow_y_scroll().px_4().pb_4();
+        let mut shown = 0;
+        for group in keymap::SHORTCUT_GROUPS {
+            let ids: Vec<ActionId> = ActionId::ALL
+                .iter()
+                .copied()
+                .filter(|id| {
+                    id.group() == group
+                        && (query.is_empty()
+                            || id.label().to_lowercase().contains(&query)
+                            || id.as_str().contains(&query)
+                            || keymap::shortcut_label(self.keymap.key(*id)).to_lowercase().contains(&query))
+                })
+                .collect();
+            if ids.is_empty() {
+                continue;
+            }
+            shown += ids.len();
             list = list.child(
                 div()
-                    .id(("shortcut", i))
                     .flex()
                     .items_center()
                     .justify_between()
+                    .px_2()
+                    .pt_4()
+                    .pb_1()
+                    .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(group.to_uppercase())))
+                    .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(ids.len().to_string()))),
+            );
+            for id in ids {
+                let recording = editor.recording == Some(id);
+                let custom = self.keymap.key(id) != id.default_key();
+                let key = if recording { "…".to_string() } else { keymap::shortcut_label(self.keymap.key(id)) };
+                let mut row = div()
+                    .id(SharedString::from(format!("shortcut-{}", id.as_str())))
+                    .flex()
+                    .items_center()
                     .gap_3()
-                    .h(px(32.))
-                    .px_4()
-                    .border_b_1()
-                    .border_color(t.border)
-                    .text_size(px(12.))
+                    .h(px(34.))
+                    .px_3()
+                    .rounded(px(7.))
+                    .text_size(px(13.))
                     .when(recording, |d| d.bg(t.active))
-                    .child(div().text_color(t.text).child(id.label()))
+                    .hover(|s| s.bg(t.hover))
+                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(t.text).child(id.label()))
                     .child(
                         div()
+                            .w(px(78.))
+                            .flex_shrink_0()
                             .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_color(t.muted).child(SharedString::from(keymap::display_key(self.keymap.key(id)))))
+                            .justify_end()
                             .child(
                                 div()
-                                    .id(("shortcut-change", i))
                                     .px_2()
                                     .py_0p5()
-                                    .rounded(px(4.))
-                                    .border_1()
-                                    .border_color(if recording { t.accent } else { t.border })
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(t.hover))
-                                    .on_click(cx.listener(move |app, _, _, cx| {
-                                        app.start_recording(id, cx);
-                                    }))
-                                    .child(if recording { "Press keys…" } else { "Change" }),
+                                    .rounded(px(5.))
+                                    .bg(if recording { t.accent } else { t.background })
+                                    .text_size(px(12.))
+                                    .font_family("Menlo")
+                                    .text_color(if recording { gpui::rgb(0xffffff).into() } else { t.text })
+                                    .child(SharedString::from(key)),
                             ),
-                    ),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("shortcut-change-{}", id.as_str())))
+                            .w(px(74.))
+                            .flex_shrink_0()
+                            .flex()
+                            .justify_center()
+                            .px_2()
+                            .py_1()
+                            .rounded(px(5.))
+                            .bg(t.background)
+                            .text_size(px(11.))
+                            .text_color(if recording { t.accent } else { t.text })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.active))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.start_recording(id, cx);
+                            }))
+                            .child(if recording { "Press keys…" } else { "Change" }),
+                    );
+                if custom {
+                    row = row.child(
+                        div()
+                            .id(SharedString::from(format!("shortcut-reset-{}", id.as_str())))
+                            .w(px(22.))
+                            .h(px(22.))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(5.))
+                            .text_size(px(14.))
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.keymap.reset(id);
+                                app.apply_keymap(cx);
+                                app.toast(format!("{} restored", id.label()));
+                                cx.notify();
+                            }))
+                            .child("↺"),
+                    );
+                } else {
+                    row = row.child(div().w(px(22.)).flex_shrink_0());
+                }
+                list = list.child(row);
+            }
+        }
+        if shown == 0 {
+            list = list.child(
+                div().px_2().py_8().text_size(px(13.)).text_color(t.muted).child("No shortcut matches that search."),
             );
         }
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(60.)).bg(t.scrim).child(
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(46.)).bg(t.scrim).child(
             div()
                 .id("shortcuts")
-                .w(px(640.))
+                .w(px(720.))
+                .h(px(600.))
                 .flex()
                 .flex_col()
-                .rounded(px(10.))
+                .rounded(px(14.))
                 .bg(t.surface)
-                .border_1()
-                .border_color(t.border)
                 .shadow_lg()
                 .overflow_hidden()
-                .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_shortcuts()))
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| app.close_shortcuts(cx)))
                 .child(
                     div()
                         .flex()
-                        .items_center()
-                        .justify_between()
-                        .h(px(44.))
-                        .px_4()
-                        .border_b_1()
-                        .border_color(t.border)
-                        .child(div().text_size(px(15.)).text_color(t.text).child("Keyboard shortcuts"))
+                        .flex_col()
+                        .gap_1()
+                        .px_5()
+                        .pt_5()
+                        .pb_3()
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap_3()
+                                .justify_between()
+                                .child(div().text_size(px(17.)).text_color(t.text).child("Keyboard shortcuts"))
                                 .child(
                                     div()
                                         .id("shortcuts-reset")
-                                        .px_2()
-                                        .py_0p5()
-                                        .rounded(px(4.))
-                                        .border_1()
-                                        .border_color(t.border)
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded(px(6.))
+                                        .bg(t.background)
                                         .text_size(px(11.))
                                         .text_color(t.muted)
                                         .cursor_pointer()
-                                        .hover(|s| s.bg(t.hover))
+                                        .hover(|s| s.bg(t.hover).text_color(t.text))
                                         .on_click(cx.listener(|app, _, _, cx| {
                                             app.keymap.reset_all();
                                             app.apply_keymap(cx);
@@ -557,11 +599,51 @@ impl RelayApp {
                                             cx.notify();
                                         }))
                                         .child("Reset all"),
-                                )
-                                .child(div().text_size(px(11.)).text_color(t.muted).child(if editor.recording.is_some() { "Press a shortcut · Esc cancels" } else { "Esc closes" })),
+                                ),
+                        )
+                        .child(div().text_size(px(11.)).text_color(t.muted).child(
+                            if editor.recording.is_some() {
+                                "Press the new combination · Esc cancels"
+                            } else {
+                                "Click Change, then press a combination. Bare keys and ⌘Q are reserved."
+                            },
+                        ))
+                        .child(
+                            div()
+                                .id("shortcuts-search")
+                                .mt_2()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .h(px(32.))
+                                .px_3()
+                                .rounded(px(8.))
+                                .bg(t.background)
+                                .text_size(px(12.))
+                                .text_color(if query.is_empty() { t.muted } else { t.text })
+                                .child(div().text_size(px(11.)).text_color(t.muted).child("⌕"))
+                                .child(div().flex_1().child(SharedString::from(if editor.query.is_empty() {
+                                    "Search shortcuts".to_string()
+                                } else {
+                                    editor.query.clone()
+                                })))
+                                .child(div().text_size(px(10.)).text_color(t.muted).child(if editor.query.is_empty() { "type to filter" } else { "esc clears" })),
                         ),
                 )
-                .child(list),
+                .child(list)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px_5()
+                        .py_2p5()
+                        .bg(t.background)
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .child(format!("{} shortcuts", ActionId::ALL.len()))
+                        .child(if editor.recording.is_some() { "Recording" } else { "Esc closes" }),
+                ),
         )
     }
 
@@ -573,8 +655,6 @@ impl RelayApp {
                 .px_3()
                 .py_1p5()
                 .rounded(px(6.))
-                .border_1()
-                .border_color(if danger { t.error } else { t.border })
                 .bg(t.background)
                 .text_size(px(12.))
                 .text_color(if danger { t.error } else { t.text })
@@ -582,11 +662,11 @@ impl RelayApp {
                 .hover(|s| s.bg(t.hover))
                 .child(label)
         };
-        let switch = |id: &'static str, on: bool, danger: bool| {
+        let switch_dyn = |id: SharedString, on: bool, danger: bool| {
             let track_bg = if on {
                 if danger { t.error } else { t.accent }
             } else {
-                t.border
+                t.well
             };
             div()
                 .id(id)
@@ -601,6 +681,7 @@ impl RelayApp {
                 .cursor_pointer()
                 .child(div().size(px(16.)).rounded_full().bg(gpui::rgb(0xffffff)).shadow_sm())
         };
+        let switch = |id: &'static str, on: bool, danger: bool| switch_dyn(id.into(), on, danger);
         let row = |title: &'static str, subtitle: Option<&'static str>, control: gpui::AnyElement| {
             let mut left = div()
                 .flex()
@@ -619,8 +700,6 @@ impl RelayApp {
                 .justify_between()
                 .px_4()
                 .py_3()
-                .border_b_1()
-                .border_color(t.border)
                 .child(left)
                 .child(control)
         };
@@ -628,8 +707,6 @@ impl RelayApp {
             content
                 .rounded(px(8.))
                 .bg(t.background)
-                .border_1()
-                .border_color(t.border)
                 .overflow_hidden()
         };
 
@@ -638,8 +715,6 @@ impl RelayApp {
             .flex_shrink_0()
             .h_full()
             .bg(t.background)
-            .border_r_1()
-            .border_color(t.border)
             .p_3()
             .flex()
             .flex_col()
@@ -686,8 +761,6 @@ impl RelayApp {
                     .min_w(px(140.))
                     .justify_between()
                     .rounded(px(6.))
-                    .border_1()
-                    .border_color(if search_open { t.accent } else { t.border })
                     .bg(t.surface)
                     .text_size(px(12.))
                     .text_color(t.text)
@@ -705,7 +778,7 @@ impl RelayApp {
                     .child(div().text_size(px(10.)).text_color(t.muted).child(if search_open { "▴" } else { "▾" }))
                     .into_any_element();
 
-                let mut search_menu = div().flex().flex_col().px_4().py_2().gap_0p5().bg(t.surface).border_b_1().border_color(t.border);
+                let mut search_menu = div().flex().flex_col().px_4().py_2().gap_0p5().bg(t.well);
                 for (name, url) in palette::SEARCH_PRESETS {
                     let selected = self.search == *url;
                     let target_url = (*url).to_string();
@@ -746,8 +819,6 @@ impl RelayApp {
                     .min_w(px(140.))
                     .justify_between()
                     .rounded(px(6.))
-                    .border_1()
-                    .border_color(if sleep_open { t.accent } else { t.border })
                     .bg(t.surface)
                     .text_size(px(12.))
                     .text_color(t.text)
@@ -766,7 +837,7 @@ impl RelayApp {
                     .into_any_element();
 
                 const SLEEP_OPTS: [(u64, &str); 5] = [(5, "5 min"), (15, "15 min"), (30, "30 min"), (60, "60 min"), (0, "Never")];
-                let mut sleep_menu = div().flex().flex_col().px_4().py_2().gap_0p5().bg(t.surface).border_b_1().border_color(t.border);
+                let mut sleep_menu = div().flex().flex_col().px_4().py_2().gap_0p5().bg(t.well);
                 for (mins, label) in SLEEP_OPTS {
                     let selected = self.sleep_minutes == mins;
                     sleep_menu = sleep_menu.child(
@@ -813,6 +884,19 @@ impl RelayApp {
                     }))
                     .into_any_element();
                 general_card = general_card.child(row("Chrome bookmarks & history", Some("Import from your local Chrome profile"), import_btn));
+                let sections = self.start_sections();
+                for (id, section) in [
+                    ("settings-start-recent", Section::Recent),
+                    ("settings-start-frequent", Section::Frequent),
+                    ("settings-start-apps", Section::Apps),
+                    ("settings-start-bookmarks", Section::Bookmarks),
+                ] {
+                    let on = sections.contains(&section);
+                    let sw = switch(id, on, false)
+                        .on_click(cx.listener(move |app, _, _, cx| app.toggle_start_section(section, cx)))
+                        .into_any_element();
+                    general_card = general_card.child(row(section.title(), Some("Show this section on the new-tab page"), sw));
+                }
                 div()
                     .flex()
                     .flex_col()
@@ -822,7 +906,7 @@ impl RelayApp {
                     .into_any_element()
             }
             SettingsTab::Appearance => {
-                let mut theme_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.surface).border_1().border_color(t.border);
+                let mut theme_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.well);
                 for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
                     let id = match choice {
                         ThemeChoice::System => "settings-theme-system",
@@ -867,8 +951,6 @@ impl RelayApp {
                             .px_2p5()
                             .py_1()
                             .rounded(px(6.))
-                            .border_1()
-                            .border_color(if active { t.accent } else { t.border })
                             .when(active, |d| d.bg(t.active))
                             .text_size(px(12.))
                             .text_color(t.text)
@@ -882,7 +964,7 @@ impl RelayApp {
                             .child(choice.label()),
                     );
                 }
-                let mut strip_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.surface).border_1().border_color(t.border);
+                let mut strip_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.well);
                 for placement in tabstrip::Placement::ALL {
                     let id = match placement {
                         tabstrip::Placement::Left => "settings-tabs-left",
@@ -921,6 +1003,12 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let bottom_sw = switch("settings-bottom-bar", self.show_bottom_bar, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.toggle_bottom_bar();
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let appearance_card = div()
                     .flex()
                     .flex_col()
@@ -928,13 +1016,134 @@ impl RelayApp {
                     .child(row("Accent colour", None, accent_row.into_any_element()))
                     .child(row("Tab strip position", Some("Move tabs between Left, Top, and Right (⇧⌘S)"), strip_seg.into_any_element()))
                     .child(row("Show tab strip", Some("Hide to maximize page area; ⌘S toggles anytime"), strip_visible))
-                    .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw));
+                    .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw))
+                    .child(row("Show the bottom bar", Some("URL, tab count and agent state; hide it for a quieter page (⌘⌥B)"), bottom_sw));
                 div()
                     .flex()
                     .flex_col()
                     .gap_4()
                     .child(div().text_size(px(16.)).text_color(t.text).child("Appearance"))
                     .child(card(appearance_card))
+                    .into_any_element()
+            }
+            SettingsTab::Tabs => {
+                let restore_sw = switch("settings-restore-session", self.session_enabled, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.session_enabled = !app.session_enabled;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("restore_session", if app.session_enabled { "on" } else { "off" });
+                            if !app.session_enabled {
+                                let _ = store.clear_session();
+                                app.saved_session.clear();
+                            }
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let glyphs_sw = switch("settings-tab-glyphs", self.tab_glyphs, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.tab_glyphs = !app.tab_glyphs;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("tab_glyphs", if app.tab_glyphs { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let compact_sw = switch("settings-compact-tabs", self.compact_tabs, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.compact_tabs = !app.compact_tabs;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("compact_tabs", if app.compact_tabs { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let content = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Restore tabs at launch", Some("Reopen last session's pages asleep, so the RAM is not spent until you visit them"), restore_sw))
+                    .child(row("Site icons in tabs", Some("Off shows a coloured letter badge instead of each site's favicon"), glyphs_sw))
+                    .child(row("Compact tab rows", Some("Shorter rows for more tabs in the same column"), compact_sw));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Tabs"))
+                    .child(card(content))
+                    .into_any_element()
+            }
+            SettingsTab::Passwords => {
+                let fill_sw = switch("settings-login-fill", self.login_fill_enabled, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.login_fill_enabled = !app.login_fill_enabled;
+                        if !app.login_fill_enabled {
+                            app.login_fill_prompt = None;
+                        }
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("login_fill", if app.login_fill_enabled { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let save_sw = switch("settings-login-save", self.login_save_enabled, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.login_save_enabled = !app.login_save_enabled;
+                        if !app.login_save_enabled {
+                            if let Some((tab, _, _)) = app.login_save_prompt.take() {
+                                app.web.borrow().decline_save_login(tab);
+                            }
+                        }
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("login_save", if app.login_save_enabled { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let auto_sw = switch("settings-autofill-logins", self.autofill_logins, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.autofill_logins = !app.autofill_logins;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("autofill_logins", if app.autofill_logins { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let manage = btn("settings-manage-logins", "Manage…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.settings_tab = SettingsTab::Privacy;
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let passkeys = div()
+                    .px_2p5()
+                    .py_1()
+                    .rounded(px(5.))
+                    .bg(t.well)
+                    .text_size(px(11.))
+                    .text_color(t.muted)
+                    .child("Not available in this build")
+                    .into_any_element();
+                let import_hint = div()
+                    .text_size(px(10.))
+                    .font_family("Menlo")
+                    .text_color(t.muted)
+                    .child("relay import-passwords <file.csv>")
+                    .into_any_element();
+                let content = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Fill saved sign-ins", Some("Show a Keychain login when a sign-in field gets focus; the password never reaches an agent"), fill_sw))
+                    .child(row("Fill a single saved login automatically", Some("No second click when exactly one login is saved for the site"), auto_sw))
+                    .child(row("Offer to save passwords", Some("After a successful sign-in, offer the macOS Keychain"), save_sw))
+                    .child(row("Saved logins", Some("Delete a saved login for the site you are on, under Privacy"), manage))
+                    .child(row("Passkeys", Some("Apple grants the browser credential entitlement to signed browsers; this ad-hoc build does not have it yet"), passkeys))
+                    .child(row("Import Chrome passwords", Some("Writes internet passwords to the login Keychain, then deletes the CSV"), import_hint));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Passwords"))
+                    .child(card(content))
                     .into_any_element()
             }
             SettingsTab::Privacy => {
@@ -972,26 +1181,10 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
-                let login_sw = switch("settings-login-offers", self.login_offers_enabled, false)
-                    .on_click(cx.listener(|app, _, _, cx| {
-                        app.login_offers_enabled = !app.login_offers_enabled;
-                        if !app.login_offers_enabled {
-                            app.login_fill_prompt = None;
-                            if let Some((tab, _, _)) = app.login_save_prompt.take() {
-                                app.web.borrow().decline_save_login(tab);
-                            }
-                        }
-                        if let Some(store) = &app.store {
-                            let _ = store.set_setting("login_offers", if app.login_offers_enabled { "on" } else { "off" });
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element();
                 let privacy_card = div()
                     .flex()
                     .flex_col()
                     .child(row("Ad & tracker blocking", Some("Native WebKit content-rule blocker"), blocking_sw))
-                    .child(row("Keychain login autofill & save", Some("Offer to fill and save logins in macOS Keychain (never sent to agents)"), login_sw))
                     .child(row("Browsing history & saved session", Some("Removes all visited pages and open session tabs"), clear_btn));
                 let active_url = self
                     .active()
@@ -1022,8 +1215,6 @@ impl RelayApp {
                                 .justify_between()
                                 .px_4()
                                 .py_2p5()
-                                .border_b_1()
-                                .border_color(t.border)
                                 .child(div().text_size(px(13.)).text_color(t.text).child(SharedString::from(label)))
                                 .child(
                                     div()
@@ -1031,8 +1222,6 @@ impl RelayApp {
                                         .px_2p5()
                                         .py_1()
                                         .rounded(px(5.))
-                                        .border_1()
-                                        .border_color(t.border)
                                         .text_size(px(11.))
                                         .text_color(t.error)
                                         .cursor_pointer()
@@ -1057,7 +1246,7 @@ impl RelayApp {
                 col.into_any_element()
             }
             SettingsTab::Extensions => {
-                let installed = self.store.as_ref().and_then(|s| s.enabled_extensions().ok()).unwrap_or_default();
+                let installed = self.store.as_ref().and_then(|s| s.extensions().ok()).unwrap_or_default();
                 let import_ext_btn = btn(
                     "settings-ext-import-chrome",
                     if self.ext_busy { "Working…".into() } else { "Import from Chrome".into() },
@@ -1100,8 +1289,24 @@ impl RelayApp {
                             .child("No extensions installed yet."),
                     );
                 } else {
-                    for (id, name, _path) in installed {
+                    for ext in installed {
+                        let id = ext.id.clone();
+                        let path = ext.path.clone();
+                        let enabled = ext.enabled;
                         let rm_id = id.clone();
+                        let en_id = id.clone();
+                        let en_sw = switch_dyn(SharedString::from(format!("ext-en-{id}")), enabled, false)
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_extension_enabled(&en_id, !enabled);
+                                }
+                                if !enabled {
+                                    app.web.borrow().load_extension(std::path::Path::new(&path), &en_id, |_| {});
+                                }
+                                app.toast(if enabled { "Disabled; restart to unload it" } else { "Enabled" });
+                                cx.notify();
+                            }))
+                            .into_any_element();
                         list_card = list_card.child(
                             div()
                                 .flex()
@@ -1109,24 +1314,22 @@ impl RelayApp {
                                 .justify_between()
                                 .px_4()
                                 .py_2p5()
-                                .border_b_1()
-                                .border_color(t.border)
                                 .child(
                                     div()
                                         .flex()
                                         .flex_col()
                                         .gap_0p5()
-                                        .child(div().text_size(px(13.)).text_color(t.text).child(SharedString::from(name)))
-                                        .child(div().text_size(px(10.)).text_color(t.muted).font_family("Menlo").child(SharedString::from(id.clone()))),
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(div().text_size(px(13.)).text_color(t.text).child(SharedString::from(ext.name)))
+                                        .child(div().text_size(px(10.)).text_color(t.muted).font_family("Menlo").overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(format!("{} · v{}", id, ext.version)))),
                                 )
-                                .child(
+                                .child(div().flex().items_center().gap_3().child(en_sw).child(
                                     div()
                                         .id(SharedString::from(format!("ext-rm-{id}")))
                                         .px_2p5()
                                         .py_1()
                                         .rounded(px(5.))
-                                        .border_1()
-                                        .border_color(t.border)
                                         .text_size(px(11.))
                                         .text_color(t.error)
                                         .cursor_pointer()
@@ -1135,7 +1338,7 @@ impl RelayApp {
                                             app.remove_extension(&rm_id, cx);
                                         }))
                                         .child("Remove"),
-                                ),
+                                )),
                         );
                     }
                 }
@@ -1145,6 +1348,10 @@ impl RelayApp {
                     .gap_4()
                     .child(div().text_size(px(16.)).text_color(t.text).child("Extensions"))
                     .child(card(actions_card))
+                    .when(!self.ext_errors.borrow().is_empty(), |d| {
+                        let errors = self.ext_errors.borrow();
+                        d.child(div().text_size(px(11.)).text_color(t.error).child(SharedString::from(errors.join("\n"))))
+                    })
                     .child(div().text_size(px(12.)).text_color(t.muted).child("INSTALLED"))
                     .child(card(list_card))
                     .into_any_element()
@@ -1209,8 +1416,6 @@ impl RelayApp {
                             .px_2p5()
                             .py_1()
                             .rounded(px(5.))
-                            .border_1()
-                            .border_color(t.border)
                             .text_size(px(11.))
                             .text_color(if granted { t.accent } else { t.text })
                             .cursor_pointer()
@@ -1229,8 +1434,6 @@ impl RelayApp {
                                 .justify_between()
                                 .px_4()
                                 .py_2p5()
-                                .border_b_1()
-                                .border_color(t.border)
                                 .child(
                                     div()
                                         .flex()
@@ -1273,19 +1476,50 @@ impl RelayApp {
                     .child(card(sc_card))
                     .into_any_element()
             }
+            SettingsTab::About => {
+                let home = relay_bridge::paths::relay_home();
+                let info = |text: String| {
+                    div()
+                        .max_w(px(360.))
+                        .text_size(px(10.))
+                        .font_family("Menlo")
+                        .text_color(t.muted)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(text))
+                        .into_any_element()
+                };
+                let source = btn("settings-source", "GitHub".into(), false)
+                    .on_click(cx.listener(|app, _, _, _| app.open_help()))
+                    .into_any_element();
+                let content = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Version", Some("MacOS WebKit shell with a local MCP server"), info(env!("CARGO_PKG_VERSION").to_string())))
+                    .child(row("Profile", Some("History, bookmarks, settings, session, and the agent audit log"), info(home.display().to_string())))
+                    .child(row("Crash log", Some("Attach this file to a bug report; it contains no page data"), info(home.join("logs/panic.log").display().to_string())))
+                    .child(row("MCP socket", Some("Local agents connect here when the server is on"), info(self.mcp_socket.clone())))
+                    .child(row("Source", Some("Issues, releases, and the feature matrix"), source));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("About"))
+                    .child(card(content))
+                    .into_any_element()
+            }
         };
 
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(56.)).bg(t.scrim).child(
             div()
                 .id("settings")
-                .w(px(820.))
-                .h(px(560.))
+                .w(px(860.))
+                .h(px(600.))
                 .flex()
                 .flex_row()
-                .rounded(px(12.))
-                .bg(t.surface)
-                .border_1()
-                .border_color(t.border)
+                .rounded(px(14.))
+                .bg(t.raised)
                 .shadow_lg()
                 .overflow_hidden()
                 .on_mouse_down_out(cx.listener(|app, _, _, cx| {
@@ -1354,8 +1588,6 @@ impl RelayApp {
                 .px_3()
                 .rounded(px(8.))
                 .bg(t.surface)
-                .border_1()
-                .border_color(if f.found == Some(false) { t.warn } else { t.border })
                 .shadow_lg()
                 .text_size(px(13.))
                 .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(color).child(SharedString::from(text)))

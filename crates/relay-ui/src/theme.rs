@@ -113,6 +113,12 @@ impl AccentChoice {
 pub struct Theme {
     pub background: Hsla,
     pub surface: Hsla,
+    /// Cards and overlays: one step above `surface`, separated by a shadow
+    /// rather than a 1 px outline.
+    pub raised: Hsla,
+    /// Inputs and wells: one step below `surface`, so a field reads as a
+    /// recess without a border.
+    pub well: Hsla,
     pub page: Hsla,
     pub border: Hsla,
     pub text: Hsla,
@@ -152,6 +158,8 @@ impl Theme {
         Self {
             background: rgb(0x1b1c1f).into(),
             surface: rgb(0x232428).into(),
+            raised: rgb(0x292b31).into(),
+            well: rgb(0x151619).into(),
             page: rgb(0x1f2023).into(),
             border: rgb(0x34363b).into(),
             text: rgb(0xe6e6e9).into(),
@@ -172,6 +180,8 @@ impl Theme {
         Self {
             background: rgb(0xf6f6f7).into(),
             surface: rgb(0xffffff).into(),
+            raised: rgb(0xffffff).into(),
+            well: rgb(0xededf0).into(),
             page: rgb(0xfbfbfc).into(),
             border: rgb(0xe2e2e6).into(),
             text: rgb(0x1c1c1f).into(),

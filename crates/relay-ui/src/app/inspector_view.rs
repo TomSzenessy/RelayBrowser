@@ -5,7 +5,7 @@ use super::*;
 impl RelayApp {
     pub(super) fn render_inspector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let mut head = div().flex().items_center().gap_1().px_2().h(px(32.)).border_b_1().border_color(t.border);
+        let mut head = div().flex().items_center().gap_1().px_2().h(px(32.));
         for (tab, label) in [(SidebarTab::Agent, "Agent"), (SidebarTab::Inspector, "Inspector")] {
             let on = self.sidebar_tab == tab;
             head = head.child(
@@ -57,8 +57,6 @@ impl RelayApp {
             .flex()
             .flex_col()
             .bg(t.surface)
-            .border_l_1()
-            .border_color(t.border)
             .font_family("Menlo")
             .child(head)
             .child(div().id("sidebar-body").flex_1().overflow_y_scroll().text_size(px(12.)).child(body))
@@ -84,8 +82,6 @@ impl RelayApp {
                 .px_2()
                 .py_1()
                 .rounded(px(5.))
-                .border_1()
-                .border_color(t.border)
                 .text_size(px(11.))
                 .text_color(t.text)
                 .cursor_pointer()
@@ -131,8 +127,6 @@ impl RelayApp {
                             .px_2()
                             .py_0p5()
                             .rounded(px(4.))
-                            .border_1()
-                            .border_color(t.border)
                             .text_size(px(10.))
                             .text_color(if granted { t.accent } else { t.text })
                             .cursor_pointer()
@@ -188,8 +182,6 @@ impl RelayApp {
                     .py_1()
                     .rounded(px(5.))
                     .bg(t.background)
-                    .border_1()
-                    .border_color(t.border)
                     .text_size(px(10.))
                     .text_color(t.muted)
                     .cursor_pointer()
@@ -212,7 +204,7 @@ impl RelayApp {
 
     fn render_inspector_pane(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
-        let mut tabs = div().flex().gap_1().px_2().h(px(32.)).items_center().border_b_1().border_color(t.border);
+        let mut tabs = div().flex().gap_1().px_2().h(px(32.)).items_center();
         for p in Panel::ALL {
             let on = p == self.panel;
             tabs = tabs.child(
@@ -513,8 +505,6 @@ impl RelayApp {
                             .id(("con", i))
                             .px_1()
                             .py_0p5()
-                            .border_b_1()
-                            .border_color(t.border)
                             .cursor_pointer()
                             .hover(|s| s.bg(t.hover))
                             .text_color(color)
@@ -536,8 +526,6 @@ impl RelayApp {
                             .id(("ck", i))
                             .px_1()
                             .py_0p5()
-                            .border_b_1()
-                            .border_color(t.border)
                             .cursor_pointer()
                             .hover(|s| s.bg(t.hover))
                             .on_click(cx.listener(move |app, _, _, cx| {
@@ -569,8 +557,6 @@ impl RelayApp {
                 .px_1p5()
                 .py_0p5()
                 .rounded(px(4.))
-                .border_1()
-                .border_color(t.border)
                 .text_size(px(10.))
                 .text_color(t.text)
                 .cursor_pointer()
@@ -588,8 +574,6 @@ impl RelayApp {
                 let selector = detail.selector.clone();
                 let mut box_el = div()
                     .id("element-detail")
-                    .border_t_1()
-                    .border_color(t.border)
                     .bg(t.background)
                     .p_2()
                     .flex()
@@ -676,8 +660,6 @@ impl RelayApp {
                 }
                 let mut drawer = div()
                     .id("network-detail")
-                    .border_t_1()
-                    .border_color(t.border)
                     .bg(t.background)
                     .p_2()
                     .flex()

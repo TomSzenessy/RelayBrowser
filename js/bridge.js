@@ -858,23 +858,40 @@
   }
 
   var maxFaviconBytes = 256 * 1024;
-  function blobToIcon(blob) {
+  function iconTypeFromUrl(url) {
+    var clean = String(url || "").split(/[?#]/)[0].toLowerCase();
+    if (/\.svg$/.test(clean)) return "image/svg+xml";
+    if (/\.ico$/.test(clean)) return "image/x-icon";
+    if (/\.webp$/.test(clean)) return "image/webp";
+    if (/\.gif$/.test(clean)) return "image/gif";
+    if (/\.jpe?g$/.test(clean)) return "image/jpeg";
+    return "image/png";
+  }
+  function blobToIcon(blob, url) {
     return new Promise(function (resolve, reject) {
       if (blob.size > maxFaviconBytes) return reject(new Error("icon is too large"));
+      // Servers often send no Content-Type for /favicon.ico. Accept the
+      // formats the native side can decode, inferring from the URL when the
+      // header is missing or generic.
       var type = String(blob.type || "").toLowerCase();
-      if (!/^image\/(png|jpeg|webp|gif)$/.test(type)) return reject(new Error("icon format is not supported"));
+      if (!/^image\/(png|jpeg|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon)$/.test(type)) {
+        type = iconTypeFromUrl(url);
+      }
       var reader = new FileReader();
       reader.onload = function () {
-        var url = String(reader.result || "");
-        if (url.indexOf("data:" + type + ";base64,") !== 0) return reject(new Error("icon could not be encoded"));
-        resolve({ data: url, mime: type });
+        var data = String(reader.result || "");
+        var comma = data.indexOf(",");
+        if (comma < 0) return reject(new Error("icon could not be encoded"));
+        var payload = data.slice(comma + 1);
+        if (!/^[A-Za-z0-9+/=]+$/.test(payload)) return reject(new Error("icon could not be encoded"));
+        resolve({ data: "data:" + type + ";base64," + payload, mime: type });
       };
       reader.onerror = function () { reject(reader.error || new Error("could not read the icon")); };
       reader.readAsDataURL(blob);
     });
   }
   function faviconData(url) {
-    var data = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i.exec(url);
+    var data = /^data:(image\/(?:png|jpeg|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon));base64,([A-Za-z0-9+/=]+)$/i.exec(url);
     if (data) {
       if (data[2].length > maxFaviconBytes * 4 / 3) return Promise.reject(new Error("icon is too large"));
       return Promise.resolve({ data: url, mime: data[1].toLowerCase() });
@@ -883,7 +900,7 @@
     if (!abs) return Promise.reject(new Error("icon is not an http(s) URL"));
     return fetchWithTimeout(abs, 3000)
       .then(function (r) { return r.blob(); })
-      .then(blobToIcon);
+      .then(function (blob) { return blobToIcon(blob, abs); });
   }
   function favicon() {
     var seen = Object.create(null);

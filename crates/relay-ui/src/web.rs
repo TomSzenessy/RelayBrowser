@@ -30,7 +30,9 @@ pub enum WebEvent {
     /// Reply to [`WebHost::find`]: whether the text occurs in the page.
     Found { tab: TabId, found: bool },
     /// Native-trusted focus in a login form (never carries secrets).
-    LoginFocus { tab: TabId, url: String, form_idx: usize },
+    LoginFocus { tab: TabId, url: String, form_idx: i64 },
+    /// The page answered a fill request: true when a password field was set.
+    LoginFilled { tab: TabId, ok: bool },
     /// Native-verified post-submit login save offer (never carries secrets).
     LoginSaveOffer { tab: TabId, url: String, username: String },
 }
@@ -64,6 +66,7 @@ mod imp {
                     EngineEvent::OpenInNewTab { opener, url } => WebEvent::OpenInNewTab { opener, url },
                     EngineEvent::Slept(t) => WebEvent::Slept(t),
                     EngineEvent::LoginFocus { tab, url, form_idx } => WebEvent::LoginFocus { tab, url, form_idx },
+                    EngineEvent::LoginFilled { tab, ok } => WebEvent::LoginFilled { tab, ok },
                     EngineEvent::LoginSaveOffer { tab, url, username } => WebEvent::LoginSaveOffer { tab, url, username },
                 })
             });
@@ -256,7 +259,7 @@ mod imp {
 
         /// Explicitly fill one confirmed Keychain login directly into the isolated
         /// `relay.login` content world. Password never leaves `WebHost`.
-        pub fn fill_login(&self, tab: TabId, url: &str, form_idx: usize, username: &str, path: &str) -> Result<(), String> {
+        pub fn fill_login(&self, tab: TabId, url: &str, form_idx: i64, username: &str, path: &str) -> Result<(), String> {
             let origin = relay_extensions::login::Origin::parse(url).map_err(|e| e.to_string())?;
             // D3: bind to the live native origin at fill time, not the focus-time URL.
             let live = self.engine.current_url(tab).and_then(|u| relay_extensions::login::Origin::parse(&u).ok());
@@ -287,6 +290,12 @@ mod imp {
 
         pub fn decline_save_login(&self, tab: TabId) {
             self.engine.drop_pending_login(tab);
+        }
+
+        /// When saving is off, the engine must not read a submitted password
+        /// at all; fill-only builds still receive focus offers.
+        pub fn set_login_capture(&mut self, enabled: bool) {
+            self.engine.set_login_capture(enabled);
         }
 
         pub fn delete_saved_login(&self, url: &str, username: &str, path: &str) -> Result<bool, String> {
@@ -351,13 +360,14 @@ mod imp {
         pub fn list_login_candidates(&self, _url: &str) -> Vec<(String, String)> {
             vec![]
         }
-        pub fn fill_login(&self, _tab: TabId, _url: &str, _form_idx: usize, _username: &str, _path: &str) -> Result<(), String> {
+        pub fn fill_login(&self, _tab: TabId, _url: &str, _form_idx: i64, _username: &str, _path: &str) -> Result<(), String> {
             Err("Keychain autofill requires macOS".into())
         }
         pub fn accept_save_login(&self, _tab: TabId) -> Result<String, String> {
             Err("Keychain save requires macOS".into())
         }
         pub fn decline_save_login(&self, _tab: TabId) {}
+        pub fn set_login_capture(&mut self, _enabled: bool) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
             Ok(false)
         }

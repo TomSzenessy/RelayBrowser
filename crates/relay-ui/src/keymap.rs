@@ -132,6 +132,64 @@ action_table! {
     ShowDownloads => "downloads", "Show downloads", "secondary-shift-j";
     NewPrivateTab => "new-private-tab", "New private tab", "secondary-shift-n";
     Print => "print", "Print page", "secondary-p";
+    ToggleBottomBar => "bottom-bar", "Show / hide bottom bar", "secondary-alt-b";
+}
+
+/// The headings Settings → Keyboard shortcuts draws, in order. A new action
+/// must be assigned to exactly one group; the test below fails otherwise.
+pub const SHORTCUT_GROUPS: [&str; 6] = ["Essentials", "Tabs", "Page", "Window", "Agents", "Editing"];
+
+impl ActionId {
+    pub fn group(self) -> &'static str {
+        match self {
+            ActionId::OpenPalette
+            | ActionId::OpenLocation
+            | ActionId::NewTab
+            | ActionId::CloseTab
+            | ActionId::ReopenClosedTab
+            | ActionId::Reload
+            | ActionId::Back
+            | ActionId::Forward
+            | ActionId::Quit => "Essentials",
+            ActionId::NextTab
+            | ActionId::PrevTab
+            | ActionId::SelectTab1
+            | ActionId::SelectTab2
+            | ActionId::SelectTab3
+            | ActionId::SelectTab4
+            | ActionId::SelectTab5
+            | ActionId::SelectTab6
+            | ActionId::SelectTab7
+            | ActionId::SelectTab8
+            | ActionId::SelectTab9
+            | ActionId::TogglePin
+            | ActionId::ToggleTabStrip
+            | ActionId::NextTabStripPosition
+            | ActionId::NewPrivateTab => "Tabs",
+            ActionId::Find
+            | ActionId::ZoomIn
+            | ActionId::ZoomOut
+            | ActionId::ZoomReset
+            | ActionId::LinkHints
+            | ActionId::ToggleReader
+            | ActionId::TogglePictureInPicture
+            | ActionId::Print
+            | ActionId::CopyCleanUrl
+            | ActionId::CopyMarkdown
+            | ActionId::ToggleBookmark => "Page",
+            ActionId::ToggleInspector
+            | ActionId::WebInspector
+            | ActionId::ToggleSplit
+            | ActionId::ToggleSettings
+            | ActionId::ToggleBottomBar
+            | ActionId::Minimize
+            | ActionId::ShowHistory
+            | ActionId::ShowBookmarks
+            | ActionId::ShowDownloads => "Window",
+            ActionId::ToggleAgents | ActionId::CycleAgentPolicy => "Agents",
+            ActionId::Cut | ActionId::Copy | ActionId::Paste | ActionId::SelectAll | ActionId::Undo | ActionId::Redo => "Editing",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -288,7 +346,7 @@ mod tests {
             assert!(ids.insert(id.as_str()), "duplicate action id {}", id.as_str());
             assert!(labels.insert(id.label()), "duplicate Settings label {}", id.label());
         }
-        assert_eq!(ActionId::ALL.len(), 51);
+        assert_eq!(ActionId::ALL.len(), 52);
     }
 
     #[test]
@@ -368,6 +426,16 @@ mod tests {
         assert_eq!(map.key(ActionId::Find), ActionId::Find.default_key());
         map.reset_all();
         assert_eq!(map, Keymap::default());
+    }
+
+    #[test]
+    fn every_action_has_one_settings_group() {
+        let mut seen = std::collections::HashSet::new();
+        for id in ActionId::ALL {
+            assert!(SHORTCUT_GROUPS.contains(&id.group()), "{id:?} has group {:?}", id.group());
+            seen.insert(id.group());
+        }
+        assert_eq!(seen.len(), SHORTCUT_GROUPS.len(), "a heading would be empty");
     }
 
     #[test]

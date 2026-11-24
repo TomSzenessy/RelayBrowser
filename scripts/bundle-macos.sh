@@ -50,7 +50,21 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 
 # Apple Silicon requires a signature even for local runs; ad-hoc is enough here.
-codesign --force --deep --sign - "$app" >/dev/null
+#
+# Passkeys need Apple's restricted browser entitlement, which macOS refuses
+# unless the matching Developer ID profile is embedded. Set RELAY_PASSKEYS=1
+# and RELAY_PROVISIONPROFILE=/path/to/profile.provisionprofile to opt in; the
+# default ad-hoc build stays exactly as before so local installs keep working.
+if [[ "${RELAY_PASSKEYS:-0}" == "1" ]]; then
+  if [[ -z "${RELAY_PROVISIONPROFILE:-}" || ! -f "$RELAY_PROVISIONPROFILE" ]]; then
+    echo "bundle: RELAY_PASSKEYS=1 needs RELAY_PROVISIONPROFILE pointing at the Apple-issued profile" >&2
+    exit 1
+  fi
+  cp "$RELAY_PROVISIONPROFILE" "$app/Contents/embedded.provisionprofile"
+  codesign --force --deep --sign - --entitlements "$root/scripts/Relay.entitlements" "$app" >/dev/null
+else
+  codesign --force --deep --sign - "$app" >/dev/null
+fi
 codesign --verify --deep --strict "$app"
 
 "$app/Contents/MacOS/relay" --version

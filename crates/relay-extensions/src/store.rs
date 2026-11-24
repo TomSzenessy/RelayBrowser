@@ -48,6 +48,16 @@ pub struct ImportCounts {
     pub history: usize,
 }
 
+/// One installed extension row, as the Settings manager shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionEntry {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub path: String,
+    pub enabled: bool,
+}
+
 /// Maximum tabs kept in the saved session.
 pub const MAX_SESSION_TABS: usize = 200;
 
@@ -499,6 +509,28 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Every installed extension, enabled or not, for the manager.
+    pub fn extensions(&self) -> Result<Vec<ExtensionEntry>, Error> {
+        let mut stmt = self.conn.prepare("SELECT id, name, version, path, enabled FROM extensions ORDER BY name")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ExtensionEntry {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                version: r.get(2)?,
+                path: r.get(3)?,
+                enabled: r.get::<_, i64>(4)? != 0,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Enable or disable an installed extension. The manager applies a load
+    /// immediately; disabling unloads on the next launch.
+    pub fn set_extension_enabled(&self, id: &str, enabled: bool) -> Result<bool, Error> {
+        let changed = self.conn.execute("UPDATE extensions SET enabled = ?2 WHERE id = ?1", params![id, i64::from(enabled)])?;
+        Ok(changed > 0)
+    }
+
     pub fn remove_extension(&self, id: &str) -> Result<bool, Error> {
         let changed = self.conn.execute("DELETE FROM extensions WHERE id = ?1", params![id])?;
         Ok(changed > 0)
@@ -925,6 +957,23 @@ mod tests {
         assert_eq!(v["session_tab_count"], 0);
         assert_eq!(v["site_prefs"], serde_json::json!({}));
         assert!(v["agent_audit"].is_array());
+    }
+
+    #[test]
+    fn extension_manager_lists_and_toggles_installed_rows() {
+        let s = Store::in_memory().unwrap();
+        s.record_extension("ext1", "uBlock", "1.0.0", Path::new("/tmp/ext1")).unwrap();
+        s.record_extension("ext2", "Reader", "2.0.0", Path::new("/tmp/ext2")).unwrap();
+        let all = s.extensions().unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|e| e.enabled));
+        assert!(s.set_extension_enabled("ext1", false).unwrap());
+        let all = s.extensions().unwrap();
+        assert!(!all.iter().find(|e| e.id == "ext1").unwrap().enabled);
+        assert_eq!(s.enabled_extensions().unwrap().len(), 1);
+        assert!(!s.set_extension_enabled("missing", false).unwrap());
+        assert!(s.remove_extension("ext2").unwrap());
+        assert_eq!(s.extensions().unwrap().len(), 1);
     }
 
     fn tab(url: &str, active: bool) -> SessionTab {

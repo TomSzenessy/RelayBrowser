@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Passkeys / WebAuthn for a browser other than Safari.
+
+    Apple grants this restricted entitlement to browsers on request; it is
+    not present in an ad-hoc or self-signed build. `scripts/bundle-macos.sh`
+    applies this file only when RELAY_PASSKEYS=1 and a Developer ID
+    provisioning profile is supplied through RELAY_PROVISIONPROFILE, because
+    macOS refuses the entitlement without the matching profile.
+
+    The entitlement alone lets WKWebView present the system passkey sheet.
+    Full conditional-mediation support (a passkey offered under the name
+    field) is not implemented yet; see docs/passkeys.md.
+  -->
+  <key>com.apple.developer.web-browser.public-key-credential</key>
+  <true/>
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <!--
+      A browser cannot list every relying party. Apple's browser entitlement
+      is the supported route for arbitrary sites; associated domains are only
+      useful for the owner's own domains.
+    -->
+    <string>webcredentials:relay.example</string>
+  </array>
+</dict>
+</plist>

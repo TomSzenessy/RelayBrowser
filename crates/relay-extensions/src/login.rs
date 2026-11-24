@@ -364,6 +364,13 @@ impl fmt::Debug for Password {
     }
 }
 
+impl Drop for Password {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.0.zeroize();
+    }
+}
+
 /// One captured login, held in native memory only long enough to write the
 /// Keychain or answer a save prompt. `Debug` redacts the password; the type has
 /// no `Serialize`, no `Clone`, and no bridge representation.

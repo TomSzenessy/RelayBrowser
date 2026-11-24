@@ -114,9 +114,7 @@ impl RelayApp {
                 .pt(if is_left { px(34.) } else { px(10.) })
                 .w(px(strip.width()))
                 .h_full()
-                .bg(t.surface)
-                .border_color(t.border);
-            bar = if is_left { bar.border_r_1() } else { bar.border_l_1() };
+                .bg(t.surface);
             // Compact navigation + bookmark + fold header row.
             bar = bar.child(
                 div()
@@ -209,8 +207,6 @@ impl RelayApp {
                 .h(px(strip.height()))
                 .w_full()
                 .bg(t.surface)
-                .border_b_1()
-                .border_color(t.border)
                 .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
                 .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
                 .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
@@ -246,14 +242,13 @@ impl RelayApp {
             .id(("pin-tile", id as usize))
             .relative()
             .w(px(45.))
-            .h(px(34.))
+            .h(px(if self.compact_tabs { 30. } else { 34. }))
             .flex()
             .items_center()
             .justify_center()
             .rounded(px(8.))
-            .bg(if is_active { t.active } else { t.background })
-            .border_1()
-            .border_color(if is_active { t.accent } else { t.border })
+            .bg(if is_active { t.active } else { t.raised })
+            .when(is_active, |d| d.shadow_sm())
             .cursor_pointer()
             .hover(|s| s.bg(t.hover))
             .on_click(cx.listener(move |app, _, _, cx| {
@@ -268,7 +263,7 @@ impl RelayApp {
                 app.tab_menu = if app.tab_menu == Some(id) { None } else { Some(id) };
                 cx.notify();
             }))
-            .child(self.site_icon(&tab.url, &tab.title, 16.))
+            .child(if self.tab_glyphs { self.site_icon(&tab.url, &tab.title, 16.) } else { monogram_icon(&tab.url, &tab.title, 16.) })
             .when(tab.playing_audio, |d| {
                 d.child(div().absolute().bottom(px(2.)).right(px(3.)).text_size(px(9.)).text_color(t.accent).child("♪"))
             })
@@ -310,9 +305,8 @@ impl RelayApp {
             .my_0p5()
             .p_1()
             .rounded(px(6.))
-            .bg(t.background)
-            .border_1()
-            .border_color(t.border)
+            .bg(t.raised)
+            .shadow_lg()
             .flex()
             .flex_col()
             .gap_0p5()
@@ -357,10 +351,10 @@ impl RelayApp {
             .flex()
             .items_center()
             .gap_1p5()
-            .h(px(28.))
+            .h(px(if self.compact_tabs { 24. } else { 28. }))
             .px_2()
             .rounded(px(6.))
-            .text_size(px(13.))
+            .text_size(px(if self.compact_tabs { 12. } else { 13. }))
             .cursor_pointer()
             .text_color(if tab.sleeping { t.muted } else { t.text })
             .hover(|s| s.bg(t.hover))
@@ -397,8 +391,10 @@ impl RelayApp {
                     .text_color(gpui::rgb(0xffffff))
                     .child(SharedString::from(n.to_string())),
             );
-        } else {
+        } else if self.tab_glyphs {
             row = row.child(self.site_icon(&tab.url, &tab.title, 15.));
+        } else {
+            row = row.child(monogram_icon(&tab.url, &tab.title, 15.));
         }
         let title_el = if vertical {
             div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
@@ -524,9 +520,7 @@ impl RelayApp {
             .w(px(26.))
             .h(px(24.))
             .rounded(px(6.))
-            .bg(t.surface.opacity(0.92))
-            .border_1()
-            .border_color(t.border)
+            .bg(t.raised)
             .shadow_sm()
             .cursor_pointer()
             .flex()
@@ -591,10 +585,9 @@ impl RelayApp {
                             .id(("retry-page", tab as usize))
                             .px_3()
                             .py_1p5()
-                            .rounded(px(6.))
-                            .border_1()
-                            .border_color(t.border)
-                            .bg(t.surface)
+                            .rounded(px(7.))
+                            .bg(t.raised)
+                            .shadow_sm()
                             .text_size(px(13.))
                             .cursor_pointer()
                             .hover(|s| s.bg(t.hover))
@@ -642,18 +635,18 @@ impl RelayApp {
     /// A brand-new profile falls back to the welcome card inside the page.
     fn render_start_page(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
-        let title = self.app_name.clone().unwrap_or_else(|| "Relay".to_string());
+        // No wordmark: the window is the browser, and a blank page should be
+        // quiet. The search field is the only thing on it.
         let page = div()
             .flex_1()
             .h_full()
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(56.))
+            .pt(px(96.))
             .px_6()
             .bg(t.page)
             .overflow_hidden()
-            .child(div().text_size(px(28.)).text_color(t.text).child(SharedString::from(title)))
             .child(self.start_search(cx));
         let mut page = page;
         if let Some((title, body)) = &self.agent_widget {
@@ -664,10 +657,9 @@ impl RelayApp {
                     .w(px(560.))
                     .px_4()
                     .py_3()
-                    .rounded(px(8.))
-                    .bg(t.surface)
-                    .border_1()
-                    .border_color(t.border)
+                    .rounded(px(10.))
+                    .bg(t.raised)
+                    .shadow_sm()
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -690,20 +682,19 @@ impl RelayApp {
             .flex()
             .items_center()
             .justify_between()
-            .rounded(px(10.))
-            .border_1()
-            .border_color(t.border)
+            .rounded(px(12.))
             .bg(t.surface)
+            .shadow_sm()
             .text_size(px(14.))
             .text_color(t.muted)
             .cursor_pointer()
-            .hover(|s| s.bg(t.hover))
+            .hover(|s| s.bg(t.raised))
             .on_click(cx.listener(|app, _, _, cx| {
                 app.open_palette(None, false);
                 cx.notify();
             }))
             .child("Search or enter an address")
-            .child(div().text_size(px(11.)).child("⌘K"))
+            .child(div().text_size(px(11.)).text_color(t.muted).child("⌘K"))
             .into_any_element()
     }
 
@@ -836,10 +827,8 @@ impl RelayApp {
                 .id(id)
                 .px_3()
                 .py_1p5()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(t.border)
-                .bg(t.surface)
+                .rounded(px(7.))
+                .bg(t.background)
                 .text_size(px(13.))
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
@@ -856,10 +845,9 @@ impl RelayApp {
             .flex_col()
             .gap_3()
             .p_6()
-            .rounded(px(10.))
-            .bg(t.surface)
-            .border_1()
-            .border_color(t.border)
+            .rounded(px(14.))
+            .bg(t.raised)
+            .shadow_lg()
             .child(div().text_size(px(15.)).text_color(t.text).child("A browser that agents can read"))
             .child(div().text_size(px(13.)).text_color(t.muted).child("Import your Chrome bookmarks and history, or connect Claude Code, Codex, OpenCode, or Zed to the live page."))
             .child(div().flex().gap_2().child(button("import", "Import from Chrome", Command::ImportChrome, cx)).child(button("mcp", "Copy MCP setup", Command::CopyMcpSetup, cx)))
@@ -905,8 +893,6 @@ impl RelayApp {
             .px_4()
             .py_2()
             .bg(t.warn.opacity(0.16))
-            .border_b_1()
-            .border_color(t.warn)
             .text_size(px(12.))
             .text_color(t.text)
             .child(div().flex_1().child(SharedString::from(format!(
@@ -921,9 +907,8 @@ impl RelayApp {
                     .id("challenge-continue")
                     .px_2()
                     .py_0p5()
-                    .rounded(px(4.))
-                    .border_1()
-                    .border_color(t.warn)
+                    .rounded(px(5.))
+                    .bg(t.warn.opacity(0.14))
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
                     .on_click(cx.listener(move |app, _, _, cx| {
@@ -949,8 +934,6 @@ impl RelayApp {
             .h(px(30.))
             .px_3()
             .bg(t.agent_bg)
-            .border_t_1()
-            .border_color(t.agent)
             .text_size(px(12.))
             .text_color(t.text)
             .child(div().child("Agents paused — page automation is stopped"))
@@ -959,9 +942,8 @@ impl RelayApp {
                     .id("resume-agents")
                     .px_2()
                     .py_0p5()
-                    .rounded(px(4.))
-                    .border_1()
-                    .border_color(t.agent)
+                    .rounded(px(5.))
+                    .bg(t.agent_bg)
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
                     .on_click(cx.listener(|app, _, _, cx| {
@@ -989,9 +971,8 @@ impl RelayApp {
             .gap_2()
             .h(px(34.))
             .px_3()
-            .bg(t.surface)
-            .border_t_1()
-            .border_color(t.accent)
+            .bg(t.raised)
+            .shadow_sm()
             .text_size(px(12.))
             .text_color(t.text)
             .child(div().text_color(t.muted).child(SharedString::from(format!("Keychain login for {host}:"))));
@@ -1007,8 +988,6 @@ impl RelayApp {
                     .py_0p5()
                     .rounded(px(5.))
                     .bg(t.active)
-                    .border_1()
-                    .border_color(t.accent)
                     .text_color(t.text)
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
@@ -1016,7 +995,7 @@ impl RelayApp {
                         let res = app.web.borrow().fill_login(tab, &url_c, form_idx, &u, &p);
                         app.login_fill_prompt = None;
                         match res {
-                            Ok(()) => app.toast("Filled login from Keychain"),
+                            Ok(()) => app.toast("Filling password…"),
                             Err(e) => app.toast(e),
                         }
                         app.focus_active_page();
@@ -1063,9 +1042,8 @@ impl RelayApp {
                 .gap_2()
                 .h(px(34.))
                 .px_3()
-                .bg(t.surface)
-                .border_t_1()
-                .border_color(t.accent)
+                .bg(t.raised)
+                .shadow_sm()
                 .text_size(px(12.))
                 .text_color(t.text)
                 .child(div().flex_1().child(SharedString::from(format!("Save login for {display_user} on {host} to macOS Keychain?"))))
@@ -1076,8 +1054,6 @@ impl RelayApp {
                         .py_0p5()
                         .rounded(px(5.))
                         .bg(t.active)
-                        .border_1()
-                        .border_color(t.accent)
                         .text_color(t.text)
                         .cursor_pointer()
                         .hover(|s| s.bg(t.hover))
@@ -1142,18 +1118,15 @@ impl RelayApp {
             .gap_3()
             .text_size(px(11.))
             .text_color(t.muted)
-            .bg(t.surface)
-            .border_t_1()
-            .border_color(t.border)
+            .bg(t.background)
             .when(self.strip.folded, |d| {
                 d.child(
                     div()
                         .id("status-unfold-tabs")
                         .px_1p5()
                         .py_0p5()
-                        .rounded(px(4.))
-                        .border_1()
-                        .border_color(t.border)
+                        .rounded(px(5.))
+                        .bg(t.well)
                         .text_size(px(10.))
                         .text_color(t.text)
                         .cursor_pointer()

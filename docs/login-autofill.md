@@ -3,7 +3,7 @@
 <!-- index: design | Login offer/fill/save design, Keychain storage, redaction, and open owner decisions | Before implementing password fill/save or reviewing its security. -->
 <!-- covers: crates/relay-extensions/src/login.rs crates/relay-extensions/src/mac.rs crates/relay-webkit/src/mac.rs crates/relay-ui/src/web.rs -->
 
-Status: **implemented (native macOS Keychain + isolated `WKContentWorld` path).**
+Status: **implemented (native macOS Keychain + isolated `WKContentWorld` path); residual hardening tracked in #186.**
 The pure model in
 [`crates/relay-extensions/src/login.rs`](../crates/relay-extensions/src/login.rs),
 macOS Keychain CRUD in
@@ -25,9 +25,26 @@ successful login, decline/no-repeat behavior, and the security constraints
 below.
 
 Out of scope for the first implementation: password generation, breach
-checking, sync, passkeys/WebAuthn, Touch ID-unlocked vaults, multi-step/SSO
-flows, iframe login forms, and a `www.`/eTLD+1 alias policy. Each is an owner
-decision or a later issue, not an implicit part of #57.
+checking, sync, passkeys/WebAuthn (see [`passkeys.md`](./passkeys.md)), Touch
+ID-unlocked vaults, iframe login forms, and a `www.`/eTLD+1 alias policy. Each
+is an owner decision or a later issue, not an implicit part of #57.
+
+### Owner pass (#189)
+
+- `Settings → Passwords` has independent **Fill saved sign-ins**, **Fill a
+  single saved login automatically**, and **Offer to save passwords** switches.
+  The older `login_offers` key still sets both, so an existing profile keeps
+  its choice.
+- A form-less SPA is filled through `formIdx = -1`, which now reaches the
+  helper unchanged; open shadow roots are searched, and a two-step sign-in's
+  account field is filled before the password step.
+- A fill reports `LoginFilled { ok }` from the page; the shell no longer
+  toasts success before the field is set.
+- Password capture is refused in native code when saving is off, and passwords
+  are zeroized when a `Password`/`PendingCapture` is dropped.
+- A save offer requires a main-frame 2xx response in addition to the same
+  origin, so an error page that still renders a form cannot ask to store the
+  posted password.
 
 ## Assets and trust boundaries
 

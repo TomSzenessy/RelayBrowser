@@ -114,13 +114,32 @@ fn favicon_reply_is_validated_before_decoding() {
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU2l4wAAAABJRU5ErkJggg==";
     assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": format!("data:image/png;base64,{png}")})).is_some());
     assert!(favicon_image(&serde_json::json!({"available": false, "mime": "image/png", "data": format!("data:image/png;base64,{png}")})).is_none());
-    assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/svg+xml", "data": "data:image/svg+xml;base64,PHN2Zz4="})).is_none());
+    let svg = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjNWI4Y2ZmIi8+PC9zdmc+";
+    assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/svg+xml", "data": format!("data:image/svg+xml;base64,{svg}")})).is_some());
+    assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/svg+xml", "data": "data:image/svg+xml;base64,bm90LXN2Zw=="})).is_none(), "bytes must carry the declared format");
     assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": "data:image/jpeg;base64,AAAA"})).is_none());
     assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": "not-a-data-url"})).is_none());
     let huge = format!("data:image/png;base64,{}", "A".repeat(400 * 1024));
     assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": huge})).is_none());
     assert!(!favicon_file_name("evil/../x").contains('/'));
     assert!(favicon_file_name("../../etc").chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_'));
+}
+
+#[test]
+fn ico_favicons_use_the_largest_png_payload() {
+    let ico = webapp::base64_decode("AAABAAEAAQEAAAEAIABGAAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAABAAAAAQgGAAAAHxXEiQAAAA1JREFUeNpj/M/AUA8ABYMCf5VNpeMAAAAASUVORK5CYII=").unwrap();
+    let png = ico_png(&ico).expect("PNG-compressed ICO");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(ico_png(b"\x00\x00\x01\x00\x00\x00").is_none());
+}
+
+#[test]
+fn favicons_are_requested_after_a_load_and_retried_once_per_load() {
+    assert!(favicon_due(false, 1, None, false));
+    assert!(!favicon_due(true, 1, None, false), "a decoded icon is final");
+    assert!(!favicon_due(false, 1, Some(1), false), "already answered this load");
+    assert!(favicon_due(false, 2, Some(1), false), "a reload may bring an icon");
+    assert!(!favicon_due(false, 2, Some(1), true), "never overlap requests");
 }
 
 #[test]

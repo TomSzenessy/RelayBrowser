@@ -45,7 +45,35 @@ USAGE:
 Agents: claude mcp add relay -- relay mcp
 Data:   $RELAY_HOME (default ~/Library/Application Support/Relay)";
 
+/// Keep the last panic (message, location, backtrace) in `logs/panic.log` so
+/// a crash report is possible without a debugger attached. Best effort: a
+/// read-only home must never turn one crash into two.
+fn install_panic_log() {
+    use std::io::Write;
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let dir = paths::relay_home().join("logs");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let path = dir.join("panic.log");
+            if std::fs::metadata(&path).is_ok_and(|m| m.len() > 512 * 1024) {
+                let _ = std::fs::remove_file(&path);
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = writeln!(
+                    file,
+                    "relay {} panic: {info}\nthread: {:?}\n{}\n",
+                    env!("CARGO_PKG_VERSION"),
+                    std::thread::current().id(),
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
+        default(info);
+    }));
+}
+
 fn main() -> anyhow::Result<()> {
+    install_panic_log();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("-h" | "--help" | "help") => {
@@ -241,10 +269,15 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             }
             bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
         }
-        "blocking" | "mcp" | "restore_session" => match trimmed.to_ascii_lowercase().as_str() {
+        "blocking" | "mcp" | "restore_session" | "tabs_folded" | "bottom_bar" | "autofill_logins" | "login_offers" | "login_fill"
+        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
             _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
+        },
+        "tabs_position" => match trimmed.to_ascii_lowercase().as_str() {
+            "left" | "top" | "right" => Ok(trimmed.to_ascii_lowercase()),
+            _ => bail!("invalid tabs_position {value:?}: expected left, top, or right"),
         },
         "sleep_minutes" => {
             let mins: u64 = trimmed
@@ -269,7 +302,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control)"),
     }
 }
 
@@ -286,6 +319,16 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("sleep_minutes = {}", cfg.sleep_minutes);
             println!("mcp = {}", if cfg.mcp { "on" } else { "off" });
             println!("restore_session = {}", if cfg.restore_session { "on" } else { "off" });
+            let setting = |key: &str, default: &str| {
+                store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| default.to_string())
+            };
+            println!("tabs_position = {}", setting("tabs_position", "left"));
+            println!("bottom_bar = {}", setting("bottom_bar", "on"));
+            println!("login_fill = {}", setting("login_fill", "on"));
+            println!("login_save = {}", setting("login_save", "on"));
+            println!("autofill_logins = {}", setting("autofill_logins", "on"));
+            println!("tab_glyphs = {}", setting("tab_glyphs", "on"));
+            println!("compact_tabs = {}", setting("compact_tabs", "off"));
             println!("bangs = {}", cfg.bangs);
             println!("start_sections = {}", cfg.start_sections);
             Ok(())
@@ -303,9 +346,15 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "sleep_minutes" => println!("{}", cfg.sleep_minutes),
                 "mcp" => println!("{}", if cfg.mcp { "on" } else { "off" }),
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
+                "tabs_position" => println!("{}", store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).unwrap_or_else(|| "left".into())),
+                "bottom_bar" => println!("{}", store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "on".into())),
+                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
+                }
+                "compact_tabs" => println!("{}", store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).unwrap_or_else(|| "off".into())),
                 "bangs" => println!("{}", cfg.bangs),
                 "start_sections" => println!("{}", cfg.start_sections),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs)"),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control)"),
             }
             Ok(())
         }

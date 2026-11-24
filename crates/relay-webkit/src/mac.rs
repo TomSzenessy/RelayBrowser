@@ -56,17 +56,25 @@ const LOGIN_WATCH_JS: &str = r#"(function(){
     var forms = Array.prototype.slice.call(document.forms || []);
     return forms.indexOf(form);
   }
+  function fieldFrom(e) {
+    var path = e.composedPath ? e.composedPath() : [];
+    for (var i = 0; i < path.length; i++) {
+      if (path[i] && path[i].tagName === 'INPUT') return path[i];
+    }
+    return e.target;
+  }
   function isLoginField(el) {
     if (!el || el.tagName !== 'INPUT') return false;
     var t = (el.type || 'text').toLowerCase();
+    if (t === 'hidden' || el.disabled || el.readOnly) return false;
     if (t === 'password') return true;
-    if (t === 'email' || t === 'text' || t === 'tel') {
+    // Two-step sign-ins show only the account field first.
+    if (t === 'email') return true;
+    if (t === 'text' || t === 'tel') {
       var ac = (el.autocomplete || '').toLowerCase();
-      var name = ((el.name || '') + ' ' + (el.id || '')).toLowerCase();
-      if (ac.indexOf('username') !== -1 || ac.indexOf('email') !== -1 || /user|email|login/.test(name)) {
-        var root = el.form || document;
-        return !!root.querySelector('input[type="password"]');
-      }
+      var name = ((el.name || '') + ' ' + (el.id || '')).toLowerCase().trim();
+      if (ac.indexOf('username') !== -1 || ac.indexOf('email') !== -1) return true;
+      return /^(user(name)?|email|login|account|identifier|userid|user-id|user_name)$/.test(name);
     }
     return false;
   }
@@ -74,7 +82,8 @@ const LOGIN_WATCH_JS: &str = r#"(function(){
     try { window.webkit.messageHandlers.relayLogin.postMessage(JSON.stringify(obj)); } catch (_) {}
   }
   document.addEventListener('focusin', function(e) {
-    if (isLoginField(e.target)) post({ kind: 'focus', form: findFormIndex(e.target) });
+    var field = fieldFrom(e);
+    if (isLoginField(field)) post({ kind: 'focus', form: findFormIndex(field) });
   }, true);
   document.addEventListener('submit', function(e) {
     var form = e.target;
@@ -88,26 +97,55 @@ const LOGIN_WATCH_JS: &str = r#"(function(){
 /// Isolated-world fill: receives `formIdx`, `username`, `password` as native
 /// `NSDictionary` arguments (never interpolated into JS source — D2).
 const LOGIN_FILL_JS: &str = r#"
-  var root = (typeof formIdx === 'number' && formIdx >= 0 && document.forms[formIdx]) ? document.forms[formIdx] : document;
-  var pw = root.querySelector('input[type="password"]');
-  if (!pw) return false;
-  var inputs = Array.prototype.slice.call(root.querySelectorAll('input'));
-  var user = null;
-  for (var i = 0; i < inputs.length; i++) {
-    var inp = inputs[i];
-    if (inp === pw) break;
-    var t = (inp.type || 'text').toLowerCase();
-    if ((t === 'email' || t === 'text' || t === 'tel') && !inp.disabled && !inp.readOnly) user = inp;
+  function roots() {
+    var out = [document];
+    function walk(root) {
+      if (out.length >= 50) return;
+      var all = root.querySelectorAll('*');
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].shadowRoot) { out.push(all[i].shadowRoot); walk(all[i].shadowRoot); }
+        if (out.length >= 50) return;
+      }
+    }
+    try { walk(document); } catch (e) {}
+    return out;
+  }
+  var scope = (typeof formIdx === 'number' && formIdx >= 0 && document.forms[formIdx]) ? document.forms[formIdx] : null;
+  var candidates = scope ? [scope] : roots();
+  var pw = null, user = null;
+  for (var s = 0; s < candidates.length && !pw; s++) {
+    var root = candidates[s];
+    pw = root.querySelector('input[type="password"]:not([disabled]):not([readonly])');
+    if (!pw) continue;
+    var inputs = Array.prototype.slice.call(root.querySelectorAll('input'));
+    for (var i = 0; i < inputs.length; i++) {
+      var inp = inputs[i];
+      if (inp === pw) break;
+      var t = (inp.type || 'text').toLowerCase();
+      if ((t === 'email' || t === 'text' || t === 'tel') && !inp.disabled && !inp.readOnly) user = inp;
+    }
+  }
+  if (!pw) {
+    // A two-step sign-in: there is no password field yet, only the account.
+    for (var r = 0; r < candidates.length && !user; r++) {
+      var fields = candidates[r].querySelectorAll('input[type="email"], input[type="text"], input[type="tel"]');
+      for (var j = 0; j < fields.length; j++) {
+        var f = fields[j];
+        var hint = ((f.autocomplete || '') + ' ' + (f.name || '') + ' ' + (f.id || '')).toLowerCase();
+        if (!f.disabled && !f.readOnly && /user|email|login|account/.test(hint)) { user = f; break; }
+      }
+    }
   }
   var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
   function setVal(el, val) {
-    if (!el || typeof val !== 'string') return;
+    if (!el || typeof val !== 'string' || !val) return;
     setter.call(el, val);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  if (!pw && !user) return false;
   if (user && username) setVal(user, username);
-  setVal(pw, password);
+  if (pw) setVal(pw, password);
   return true;
 "#;
 
@@ -145,7 +183,10 @@ pub enum EngineEvent {
     /// A sleeping tab's snapshot is ready (or failed).
     Slept(TabId),
     /// Native-trusted focus in a login form on `url` (main frame only).
-    LoginFocus { tab: TabId, url: String, form_idx: usize },
+    /// `-1` means the field is outside a `<form>` (common in SPAs).
+    LoginFocus { tab: TabId, url: String, form_idx: i64 },
+    /// The page answered a fill request: true when a password field was set.
+    LoginFilled { tab: TabId, ok: bool },
     /// A trusted login submit succeeded on the same origin; offer to save
     /// `username` (the password remains strictly inside `Engine`).
     LoginSaveOffer { tab: TabId, url: String, username: String },
@@ -226,6 +267,13 @@ struct PendingCapture {
     password: String,
 }
 
+impl Drop for PendingCapture {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.password.zeroize();
+    }
+}
+
 impl std::fmt::Debug for PendingCapture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PendingCapture")
@@ -241,6 +289,8 @@ struct LoginHandlerIvars {
     events: Rc<dyn Fn(EngineEvent)>,
     last_interaction: Rc<Cell<Option<Instant>>>,
     pending_captures: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
+    /// Off when the user disabled saving: the password is never read.
+    capture: Rc<Cell<bool>>,
 }
 
 define_class!(
@@ -276,17 +326,20 @@ define_class!(
             let Some(raw) = body.downcast_ref::<NSString>().map(|s| s.to_string()) else { return };
             let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
             let kind = val.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-            let form_idx = val.get("form").and_then(|v| v.as_i64()).unwrap_or(-1).max(0) as usize;
+            let form_idx = val.get("form").and_then(|v| v.as_i64()).unwrap_or(-1);
             let tab = self.ivars().tab;
             match kind {
                 "focus" => {
                     (self.ivars().events)(EngineEvent::LoginFocus { tab, url, form_idx });
                 }
                 "submit" => {
+                    if !self.ivars().capture.get() {
+                        return;
+                    }
                     let mtm = MainThreadMarker::from(&*view);
                     let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), mtm) };
                     let key = NSString::from_str("formIdx");
-                    let num = NSNumber::new_i64(form_idx as i64);
+                    let num = NSNumber::new_i64(form_idx);
                     let num_obj: &AnyObject = num.as_ref();
                     let args: Retained<NSDictionary<NSString, AnyObject>> =
                         NSDictionary::from_slices(&[&*key], &[num_obj]);
@@ -368,6 +421,7 @@ define_class!(
     unsafe impl WKNavigationDelegate for BridgeHandler {
         #[unsafe(method(webView:didStartProvisionalNavigation:))]
         fn did_start(&self, web_view: &WKWebView, _navigation: Option<&WKNavigation>) {
+            self.ivars().last_status.set(None);
             if let Some(url) = unsafe { web_view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()) {
                 let tab = self.ivars().tab;
                 self.ivars().hub.update(|h| h.navigation_started(tab, &url));
@@ -381,6 +435,12 @@ define_class!(
             response: &WKNavigationResponse,
             decision_handler: &block2::DynBlock<dyn Fn(WKNavigationResponsePolicy)>,
         ) {
+            if unsafe { response.isForMainFrame() } {
+                let raw = unsafe { response.response() };
+                if let Some(http) = raw.downcast_ref::<objc2_foundation::NSHTTPURLResponse>() {
+                    self.ivars().last_status.set(Some(i64::from(unsafe { http.statusCode() })));
+                }
+            }
             let policy = if unsafe { response.canShowMIMEType() } {
                 WKNavigationResponsePolicy::Allow
             } else {
@@ -422,6 +482,11 @@ define_class!(
                 return;
             };
             if !same_origin_url(&capture.url, &dest_url) {
+                return;
+            }
+            // Offer only after a real 2xx navigation. A 4xx/5xx page can
+            // still render a form and must not trigger a password save.
+            if !self.ivars().last_status.get().is_some_and(|code| (200..=299).contains(&code)) {
                 return;
             }
             let mtm = MainThreadMarker::from(web_view);
@@ -468,6 +533,27 @@ define_class!(
         fn did_fail(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
             self.ivars().pending_captures.borrow_mut().remove(&self.ivars().tab);
             self.note_error(error);
+        }
+
+        /// WebKit killed the tab's WebContent process (memory pressure or a
+        /// page crash). The view is dead: clear the stale page state and show
+        /// the shell's Retry pane instead of a silent white tab.
+        #[unsafe(method(webViewWebContentProcessDidTerminate:))]
+        fn web_content_process_terminated(&self, web_view: &WKWebView) {
+            let tab = self.ivars().tab;
+            let url = unsafe { web_view.URL() }
+                .and_then(|u| u.absoluteString())
+                .map(|u| u.to_string())
+                .or_else(|| self.ivars().hub.lock().tab(tab).map(|t| t.url.clone()))
+                .unwrap_or_default();
+            self.ivars().pending_captures.borrow_mut().remove(&tab);
+            self.ivars().hub.update(|h| {
+                h.navigation_started(tab, &url);
+                if let Some(t) = h.tab_mut(tab) {
+                    t.load_error = Some("The page's process stopped (usually memory pressure). Reload to continue.".into());
+                    t.sleeping = false;
+                }
+            });
         }
     }
 
@@ -829,6 +915,10 @@ pub struct Engine {
     pending_captures: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
     /// Native-only confirmed login captures awaiting explicit user Save/Decline.
     offered_logins: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
+    /// Shared with every login handler; see `set_login_capture`.
+    login_capture: Rc<Cell<bool>>,
+    /// HTTP status of the current main-frame response, for the save gate.
+    last_status: Rc<Cell<Option<i64>>>,
 }
 
 impl Engine {
@@ -848,6 +938,7 @@ impl Engine {
             pending_restore: HashMap::new(),
             pending_captures: Rc::default(),
             offered_logins: Rc::default(),
+            login_capture: Rc::new(Cell::new(true)),
         }
     }
 
@@ -862,6 +953,11 @@ impl Engine {
 
     pub fn extension_controller(&self) -> Option<&Retained<WKWebExtensionController>> {
         self.extensions.as_ref()
+    }
+
+    /// Allow or forbid reading a password from a submitted login form.
+    pub fn set_login_capture(&mut self, enabled: bool) {
+        self.login_capture.set(enabled);
     }
 
     /// Attach a WKWebExtensionController to every tab created from now on.
@@ -952,6 +1048,7 @@ impl Engine {
                 downloads: RefCell::new(HashMap::new()),
                 pending_captures: self.pending_captures.clone(),
                 offered_logins: self.offered_logins.clone(),
+                last_status: Rc::new(Cell::new(None)),
             },
         );
         let login_handler = LoginHandler::new(
@@ -961,6 +1058,7 @@ impl Engine {
                 events: self.events.clone(),
                 last_interaction: last_interaction.clone(),
                 pending_captures: self.pending_captures.clone(),
+                capture: self.login_capture.clone(),
             },
         );
         let ucc = unsafe { WKUserContentController::new(mtm) };
@@ -1052,26 +1150,34 @@ impl Engine {
         unsafe { t.view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string())
     }
 
-    pub fn fill_login(&self, tab: TabId, form_idx: usize, username: &str, password: &str) {
+    pub fn fill_login(&self, tab: TabId, form_idx: i64, username: &str, password: &str) {
         let Some(t) = self.tabs.get(&tab) else { return };
         let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), self.mtm) };
         let k_form = NSString::from_str("formIdx");
         let k_user = NSString::from_str("username");
         let k_pass = NSString::from_str("password");
-        let v_form = NSNumber::new_i64(form_idx as i64);
+        let v_form = NSNumber::new_i64(form_idx);
         let v_user = NSString::from_str(username);
         let v_pass = NSString::from_str(password);
         let args: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
             &[&*k_form, &*k_user, &*k_pass],
             &[v_form.as_ref(), v_user.as_ref(), v_pass.as_ref()],
         );
+        let events = self.events.clone();
+        let done = RcBlock::new(move |res: *mut AnyObject, err: *mut NSError| {
+            let ok = err.is_null()
+                && unsafe { res.as_ref() }
+                    .and_then(|o| o.downcast_ref::<NSNumber>())
+                    .is_some_and(|n| n.as_bool());
+            events(EngineEvent::LoginFilled { tab, ok });
+        });
         unsafe {
             t.view.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
                 &NSString::from_str(LOGIN_FILL_JS),
                 Some(&args),
                 None,
                 &world,
-                None,
+                Some(&done),
             );
         }
     }
@@ -1185,6 +1291,20 @@ impl Engine {
                     }
                     let y = if flipped { r.origin.y } else { height - r.origin.y - r.size.height };
                     let frame = NSRect::new(NSPoint::new(r.origin.x, y), r.size);
+                    // A degenerate GPUI layout (zero, NaN, or infinite) makes
+                    // AppKit raise on setFrame: and aborts the process. Hide
+                    // the view for this frame instead.
+                    if !r.origin.x.is_finite()
+                        || !r.origin.y.is_finite()
+                        || !r.size.width.is_finite()
+                        || !r.size.height.is_finite()
+                        || r.size.width < 1.0
+                        || r.size.height < 1.0
+                        || !y.is_finite()
+                    {
+                        t.view.setHidden(true);
+                        continue;
+                    }
                     let attached = unsafe { t.view.superview() }.is_some_and(|s| &*s == parent);
                     if !attached {
                         parent.addSubview(&t.view);
