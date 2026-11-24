@@ -44,7 +44,9 @@ or through the native login path (#57, implemented; hardening continues in
 candidate matching, and redacted secrets; the native handler applies the
 explicit fill click and the save/decline choice. The richer `FillOffer` /
 `FormSave` state machine is unit-tested design and is not wired into the
-runtime yet. No bridge message, DOM snapshot, MCP tool, or audit row may carry
+runtime yet. A per-navigation nonce gates the isolated-world focus/fill/capture
+signals, and Keychain user-cancel errors are reported as Denied rather than
+Unavailable. No bridge message, DOM snapshot, MCP tool, or audit row may carry
 a password. The design and open owner decisions are in
 [`login-autofill.md`](./login-autofill.md).
 

@@ -157,6 +157,16 @@ pub fn list_logins(origin: &crate::login::Origin) -> Vec<crate::login::SavedLogi
     out
 }
 
+/// Keychain status → the model's failure kind. A user who cancels the
+/// Keychain prompt is not the same as an unavailable Keychain.
+fn failure_from(err: security_framework::base::Error) -> crate::login::SaveFailure {
+    use crate::login::SaveFailure;
+    match err.code() {
+        -128 | -25293 | -25308 => SaveFailure::Denied,
+        _ => SaveFailure::Unavailable,
+    }
+}
+
 /// Read the secret password for one explicitly confirmed Keychain candidate.
 pub fn read_login_password(
     origin: &crate::login::Origin,
@@ -171,9 +181,16 @@ pub fn read_login_password(
         return Err(SaveFailure::InvalidItem);
     }
     let proto = if origin.is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
-    let bytes = get_internet_password(origin.host(), None, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm)
-        .or_else(|_| get_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm))
-        .map_err(|_| SaveFailure::Unavailable)?;
+    let bytes = match get_internet_password(origin.host(), None, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm) {
+        Ok(bytes) => bytes,
+        // Only a missing exact path falls back to the origin root; do not
+        // re-prompt a denied Keychain request.
+        Err(e) if e.code() == -25300 => {
+            get_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm)
+                .map_err(failure_from)?
+        }
+        Err(e) => return Err(failure_from(e)),
+    };
     let text = String::from_utf8(bytes).map_err(|_| SaveFailure::InvalidItem)?;
     Ok(Password::new(text))
 }
@@ -198,7 +215,7 @@ pub fn save_login(login: &crate::login::CapturedLogin) -> Result<(), crate::logi
         SecAuthenticationType::HTMLForm,
         login.password().as_bytes(),
     )
-    .map_err(|_| SaveFailure::Unavailable)
+    .map_err(failure_from)
 }
 
 /// Delete one Keychain internet password for `origin` + `username`.
@@ -213,9 +230,13 @@ pub fn delete_login(origin: &crate::login::Origin, username: &str, path: &str) -
     let proto = if origin.is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
     match delete_internet_password(origin.host(), None, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm) {
         Ok(()) => Ok(true),
-        Err(_) => match delete_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        },
+        Err(e) if e.code() == -25300 => {
+            match delete_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm) {
+                Ok(()) => Ok(true),
+                Err(e) if e.code() == -25300 => Ok(false),
+                Err(e) => Err(failure_from(e)),
+            }
+        }
+        Err(e) => Err(failure_from(e)),
     }
 }

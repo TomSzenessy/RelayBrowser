@@ -47,6 +47,12 @@ is an owner decision or a later issue, not an implicit part of #57.
   origin, so an error page that still renders a form cannot ask to store the
   posted password. The response status is tracked in the native handler, not
   read from the page.
+- Every provisional navigation rotates a 128-bit nonce and injects it into the
+  isolated `relay.login` world only. Focus/submit signals, the fill helper, and
+  the capture helper compare against it, so a stale document or a page-world
+  caller cannot answer for the current one.
+- Keychain failures distinguish **Denied** (user cancel/auth/interaction) from
+  **Unavailable**; a denied read is not retried against another path.
 - Relay records the logins it writes (host, user, path) in the profile. The
   Settings list, fill offers, and Delete act only on those records, so another
   browser's Keychain items are never offered or destroyed. A second save for

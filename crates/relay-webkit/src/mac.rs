@@ -30,6 +30,7 @@ use objc2_web_kit::{
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -80,6 +81,7 @@ const LOGIN_WATCH_JS: &str = r#"(function(){
     return false;
   }
   function post(obj) {
+    obj.nonce = window.__relayLoginNonce || "";
     try { window.webkit.messageHandlers.relayLogin.postMessage(JSON.stringify(obj)); } catch (_) {}
   }
   document.addEventListener('focusin', function(e) {
@@ -98,6 +100,7 @@ const LOGIN_WATCH_JS: &str = r#"(function(){
 /// Isolated-world fill: receives `formIdx`, `username`, `password` as native
 /// `NSDictionary` arguments (never interpolated into JS source — D2).
 const LOGIN_FILL_JS: &str = r#"
+  if (typeof nonce !== "string" || !nonce || window.__relayLoginNonce !== nonce) return false;
   function roots() {
     var out = [document];
     function walk(root) {
@@ -153,6 +156,7 @@ const LOGIN_FILL_JS: &str = r#"
 /// Isolated-world capture: reads `{ username, password }` directly into native
 /// completion handler memory without calling `postMessage`.
 const LOGIN_CAPTURE_JS: &str = r#"
+  if (typeof nonce !== "string" || !nonce || window.__relayLoginNonce !== nonce) return null;
   var root = (typeof formIdx === 'number' && formIdx >= 0 && document.forms[formIdx]) ? document.forms[formIdx] : document;
   var pw = root.querySelector('input[type="password"]');
   if (!pw || !pw.value) return null;
@@ -175,6 +179,24 @@ const LOGIN_HAS_PW_JS: &str = r#"
   }
   return false;
 "#;
+
+/// A per-navigation value for the isolated login world. RandomState seeds
+/// from the OS; page script cannot read the named content world, so this is a
+/// freshness check rather than a secret.
+fn new_login_nonce() -> String {
+    let mut out = String::with_capacity(32);
+    for _ in 0..2 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .hash(&mut hasher);
+        std::process::id().hash(&mut hasher);
+        out.push_str(&format!("{:016x}", hasher.finish()));
+    }
+    out
+}
 
 /// Things the engine needs the shell to do. Never carries passwords.
 #[derive(Debug, Clone)]
@@ -290,6 +312,8 @@ struct LoginHandlerIvars {
     pending_captures: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
     /// Off when the user disabled saving: the password is never read.
     capture: Rc<Cell<bool>>,
+    /// The per-navigation value injected into the isolated world.
+    nonce: Rc<RefCell<String>>,
 }
 
 define_class!(
@@ -325,6 +349,10 @@ define_class!(
             let Some(raw) = body.downcast_ref::<NSString>().map(|s| s.to_string()) else { return };
             let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
             let kind = val.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let nonce = val.get("nonce").and_then(|v| v.as_str()).unwrap_or("");
+            if nonce.is_empty() || nonce != self.ivars().nonce.borrow().as_str() {
+                return;
+            }
             let form_idx = val.get("form").and_then(|v| v.as_i64()).unwrap_or(-1);
             let tab = self.ivars().tab;
             match kind {
@@ -340,8 +368,11 @@ define_class!(
                     let key = NSString::from_str("formIdx");
                     let num = NSNumber::new_i64(form_idx);
                     let num_obj: &AnyObject = num.as_ref();
+                    let nonce_key = NSString::from_str("nonce");
+                    let nonce_value = NSString::from_str(&self.ivars().nonce.borrow());
+                    let nonce_obj: &AnyObject = nonce_value.as_ref();
                     let args: Retained<NSDictionary<NSString, AnyObject>> =
-                        NSDictionary::from_slices(&[&*key], &[num_obj]);
+                        NSDictionary::from_slices(&[&*key, &*nonce_key], &[num_obj, nonce_obj]);
                     let pending = self.ivars().pending_captures.clone();
                     let done = RcBlock::new(move |res: *mut AnyObject, _err: *mut NSError| {
                         let Some(obj) = (unsafe { res.as_ref() }) else { return };
@@ -393,6 +424,8 @@ pub struct HandlerIvars {
     offered_logins: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
     /// HTTP status of the current main-frame response, for the save gate.
     last_status: Rc<Cell<Option<i64>>>,
+    /// Shared with the login handler and the engine for this tab.
+    login_nonce: Rc<RefCell<String>>,
 }
 
 define_class!(
@@ -423,6 +456,24 @@ define_class!(
         #[unsafe(method(webView:didStartProvisionalNavigation:))]
         fn did_start(&self, web_view: &WKWebView, _navigation: Option<&WKNavigation>) {
             self.ivars().last_status.set(None);
+            // Rotate the isolated-world nonce on every provisional load and
+            // inject it where page script cannot read it. Login focus/submit
+            // signals and the fill helper compare against this value.
+            let nonce = new_login_nonce();
+            *self.ivars().login_nonce.borrow_mut() = nonce.clone();
+            let quoted = serde_json::to_string(&nonce).unwrap_or_else(|_| "\"\"".into());
+            let script = format!("window.__relayLoginNonce = {quoted};");
+            let mtm = MainThreadMarker::from(web_view);
+            let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), mtm) };
+            unsafe {
+                web_view.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
+                    &NSString::from_str(&script),
+                    None,
+                    None,
+                    &world,
+                    None,
+                );
+            }
             if let Some(url) = unsafe { web_view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()) {
                 let tab = self.ivars().tab;
                 self.ivars().hub.update(|h| h.navigation_started(tab, &url));
@@ -930,6 +981,8 @@ pub struct Engine {
     offered_logins: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
     /// Shared with every login handler; see `set_login_capture`.
     login_capture: Rc<Cell<bool>>,
+    /// Per-tab isolated-world nonce, rotated on navigation.
+    login_nonces: HashMap<TabId, Rc<RefCell<String>>>,
 }
 
 impl Engine {
@@ -950,6 +1003,7 @@ impl Engine {
             pending_captures: Rc::default(),
             offered_logins: Rc::default(),
             login_capture: Rc::new(Cell::new(true)),
+            login_nonces: HashMap::new(),
         }
     }
 
@@ -1081,6 +1135,8 @@ impl Engine {
         self.clear_error(tab);
         let mtm = self.mtm;
         let last_interaction = Rc::new(Cell::new(None));
+        let login_nonce = Rc::new(RefCell::new(String::new()));
+        self.login_nonces.insert(tab, login_nonce.clone());
         let handler = BridgeHandler::new(
             mtm,
             HandlerIvars {
@@ -1091,6 +1147,7 @@ impl Engine {
                 pending_captures: self.pending_captures.clone(),
                 offered_logins: self.offered_logins.clone(),
                 last_status: Rc::new(Cell::new(None)),
+                login_nonce: login_nonce.clone(),
             },
         );
         let login_handler = LoginHandler::new(
@@ -1101,6 +1158,7 @@ impl Engine {
                 last_interaction: last_interaction.clone(),
                 pending_captures: self.pending_captures.clone(),
                 capture: self.login_capture.clone(),
+                nonce: login_nonce.clone(),
             },
         );
         let ucc = unsafe { WKUserContentController::new(mtm) };
@@ -1194,16 +1252,22 @@ impl Engine {
 
     pub fn fill_login(&self, tab: TabId, form_idx: i64, username: &str, password: &str) {
         let Some(t) = self.tabs.get(&tab) else { return };
+        let Some(nonce) = self.login_nonces.get(&tab).map(|n| n.borrow().clone()).filter(|n| !n.is_empty()) else {
+            (self.events)(EngineEvent::LoginFilled { tab, ok: false });
+            return;
+        };
         let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), self.mtm) };
         let k_form = NSString::from_str("formIdx");
         let k_user = NSString::from_str("username");
         let k_pass = NSString::from_str("password");
+        let k_nonce = NSString::from_str("nonce");
         let v_form = NSNumber::new_i64(form_idx);
         let v_user = NSString::from_str(username);
         let v_pass = NSString::from_str(password);
+        let v_nonce = NSString::from_str(&nonce);
         let args: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
-            &[&*k_form, &*k_user, &*k_pass],
-            &[v_form.as_ref(), v_user.as_ref(), v_pass.as_ref()],
+            &[&*k_form, &*k_user, &*k_pass, &*k_nonce],
+            &[v_form.as_ref(), v_user.as_ref(), v_pass.as_ref(), v_nonce.as_ref()],
         );
         let events = self.events.clone();
         let done = RcBlock::new(move |res: *mut AnyObject, err: *mut NSError| {
@@ -1428,6 +1492,7 @@ impl Engine {
     }
 
     pub fn close(&mut self, tab: TabId) {
+        self.login_nonces.remove(&tab);
         if let Some(t) = self.tabs.remove(&tab) {
             self.uccs.borrow_mut().retain(|u| !std::ptr::eq::<WKUserContentController>(&**u, &*t.ucc));
             teardown(&t);
@@ -1440,6 +1505,7 @@ impl Engine {
     /// Snapshot, remember URL + scroll, then destroy the WKWebView (0 MB).
     pub fn sleep(&mut self, tab: TabId, scroll: (f64, f64)) {
         self.drop_pending_login(tab);
+        self.login_nonces.remove(&tab);
         let Some(t) = self.tabs.remove(&tab) else { return };
         self.uccs.borrow_mut().retain(|u| !std::ptr::eq::<WKUserContentController>(&**u, &*t.ucc));
         let url = unsafe { t.view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
@@ -1656,4 +1722,18 @@ fn jpeg_from_image(img: &NSImage) -> Option<Vec<u8>> {
 fn domain_matches(cookie_domain: &str, host: &str) -> bool {
     let d = cookie_domain.trim_start_matches('.');
     host == d || host.ends_with(&format!(".{d}"))
+}
+
+#[cfg(test)]
+mod login_nonce_tests {
+    use super::new_login_nonce;
+
+    #[test]
+    fn nonces_are_fresh_opaque_and_fixed_width() {
+        let a = new_login_nonce();
+        let b = new_login_nonce();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+    }
 }
