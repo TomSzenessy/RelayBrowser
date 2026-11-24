@@ -2010,6 +2010,30 @@ impl RelayApp {
         self.switch_space(name, cx);
     }
 
+    fn rename_current_space(&mut self, name: String, cx: &mut Context<Self>) {
+        let old = self.hub.lock().current_space().to_string();
+        let new = Hub::normalize_space_name(&name).unwrap_or_default();
+        if old.is_empty() {
+            self.toast("Default is the unnamed space; switch to a new name instead");
+            cx.notify();
+            return;
+        }
+        if new.is_empty() || new == old {
+            self.toast("Type a different space name first");
+            cx.notify();
+            return;
+        }
+        let moved = self.hub.update(|h| h.rename_space(&old, &new));
+        self.space_prompt = None;
+        self.persist_active_space();
+        let first = self.hub.lock().first_tab_in_space(&new);
+        if let Some(tab) = first {
+            self.activate(tab);
+        }
+        self.toast(if moved == 0 { format!("Renamed to {new}") } else { format!("Renamed to {new} ({moved} tabs)") });
+        cx.notify();
+    }
+
     /// Switch to a named space (empty is Default). Activates its first tab, or
     /// clears the active tab so the start page shows when the space is empty.
     fn switch_space(&mut self, name: String, cx: &mut Context<Self>) {

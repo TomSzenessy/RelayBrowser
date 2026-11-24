@@ -238,8 +238,9 @@ Behaviour that is not a single action:
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
 - **Spaces:** named tab sets with their own pins and session entries. The
   current space is a small pill at the top of the strip; ⌘⇧E opens the switcher
-  (type a new name or pick an existing space), new tabs join the current space,
-  and the choice persists in `active_space`.
+  (type a new name, pick an existing space, or rename the current one—merging
+  if the target exists), new tabs join the current space, and the choice
+  persists in `active_space`.
 - **Tab groups:** a group heading is a 24 pt row with a chevron, colour dot,
   name, and count. Collapsed groups show only the heading; names are capped at
   40 characters and persist in `collapsed_groups`; a unit test covers the

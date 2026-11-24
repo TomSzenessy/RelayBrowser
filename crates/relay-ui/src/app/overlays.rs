@@ -688,6 +688,24 @@ impl RelayApp {
             );
         }
         let text = if prompt.value.is_empty() { "New space name".to_string() } else { prompt.value.clone() };
+        let wanted = super::Hub::normalize_space_name(&prompt.value).unwrap_or_default();
+        let can_rename = !current.is_empty() && !wanted.is_empty() && wanted != current;
+        let rename_btn = div()
+            .id("space-rename")
+            .px_3()
+            .py_1p5()
+            .rounded(px(6.))
+            .text_size(px(12.))
+            .text_color(t.accent)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(move |app, _, _, cx| {
+                if let Some(prompt) = &app.space_prompt {
+                    let value = prompt.value.clone();
+                    app.rename_current_space(value, cx);
+                }
+            }))
+            .child("Rename current");
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(120.)).bg(t.scrim).child(
             div()
                 .id("space-prompt")
@@ -722,8 +740,10 @@ impl RelayApp {
                 .child(
                     div()
                         .flex()
-                        .justify_end()
+                        .items_center()
                         .gap_2()
+                        .when(can_rename, |d| d.child(rename_btn))
+                        .child(div().flex_1())
                         .child(
                             div()
                                 .id("space-cancel")

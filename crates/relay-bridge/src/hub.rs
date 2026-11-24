@@ -1038,6 +1038,23 @@ impl Hub {
         out
     }
 
+    /// Rename every tab in `old` to `new` (empty means Default) and make the
+    /// new name current. Returns how many tabs moved. Renaming onto an
+    /// existing space merges them.
+    pub fn rename_space(&mut self, old: &str, new: &str) -> usize {
+        let old = Self::normalize_space_name(old).unwrap_or_default();
+        let new = Self::normalize_space_name(new).unwrap_or_default();
+        let mut moved = 0;
+        for tab in self.tabs.values_mut() {
+            if tab.space == old {
+                tab.space = new.clone();
+                moved += 1;
+            }
+        }
+        self.space = new;
+        moved
+    }
+
     pub fn space_tab_ids(&self) -> Vec<TabId> {
         self.tabs().filter(|t| t.space == self.space).map(|t| t.id).collect()
     }
@@ -1644,6 +1661,11 @@ mod tests {
             assert_eq!(h.set_tab_space(work_b, Some("Personal")).as_deref(), Some("Personal"));
             assert_eq!(h.space_names(), vec!["".to_string(), "Work".to_string(), "Personal".to_string()]);
             assert_eq!(h.tab(default_tab).unwrap().summary().space, "");
+            assert_eq!(h.rename_space("Work", "Project"), 1);
+            assert_eq!(h.current_space(), "Project");
+            assert_eq!(h.space_names(), vec!["".to_string(), "Project".to_string(), "Personal".to_string()]);
+            assert_eq!(h.rename_space("Project", "Personal"), 1, "renaming onto another space merges it");
+            assert_eq!(h.current_space(), "Personal");
             assert_eq!(Hub::normalize_space_name("  A   B ").as_deref(), Some("A B"));
             assert_eq!(Hub::normalize_space_name("\u{0007}"), None);
         });
