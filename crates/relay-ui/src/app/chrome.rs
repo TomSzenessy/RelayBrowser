@@ -759,7 +759,7 @@ impl RelayApp {
             .items_center()
             .justify_between()
             .rounded(px(12.))
-            .bg(t.surface)
+            .bg(t.well)
             .shadow_sm()
             .text_size(px(14.))
             .text_color(t.muted)

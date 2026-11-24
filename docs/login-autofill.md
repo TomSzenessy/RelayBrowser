@@ -51,8 +51,9 @@ is an owner decision or a later issue, not an implicit part of #57.
   Settings list, fill offers, and Delete act only on those records, so another
   browser's Keychain items are never offered or destroyed. A second save for
   the same record is labelled **Replace**.
-- Clearing cookies/site data and asking to be the default browser go through
-  the same native delegate; neither touches the credential path.
+- Clearing cookies/site data, the page's Reading Mode item, and asking to be
+  the default browser go through the same native delegate; none touches the
+  credential path.
 
 ## Assets and trust boundaries
 

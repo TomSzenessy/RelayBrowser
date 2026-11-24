@@ -65,6 +65,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   search field (opens ⌘K), and two columns of Recent / Frequent / Apps /
   Bookmarks rows. Rows are one line with a muted note; empty sections say "Nothing yet";
   only a genuinely fresh profile shows the welcome card. `start_sections` owns the order and `none` hides the page's sections.
+- **Page context menu:** Back, Forward, Reload, Copy Page URL, Reading
+  Mode, Print, and Inspect Element, with the page's own link/image items
+  preserved. The shell draws the tab menu as a floating panel when the strip
+  is horizontal.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
   Bookmarks, Tab, Window, Help) carry every shortcut; View names Tabs on the
   Left, Top, and Right explicitly, not only the cycling command.

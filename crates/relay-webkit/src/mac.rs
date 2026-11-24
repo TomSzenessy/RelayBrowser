@@ -781,6 +781,8 @@ define_class!(
                 menu.addItem(&sep_page);
                 let copy_url = make_menu_item(mtm, "Copy Page URL", sel!(relayCopyPageUrl:), self);
                 menu.addItem(&copy_url);
+                let reader = make_menu_item(mtm, "Reading Mode", sel!(relayToggleReader:), self);
+                menu.addItem(&reader);
                 let print = make_menu_item(mtm, "Print…", sel!(relayPrint:), self);
                 menu.addItem(&print);
             }
@@ -799,7 +801,7 @@ define_class!(
                 Some(a) if a == sel!(relayGoBack:) => unsafe { self.canGoBack() },
                 Some(a) if a == sel!(relayGoForward:) => unsafe { self.canGoForward() },
                 Some(a) if a == sel!(relayCopyPageUrl:) => unsafe { self.URL() }.is_some(),
-                Some(a) if a == sel!(relayReload:) || a == sel!(relayPrint:) || a == sel!(relayInspectElement:) => true,
+                Some(a) if a == sel!(relayReload:) || a == sel!(relayPrint:) || a == sel!(relayInspectElement:) || a == sel!(relayToggleReader:) => true,
                 _ => unsafe { msg_send![super(self), validateMenuItem: item] },
             }
         }
@@ -825,6 +827,16 @@ define_class!(
                 let pb = NSPasteboard::generalPasteboard();
                 pb.clearContents();
                 let _ = pb.setString_forType(&url, unsafe { NSPasteboardTypeString });
+            }
+        }
+
+        #[unsafe(method(relayToggleReader:))]
+        fn relay_toggle_reader(&self, _sender: Option<&AnyObject>) {
+            let js = NSString::from_str(
+                "(function(){var on=document.documentElement.dataset.relayReader!=='1';return window.__relay.exec({id:0,op:'reader',on:on});})()",
+            );
+            unsafe {
+                self.evaluateJavaScript_completionHandler(&js, None);
             }
         }
 
