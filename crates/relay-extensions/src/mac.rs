@@ -71,7 +71,8 @@ fn grant_requested(ext: &WKWebExtension) -> Retained<NSDictionary<WKWebExtension
 pub fn extension_options_url(controller: &Retained<WKWebExtensionController>, uid: &str) -> Option<String> {
     for ctx in unsafe { controller.extensionContexts() }.iter() {
         if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
-            return unsafe { ctx.optionsPageURL() }.map(|u| unsafe { u.absoluteString() }.to_string());
+            let url = unsafe { ctx.optionsPageURL() }?;
+            return Some(unsafe { url.absoluteString() }?.to_string());
         }
     }
     None
