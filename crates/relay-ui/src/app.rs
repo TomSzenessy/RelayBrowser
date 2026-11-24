@@ -1082,6 +1082,10 @@ impl RelayApp {
 
     fn pump(&mut self, cx: &mut Context<Self>) {
         let mut changed = false;
+        if self.agent_input_focused && !self.web.borrow().shell_is_focused() {
+            self.agent_input_focused = false;
+            changed = true;
+        }
         while let Ok(req) = self.requests.try_recv() {
             changed = true;
             if let BrowserRequest::Open { tab, .. } = &req {
@@ -6175,8 +6179,7 @@ pub(crate) fn favicon_ip_public(ip: std::net::IpAddr) -> bool {
                 || is_reserved)
         }
         std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                let _ = v4;
+            if v6.to_ipv4_mapped().is_some() {
                 return false;
             }
             let s = v6.segments();
@@ -6184,7 +6187,18 @@ pub(crate) fn favicon_ip_public(ip: std::net::IpAddr) -> bool {
             let is_link_local = (s[0] & 0xffc0) == 0xfe80;
             let is_site_local = (s[0] & 0xffc0) == 0xfec0;
             let is_doc = s[0] == 0x2001 && s[1] == 0x0db8;
-            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || is_ula || is_link_local || is_site_local || is_doc)
+            let is_v4_compat = s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0;
+            let is_nat64 = (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0)
+                || (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0x0001);
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || is_ula
+                || is_link_local
+                || is_site_local
+                || is_doc
+                || is_v4_compat
+                || is_nat64)
         }
     }
 }
@@ -6240,23 +6254,19 @@ fn parse_favicon_authority(url: &str) -> Option<(String, u16)> {
     }
 }
 
-/// Allow only `http(s)` icon URLs and block private/loopback/link-local/CGNAT/
-/// obfuscated numeric hosts unless the tab itself is loaded from that exact host.
-pub(crate) fn favicon_url_allowed(tab_host: &str, url: &str) -> bool {
+/// Allow only public `http(s)` icon URLs for the native CORS fallback. Same-origin
+/// local/LAN icons already succeed in-page via `fetch()`; the native fallback
+/// strictly rejects localhost, private/loopback/link-local/CGNAT/IPv6-special
+/// ranges, and obfuscated numeric hosts (never exempting DNS hosts via `tab_host`).
+pub(crate) fn favicon_url_allowed(_tab_host: &str, url: &str) -> bool {
     if url.len() > 2048 || url.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return false;
     }
     let Some((raw_host, _port)) = parse_favicon_authority(url) else { return false };
-    let cand_norm = raw_host.strip_prefix("www.").unwrap_or(&raw_host);
-    let tab_norm = tab_host.trim_matches(['[', ']']).to_ascii_lowercase();
-    let tab_norm = tab_norm.strip_prefix("www.").unwrap_or(&tab_norm);
-    if cand_norm == tab_norm && !cand_norm.is_empty() {
-        return true;
-    }
-    if cand_norm == "localhost"
-        || cand_norm.ends_with(".localhost")
-        || cand_norm.ends_with(".local")
-        || cand_norm.ends_with(".internal")
+    if raw_host == "localhost"
+        || raw_host.ends_with(".localhost")
+        || raw_host.ends_with(".local")
+        || raw_host.ends_with(".internal")
         || looks_like_numeric_host(&raw_host)
     {
         return false;
@@ -6267,25 +6277,17 @@ pub(crate) fn favicon_url_allowed(tab_host: &str, url: &str) -> bool {
     true
 }
 
-/// Resolve `url` and verify EVERY returned IP before connecting, returning
-/// `(raw_host, port, pinned_ip)` so `curl --resolve` prevents DNS rebinding.
+/// Resolve `url` and verify EVERY returned IP is globally routable before
+/// connecting, returning `(raw_host, port, pinned_ip)` so `curl --resolve`
+/// prevents DNS rebinding and dual-A/same-host loopback bypasses.
 fn resolve_safe_favicon_target(tab_host: &str, url: &str) -> Option<(String, u16, std::net::IpAddr)> {
     use std::net::ToSocketAddrs;
     if !favicon_url_allowed(tab_host, url) {
         return None;
     }
     let (raw_host, port) = parse_favicon_authority(url)?;
-    let same_host = {
-        let cand_norm = raw_host.strip_prefix("www.").unwrap_or(&raw_host);
-        let tab_norm = tab_host.trim_matches(['[', ']']).to_ascii_lowercase();
-        let tab_norm = tab_norm.strip_prefix("www.").unwrap_or(&tab_norm);
-        cand_norm == tab_norm && !cand_norm.is_empty()
-    };
     let addrs: Vec<std::net::IpAddr> = (raw_host.as_str(), port).to_socket_addrs().ok()?.map(|s| s.ip()).collect();
-    if addrs.is_empty() {
-        return None;
-    }
-    if !same_host && addrs.iter().any(|ip| !favicon_ip_public(*ip)) {
+    if addrs.is_empty() || addrs.iter().any(|ip| !favicon_ip_public(*ip)) {
         return None;
     }
     Some((raw_host, port, addrs[0]))
@@ -6331,11 +6333,12 @@ fn fetch_favicon_candidates(tab_host: &str, urls: &[String]) -> Option<(Vec<u8>,
         let Some((raw_host, port, pinned_ip)) = resolve_safe_favicon_target(tab_host, url) else {
             continue;
         };
+        let host_arg = if raw_host.contains(':') { format!("[{raw_host}]") } else { raw_host };
         let ip_arg = match pinned_ip {
             std::net::IpAddr::V4(v4) => v4.to_string(),
             std::net::IpAddr::V6(v6) => format!("[{v6}]"),
         };
-        let resolve_arg = format!("{raw_host}:{port}:{ip_arg}");
+        let resolve_arg = format!("{host_arg}:{port}:{ip_arg}");
         let mut child = std::process::Command::new("curl")
             .args([
                 "-q",

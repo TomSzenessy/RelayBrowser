@@ -558,9 +558,9 @@ classic BMP-DIB `.ico` containers (32/24/8/4/1-bit with AND mask) up to 256 KB.
 When an in-page `fetch()` hits CORS on a cross-origin CDN favicon, the bridge
 returns the page's declared `http(s)` icon URLs and the shell performs a
 cookie-free, `.curlrc`-disabled (`-q`), no-redirect, timeout/size-bounded native
-fallback fetch after resolving DNS and validating/pinning public IPs (blocking
-loopback, RFC1918, CGNAT, link-local, ULA, IPv4-mapped IPv6, and obfuscated
-numeric hosts unless same-host) before caching privately (`0600`) per host.
+fallback fetch after resolving DNS and validating/pinning globally routable public
+IPs (strictly blocking loopback, RFC1918, CGNAT, link-local, ULA, IPv4-mapped/compatible
+IPv6, NAT64, and obfuscated numeric hosts) before caching privately (`0600`) per host.
 
 Enabled WebExtensions surface their `WKWebExtensionAction` badge text (trimmed,
 control-stripped, bounded to 4 chars) and unread flag on the extension toolbar;

@@ -894,10 +894,12 @@ fn bmp_dib_ico_decodes_to_valid_png_and_ssrf_favicon_urls_are_blocked() {
     assert!(favicon_bytes_to_payload(vec![0, 0, 1, 0, 1, 0]).is_none());
     assert!(favicon_bytes_to_payload(b"<html>not an icon</html>".to_vec()).is_none());
 
-    // SSRF guard: public CDN icons are allowed; local/private/CGNAT/IPv6/obfuscated IPs are blocked unless same-host.
+    // SSRF guard: only public CDN icons are allowed in the native fallback; local/private/CGNAT/IPv6/obfuscated
+    // hosts are ALWAYS blocked (even when matching tab_host, since same-origin local icons load in-page).
     assert!(favicon_url_allowed("github.com", "https://github.githubassets.com/favicons/favicon.svg"));
-    assert!(favicon_url_allowed("localhost", "http://localhost:3000/favicon.ico"));
-    assert!(favicon_url_allowed("[::1]", "http://[::1]:3000/favicon.ico"));
+    assert!(!favicon_url_allowed("localhost", "http://localhost:3000/favicon.ico"));
+    assert!(!favicon_url_allowed("[::1]", "http://[::1]:3000/favicon.ico"));
+    assert!(!favicon_url_allowed("127.0.0.1", "http://127.0.0.1:8080/favicon.ico"));
     for blocked in [
         "http://127.0.0.1/favicon.ico",
         "http://127.1/favicon.ico",
@@ -912,6 +914,8 @@ fn bmp_dib_ico_decodes_to_valid_png_and_ssrf_favicon_urls_are_blocked() {
         "http://[fc00::1]:8080/icon.png",
         "http://[::1]/icon.png",
         "http://[::ffff:127.0.0.1]/icon.png",
+        "http://[::127.0.0.1]/icon.png",
+        "http://[64:ff9b::127.0.0.1]/icon.png",
         "http://localhost/icon.png",
         "file:///etc/passwd",
     ] {
@@ -922,6 +926,8 @@ fn bmp_dib_ico_decodes_to_valid_png_and_ssrf_favicon_urls_are_blocked() {
     assert!(!favicon_ip_public("fe80::1".parse().unwrap()));
     assert!(!favicon_ip_public("fc00::1".parse().unwrap()));
     assert!(!favicon_ip_public("::ffff:127.0.0.1".parse().unwrap()));
+    assert!(!favicon_ip_public("::127.0.0.1".parse().unwrap()));
+    assert!(!favicon_ip_public("64:ff9b::127.0.0.1".parse().unwrap()));
 }
 
 #[test]
