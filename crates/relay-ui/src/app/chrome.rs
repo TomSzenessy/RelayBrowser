@@ -973,6 +973,148 @@ impl RelayApp {
             )
     }
 
+    pub(super) fn render_login_fill_banner(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let (tab, url, form_idx, candidates) = self.login_fill_prompt.as_ref()?;
+        if self.active() != Some(*tab) {
+            return None;
+        }
+        let t = self.theme;
+        let tab = *tab;
+        let form_idx = *form_idx;
+        let host = host_of(url).unwrap_or_else(|| "this site".to_string());
+        let mut bar = div()
+            .id("login-fill-banner")
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(34.))
+            .px_3()
+            .bg(t.surface)
+            .border_t_1()
+            .border_color(t.accent)
+            .text_size(px(12.))
+            .text_color(t.text)
+            .child(div().text_color(t.muted).child(SharedString::from(format!("Keychain login for {host}:"))));
+        for (idx, (username, path)) in candidates.iter().enumerate() {
+            let u = username.clone();
+            let p = path.clone();
+            let url_c = url.clone();
+            let label = if username.is_empty() { "(saved password)".to_string() } else { username.clone() };
+            bar = bar.child(
+                div()
+                    .id(("login-fill-opt", idx))
+                    .px_2p5()
+                    .py_0p5()
+                    .rounded(px(5.))
+                    .bg(t.active)
+                    .border_1()
+                    .border_color(t.accent)
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        let res = app.web.borrow().fill_login(tab, &url_c, form_idx, &u, &p);
+                        app.login_fill_prompt = None;
+                        match res {
+                            Ok(()) => app.toast("Filled login from Keychain"),
+                            Err(e) => app.toast(e),
+                        }
+                        app.focus_active_page();
+                        cx.notify();
+                    }))
+                    .child(SharedString::from(label)),
+            );
+        }
+        bar = bar.child(div().flex_1()).child(
+            div()
+                .id("login-fill-dismiss")
+                .px_2()
+                .py_0p5()
+                .rounded(px(4.))
+                .text_color(t.muted)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .on_click(cx.listener(|app, _, _, cx| {
+                    app.login_fill_prompt = None;
+                    app.focus_active_page();
+                    cx.notify();
+                }))
+                .child("Dismiss"),
+        );
+        Some(bar.into_any_element())
+    }
+
+    pub(super) fn render_login_save_banner(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let (tab, url, username) = self.login_save_prompt.as_ref()?;
+        if self.active() != Some(*tab) {
+            return None;
+        }
+        let t = self.theme;
+        let tab = *tab;
+        let origin_str = relay_extensions::login::Origin::parse(url).map(|o| o.to_string()).unwrap_or_default();
+        let host = host_of(url).unwrap_or_else(|| "this site".to_string());
+        let user_c = username.clone();
+        let display_user = if username.is_empty() { "this account" } else { username.as_str() };
+        Some(
+            div()
+                .id("login-save-banner")
+                .flex()
+                .items_center()
+                .gap_2()
+                .h(px(34.))
+                .px_3()
+                .bg(t.surface)
+                .border_t_1()
+                .border_color(t.accent)
+                .text_size(px(12.))
+                .text_color(t.text)
+                .child(div().flex_1().child(SharedString::from(format!("Save login for {display_user} on {host} to macOS Keychain?"))))
+                .child(
+                    div()
+                        .id("login-save-accept")
+                        .px_2p5()
+                        .py_0p5()
+                        .rounded(px(5.))
+                        .bg(t.active)
+                        .border_1()
+                        .border_color(t.accent)
+                        .text_color(t.text)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            let res = app.web.borrow().accept_save_login(tab);
+                            app.login_save_prompt = None;
+                            match res {
+                                Ok(_) => app.toast("Saved login to macOS Keychain"),
+                                Err(e) => app.toast(e),
+                            }
+                            cx.notify();
+                        }))
+                        .child("Save"),
+                )
+                .child(
+                    div()
+                        .id("login-save-decline")
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .text_color(t.muted)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            app.web.borrow().decline_save_login(tab);
+                            if !origin_str.is_empty() {
+                                app.declined_login_saves.insert((origin_str.clone(), user_c.clone()));
+                            }
+                            app.login_save_prompt = None;
+                            cx.notify();
+                        }))
+                        .child("Not now"),
+                )
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let (url, total, asleep, agents) = {

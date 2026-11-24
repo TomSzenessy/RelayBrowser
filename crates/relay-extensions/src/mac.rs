@@ -111,3 +111,111 @@ fn split_url(url: &str) -> Option<(bool, String, Option<u16>, String)> {
     };
     (!host.is_empty()).then(|| (https, host.to_ascii_lowercase(), port, path.to_string()))
 }
+
+/// List non-secret Keychain internet-password metadata matching `origin` exactly.
+/// Never sets `load_data(true)`, so no password bytes leave the Keychain here.
+pub fn list_logins(origin: &crate::login::Origin) -> Vec<crate::login::SavedLoginMeta> {
+    use crate::login::{Origin, SavedLoginMeta};
+    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+
+    if !origin.is_secure() {
+        return Vec::new();
+    }
+    let Ok(results) = ItemSearchOptions::new()
+        .class(ItemClass::internet_password())
+        .load_attributes(true)
+        .limit(Limit::All)
+        .search()
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (idx, item) in results.into_iter().enumerate() {
+        let Some(dict) = item.simplify_dict() else { continue };
+        let Some(server) = dict.get("srvr").map(String::as_str).filter(|s| !s.is_empty()) else { continue };
+        let scheme = match dict.get("ptcl").map(String::as_str) {
+            Some("htps") => "https",
+            Some("http") => "http",
+            _ => continue,
+        };
+        let port = dict
+            .get("port")
+            .and_then(|p| p.parse::<u16>().ok())
+            .filter(|&p| p > 0);
+        let url = match port {
+            Some(p) => format!("{scheme}://{server}:{p}/"),
+            None => format!("{scheme}://{server}/"),
+        };
+        let Ok(item_origin) = Origin::parse(&url) else { continue };
+        if item_origin != *origin {
+            continue;
+        }
+        let username = dict.get("acct").cloned().unwrap_or_default();
+        let path = dict.get("path").map(String::as_str).unwrap_or("/");
+        out.push(SavedLoginMeta::new((idx + 1) as u64, item_origin, username, path, 0));
+    }
+    out
+}
+
+/// Read the secret password for one explicitly confirmed Keychain candidate.
+pub fn read_login_password(
+    origin: &crate::login::Origin,
+    username: &str,
+    path: &str,
+) -> Result<crate::login::Password, crate::login::SaveFailure> {
+    use crate::login::{Password, SaveFailure};
+    use security_framework::passwords::get_internet_password;
+    use security_framework_sys::keychain::{SecAuthenticationType, SecProtocolType};
+
+    if !origin.is_secure() {
+        return Err(SaveFailure::InvalidItem);
+    }
+    let proto = if origin.is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
+    let bytes = get_internet_password(origin.host(), None, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm)
+        .or_else(|_| get_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm))
+        .map_err(|_| SaveFailure::Unavailable)?;
+    let text = String::from_utf8(bytes).map_err(|_| SaveFailure::InvalidItem)?;
+    Ok(Password::new(text))
+}
+
+/// Write or update one captured login in the macOS login Keychain.
+pub fn save_login(login: &crate::login::CapturedLogin) -> Result<(), crate::login::SaveFailure> {
+    use crate::login::SaveFailure;
+    use security_framework::passwords::set_internet_password;
+    use security_framework_sys::keychain::{SecAuthenticationType, SecProtocolType};
+
+    if !login.origin().is_secure() || !login.is_usable() {
+        return Err(SaveFailure::InvalidItem);
+    }
+    let proto = if login.origin().is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
+    set_internet_password(
+        login.origin().host(),
+        None,
+        login.username(),
+        login.path(),
+        login.origin().port(),
+        proto,
+        SecAuthenticationType::HTMLForm,
+        login.password().as_bytes(),
+    )
+    .map_err(|_| SaveFailure::Unavailable)
+}
+
+/// Delete one Keychain internet password for `origin` + `username`.
+pub fn delete_login(origin: &crate::login::Origin, username: &str, path: &str) -> Result<bool, crate::login::SaveFailure> {
+    use crate::login::SaveFailure;
+    use security_framework::passwords::delete_internet_password;
+    use security_framework_sys::keychain::{SecAuthenticationType, SecProtocolType};
+
+    if !origin.is_secure() {
+        return Err(SaveFailure::InvalidItem);
+    }
+    let proto = if origin.is_https() { SecProtocolType::HTTPS } else { SecProtocolType::HTTP };
+    match delete_internet_password(origin.host(), None, username, path, origin.port(), proto, SecAuthenticationType::HTMLForm) {
+        Ok(()) => Ok(true),
+        Err(_) => match delete_internet_password(origin.host(), None, username, "", origin.port(), proto, SecAuthenticationType::HTMLForm) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        },
+    }
+}

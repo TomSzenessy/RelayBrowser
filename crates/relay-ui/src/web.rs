@@ -29,6 +29,10 @@ pub enum WebEvent {
     RulesApplied { reload: TabId },
     /// Reply to [`WebHost::find`]: whether the text occurs in the page.
     Found { tab: TabId, found: bool },
+    /// Native-trusted focus in a login form (never carries secrets).
+    LoginFocus { tab: TabId, url: String, form_idx: usize },
+    /// Native-verified post-submit login save offer (never carries secrets).
+    LoginSaveOffer { tab: TabId, url: String, username: String },
 }
 
 #[cfg(target_os = "macos")]
@@ -59,6 +63,8 @@ mod imp {
                 sink.borrow_mut().push(match e {
                     EngineEvent::OpenInNewTab { opener, url } => WebEvent::OpenInNewTab { opener, url },
                     EngineEvent::Slept(t) => WebEvent::Slept(t),
+                    EngineEvent::LoginFocus { tab, url, form_idx } => WebEvent::LoginFocus { tab, url, form_idx },
+                    EngineEvent::LoginSaveOffer { tab, url, username } => WebEvent::LoginSaveOffer { tab, url, username },
                 })
             });
             // WKWebExtension needs macOS 15.4+; older systems browse without extensions.
@@ -226,6 +232,68 @@ mod imp {
                 done(Err("extensions require macOS 15.4+".into()));
             }
         }
+
+        /// List non-secret `(username, path)` Keychain candidates for `url`.
+        pub fn list_login_candidates(&self, url: &str) -> Vec<(String, String)> {
+            let Ok((origin, path)) = relay_extensions::login::Origin::parse_with_path(url) else {
+                return vec![];
+            };
+            let metas = relay_extensions::mac::list_logins(&origin);
+            let matched = relay_extensions::login::match_candidates(
+                &origin,
+                &path,
+                &metas,
+                relay_extensions::login::MAX_CANDIDATES,
+            );
+            matched
+                .into_iter()
+                .filter_map(|c| {
+                    let meta = metas.iter().find(|m| m.id == c.id)?;
+                    Some((c.username, meta.path.clone()))
+                })
+                .collect()
+        }
+
+        /// Explicitly fill one confirmed Keychain login directly into the isolated
+        /// `relay.login` content world. Password never leaves `WebHost`.
+        pub fn fill_login(&self, tab: TabId, url: &str, form_idx: usize, username: &str, path: &str) -> Result<(), String> {
+            let origin = relay_extensions::login::Origin::parse(url).map_err(|e| e.to_string())?;
+            // D3: bind to the live native origin at fill time, not the focus-time URL.
+            let live = self.engine.current_url(tab).and_then(|u| relay_extensions::login::Origin::parse(&u).ok());
+            if live.as_ref() != Some(&origin) {
+                return Err("The page changed; fill cancelled".into());
+            }
+            let pw = relay_extensions::mac::read_login_password(&origin, username, path)
+                .map_err(|_| "Could not read login from Keychain".to_string())?;
+            self.engine.fill_login(tab, form_idx, username, pw.expose());
+            Ok(())
+        }
+
+        /// Save the confirmed native login capture for `tab` to Keychain and drop it.
+        pub fn accept_save_login(&self, tab: TabId) -> Result<String, String> {
+            let Some((url, username, password)) = self.engine.take_pending_login(tab) else {
+                return Err("No pending login to save".into());
+            };
+            let (origin, path) = relay_extensions::login::Origin::parse_with_path(&url).map_err(|e| e.to_string())?;
+            let captured = relay_extensions::login::CapturedLogin::new(
+                origin,
+                username.clone(),
+                &path,
+                relay_extensions::login::Password::new(password),
+            );
+            relay_extensions::mac::save_login(&captured).map_err(|_| "Could not save login to Keychain".to_string())?;
+            Ok(username)
+        }
+
+        pub fn decline_save_login(&self, tab: TabId) {
+            self.engine.drop_pending_login(tab);
+        }
+
+        pub fn delete_saved_login(&self, url: &str, username: &str, path: &str) -> Result<bool, String> {
+            let origin = relay_extensions::login::Origin::parse(url).map_err(|e| e.to_string())?;
+            relay_extensions::mac::delete_login(&origin, username, path)
+                .map_err(|_| "Could not delete login from Keychain".to_string())
+        }
     }
 }
 
@@ -279,6 +347,19 @@ mod imp {
         }
         pub fn load_extension(&self, _dir: &std::path::Path, _id: &str, done: impl Fn(Result<String, String>) + 'static) {
             done(Err("extensions need WebKit (macOS)".into()));
+        }
+        pub fn list_login_candidates(&self, _url: &str) -> Vec<(String, String)> {
+            vec![]
+        }
+        pub fn fill_login(&self, _tab: TabId, _url: &str, _form_idx: usize, _username: &str, _path: &str) -> Result<(), String> {
+            Err("Keychain autofill requires macOS".into())
+        }
+        pub fn accept_save_login(&self, _tab: TabId) -> Result<String, String> {
+            Err("Keychain save requires macOS".into())
+        }
+        pub fn decline_save_login(&self, _tab: TabId) {}
+        pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
+            Ok(false)
         }
     }
 }

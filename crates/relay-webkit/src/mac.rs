@@ -21,31 +21,134 @@ use objc2_foundation::{
     NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::{
-    WKContentRuleList, WKContentRuleListStore, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo, WKNavigation,
-    WKNavigationAction, WKNavigationDelegate, WKNavigationResponse, WKNavigationResponsePolicy, WKScriptMessage, WKScriptMessageHandler,
-    WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebExtensionController, WKWebView,
-    WKWebViewConfiguration, WKWebsiteDataStore, WKWindowFeatures,
+    WKContentRuleList, WKContentRuleListStore, WKContentWorld, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo,
+    WKNavigation, WKNavigationAction, WKNavigationDelegate, WKNavigationResponse, WKNavigationResponsePolicy, WKScriptMessage,
+    WKScriptMessageHandler, WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebExtensionController,
+    WKWebView, WKWebViewConfiguration, WKWebsiteDataStore, WKWindowFeatures,
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 const HANDLER: &str = "relay";
+const LOGIN_WORLD: &str = "relay.login";
+const LOGIN_HANDLER: &str = "relayLogin";
 const RULES_ID: &str = "relay-content-rules";
+/// Native user-gesture window (D4 in docs/login-autofill.md): focus/submit
+/// signals outside this window after a real NSView mouseDown/keyDown are ignored.
+const TRUSTED_GESTURE_WINDOW: Duration = Duration::from_millis(1500);
 /// Appended to WebKit's default user-agent via `applicationNameForUserAgent` so
 /// sites like YouTube Music and Google Workspace recognize Relay as a modern
 /// Safari/WebKit browser instead of rejecting it as an unsupported webview.
 const SAFARI_UA_SUFFIX: &str = "Version/18.4 Safari/605.1.15";
 
-/// Things the engine needs the shell to do.
+/// Isolated-world listener: posts ONLY non-secret `{ kind, form }` signals to
+/// `relayLogin` inside `WKContentWorld("relay.login")`. Never reads passwords.
+const LOGIN_WATCH_JS: &str = r#"(function(){
+  if (window.__relayLoginInstalled) return;
+  window.__relayLoginInstalled = true;
+  function findFormIndex(el) {
+    var form = el && el.form ? el.form : (el && el.closest ? el.closest('form') : null);
+    if (!form) return -1;
+    var forms = Array.prototype.slice.call(document.forms || []);
+    return forms.indexOf(form);
+  }
+  function isLoginField(el) {
+    if (!el || el.tagName !== 'INPUT') return false;
+    var t = (el.type || 'text').toLowerCase();
+    if (t === 'password') return true;
+    if (t === 'email' || t === 'text' || t === 'tel') {
+      var ac = (el.autocomplete || '').toLowerCase();
+      var name = ((el.name || '') + ' ' + (el.id || '')).toLowerCase();
+      if (ac.indexOf('username') !== -1 || ac.indexOf('email') !== -1 || /user|email|login/.test(name)) {
+        var root = el.form || document;
+        return !!root.querySelector('input[type="password"]');
+      }
+    }
+    return false;
+  }
+  function post(obj) {
+    try { window.webkit.messageHandlers.relayLogin.postMessage(JSON.stringify(obj)); } catch (_) {}
+  }
+  document.addEventListener('focusin', function(e) {
+    if (isLoginField(e.target)) post({ kind: 'focus', form: findFormIndex(e.target) });
+  }, true);
+  document.addEventListener('submit', function(e) {
+    var form = e.target;
+    if (!form || !form.querySelector) return;
+    if (!form.querySelector('input[type="password"]')) return;
+    var forms = Array.prototype.slice.call(document.forms || []);
+    post({ kind: 'submit', form: forms.indexOf(form) });
+  }, true);
+})();"#;
+
+/// Isolated-world fill: receives `formIdx`, `username`, `password` as native
+/// `NSDictionary` arguments (never interpolated into JS source — D2).
+const LOGIN_FILL_JS: &str = r#"
+  var root = (typeof formIdx === 'number' && formIdx >= 0 && document.forms[formIdx]) ? document.forms[formIdx] : document;
+  var pw = root.querySelector('input[type="password"]');
+  if (!pw) return false;
+  var inputs = Array.prototype.slice.call(root.querySelectorAll('input'));
+  var user = null;
+  for (var i = 0; i < inputs.length; i++) {
+    var inp = inputs[i];
+    if (inp === pw) break;
+    var t = (inp.type || 'text').toLowerCase();
+    if ((t === 'email' || t === 'text' || t === 'tel') && !inp.disabled && !inp.readOnly) user = inp;
+  }
+  var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  function setVal(el, val) {
+    if (!el || typeof val !== 'string') return;
+    setter.call(el, val);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (user && username) setVal(user, username);
+  setVal(pw, password);
+  return true;
+"#;
+
+/// Isolated-world capture: reads `{ username, password }` directly into native
+/// completion handler memory without calling `postMessage`.
+const LOGIN_CAPTURE_JS: &str = r#"
+  var root = (typeof formIdx === 'number' && formIdx >= 0 && document.forms[formIdx]) ? document.forms[formIdx] : document;
+  var pw = root.querySelector('input[type="password"]');
+  if (!pw || !pw.value) return null;
+  var inputs = Array.prototype.slice.call(root.querySelectorAll('input'));
+  var user = '';
+  for (var i = 0; i < inputs.length; i++) {
+    var inp = inputs[i];
+    if (inp === pw) break;
+    var t = (inp.type || 'text').toLowerCase();
+    if ((t === 'email' || t === 'text' || t === 'tel') && inp.value) user = inp.value;
+  }
+  return { username: user, password: pw.value };
+"#;
+
+const LOGIN_HAS_PW_JS: &str = r#"
+  var pws = document.querySelectorAll('input[type="password"]');
+  for (var i = 0; i < pws.length; i++) {
+    var r = pws[i].getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return true;
+  }
+  return false;
+"#;
+
+/// Things the engine needs the shell to do. Never carries passwords.
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
     /// `target=_blank` / `window.open`: open this URL in a new tab after `opener`.
     OpenInNewTab { opener: TabId, url: String },
     /// A sleeping tab's snapshot is ready (or failed).
     Slept(TabId),
+    /// Native-trusted focus in a login form on `url` (main frame only).
+    LoginFocus { tab: TabId, url: String, form_idx: usize },
+    /// A trusted login submit succeeded on the same origin; offer to save
+    /// `username` (the password remains strictly inside `Engine`).
+    LoginSaveOffer { tab: TabId, url: String, username: String },
 }
 
 struct DownloadIvars {
@@ -116,11 +219,126 @@ impl DownloadHandler {
     }
 }
 
+/// Native-only in-memory login capture; never serialized, logged, or placed in Hub.
+struct PendingCapture {
+    url: String,
+    username: String,
+    password: String,
+}
+
+impl std::fmt::Debug for PendingCapture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingCapture")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+struct LoginHandlerIvars {
+    tab: TabId,
+    events: Rc<dyn Fn(EngineEvent)>,
+    last_interaction: Rc<Cell<Option<Instant>>>,
+    pending_captures: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
+}
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements; we do not implement Drop.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RelayLoginHandler"]
+    #[ivars = LoginHandlerIvars]
+    struct LoginHandler;
+
+    unsafe impl NSObjectProtocol for LoginHandler {}
+
+    unsafe impl WKScriptMessageHandler for LoginHandler {
+        #[unsafe(method(userContentController:didReceiveScriptMessage:))]
+        fn did_receive(&self, _ucc: &WKUserContentController, message: &WKScriptMessage) {
+            if !unsafe { message.frameInfo().isMainFrame() } {
+                return;
+            }
+            // D4: reject synthetic page focus/submit outside a real native mouse/key gesture.
+            let trusted = self
+                .ivars()
+                .last_interaction
+                .get()
+                .is_some_and(|at| at.elapsed() <= TRUSTED_GESTURE_WINDOW);
+            if !trusted {
+                return;
+            }
+            let Some(view) = (unsafe { message.webView() }) else { return };
+            let Some(url) = (unsafe { view.URL() }).and_then(|u| u.absoluteString()).map(|s| s.to_string()) else {
+                return;
+            };
+            let body = unsafe { message.body() };
+            let Some(raw) = body.downcast_ref::<NSString>().map(|s| s.to_string()) else { return };
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
+            let kind = val.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let form_idx = val.get("form").and_then(|v| v.as_i64()).unwrap_or(-1).max(0) as usize;
+            let tab = self.ivars().tab;
+            match kind {
+                "focus" => {
+                    (self.ivars().events)(EngineEvent::LoginFocus { tab, url, form_idx });
+                }
+                "submit" => {
+                    let mtm = MainThreadMarker::from(&*view);
+                    let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), mtm) };
+                    let key = NSString::from_str("formIdx");
+                    let num = NSNumber::new_i64(form_idx as i64);
+                    let num_obj: &AnyObject = num.as_ref();
+                    let args: Retained<NSDictionary<NSString, AnyObject>> =
+                        NSDictionary::from_slices(&[&*key], &[num_obj]);
+                    let pending = self.ivars().pending_captures.clone();
+                    let done = RcBlock::new(move |res: *mut AnyObject, _err: *mut NSError| {
+                        let Some(obj) = (unsafe { res.as_ref() }) else { return };
+                        let Some(dict) = obj.downcast_ref::<NSDictionary>() else { return };
+                        let pw_key = NSString::from_str("password");
+                        let pw = dict
+                            .objectForKey(pw_key.as_ref())
+                            .and_then(|v| v.downcast_ref::<NSString>().map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        if pw.is_empty() || pw.len() > 4096 {
+                            return;
+                        }
+                        let user_key = NSString::from_str("username");
+                        let username = dict
+                            .objectForKey(user_key.as_ref())
+                            .and_then(|v| v.downcast_ref::<NSString>().map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        pending.borrow_mut().insert(tab, PendingCapture { url: url.clone(), username, password: pw });
+                    });
+                    unsafe {
+                        view.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
+                            &NSString::from_str(LOGIN_CAPTURE_JS),
+                            Some(&args),
+                            None,
+                            &world,
+                            Some(&done),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+);
+
+impl LoginHandler {
+    fn new(mtm: MainThreadMarker, ivars: LoginHandlerIvars) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(ivars);
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 pub struct HandlerIvars {
     tab: TabId,
     hub: SharedHub,
     events: Rc<dyn Fn(EngineEvent)>,
     downloads: RefCell<HashMap<u64, Retained<DownloadHandler>>>,
+    pending_captures: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
+    offered_logins: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
 }
 
 define_class!(
@@ -194,13 +412,61 @@ define_class!(
             self.ivars().downloads.borrow_mut().insert(id, handler);
         }
 
+        #[unsafe(method(webView:didFinishNavigation:))]
+        fn did_finish(&self, web_view: &WKWebView, _navigation: Option<&WKNavigation>) {
+            let tab = self.ivars().tab;
+            let Some(capture) = self.ivars().pending_captures.borrow_mut().remove(&tab) else {
+                return;
+            };
+            let Some(dest_url) = (unsafe { web_view.URL() }).and_then(|u| u.absoluteString()).map(|s| s.to_string()) else {
+                return;
+            };
+            if !same_origin_url(&capture.url, &dest_url) {
+                return;
+            }
+            let mtm = MainThreadMarker::from(web_view);
+            let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), mtm) };
+            let offered = self.ivars().offered_logins.clone();
+            let events = self.ivars().events.clone();
+            let capture_cell = Rc::new(RefCell::new(Some(capture)));
+            let done = RcBlock::new(move |res: *mut AnyObject, err: *mut NSError| {
+                if !err.is_null() {
+                    return;
+                }
+                let has_pw = unsafe { res.as_ref() }
+                    .and_then(|o| o.downcast_ref::<NSNumber>())
+                    .is_some_and(|n| n.as_bool());
+                if has_pw {
+                    // Login form is still visible (likely wrong password): drop capture.
+                    return;
+                }
+                if let Some(cap) = capture_cell.borrow_mut().take() {
+                    let url = cap.url.clone();
+                    let username = cap.username.clone();
+                    offered.borrow_mut().insert(tab, cap);
+                    events(EngineEvent::LoginSaveOffer { tab, url, username });
+                }
+            });
+            unsafe {
+                web_view.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
+                    &NSString::from_str(LOGIN_HAS_PW_JS),
+                    None,
+                    None,
+                    &world,
+                    Some(&done),
+                );
+            }
+        }
+
         #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
         fn did_fail_provisional(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
+            self.ivars().pending_captures.borrow_mut().remove(&self.ivars().tab);
             self.note_error(error);
         }
 
         #[unsafe(method(webView:didFailNavigation:withError:))]
         fn did_fail(&self, _web_view: &WKWebView, _navigation: Option<&WKNavigation>, error: &NSError) {
+            self.ivars().pending_captures.borrow_mut().remove(&self.ivars().tab);
             self.note_error(error);
         }
     }
@@ -338,14 +604,30 @@ impl BridgeHandler {
     }
 }
 
+struct WebViewIvars {
+    last_interaction: Rc<Cell<Option<Instant>>>,
+}
+
 define_class!(
     // SAFETY: WKWebView supports subclassing on the main thread; we do not implement Drop.
     #[unsafe(super(WKWebView))]
     #[thread_kind = MainThreadOnly]
     #[name = "RelayWebView"]
+    #[ivars = WebViewIvars]
     struct RelayWebView;
 
     impl RelayWebView {
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            self.ivars().last_interaction.set(Some(Instant::now()));
+            let _: () = unsafe { msg_send![super(self), mouseDown: event] };
+        }
+
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &NSEvent) {
+            self.ivars().last_interaction.set(Some(Instant::now()));
+            let _: () = unsafe { msg_send![super(self), keyDown: event] };
+        }
         /// Customize WebKit's native right-click context menu: rename "Open Link in New Window"
         /// to "Open Link in New Tab" (matching our WKUIDelegate), remove the redundant
         /// "Open Link" item, and ensure Back, Forward, Reload, Copy Page URL, Print…, and
@@ -481,8 +763,13 @@ define_class!(
 );
 
 impl RelayWebView {
-    fn new(mtm: MainThreadMarker, frame: NSRect, config: &WKWebViewConfiguration) -> Retained<WKWebView> {
-        let this = Self::alloc(mtm).set_ivars(());
+    fn new(
+        mtm: MainThreadMarker,
+        frame: NSRect,
+        config: &WKWebViewConfiguration,
+        last_interaction: Rc<Cell<Option<Instant>>>,
+    ) -> Retained<WKWebView> {
+        let this = Self::alloc(mtm).set_ivars(WebViewIvars { last_interaction });
         let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame, configuration: config] };
         Retained::into_super(view)
     }
@@ -504,6 +791,7 @@ fn make_menu_item(mtm: MainThreadMarker, title: &str, action: objc2::runtime::Se
 pub struct WebTab {
     pub view: Retained<WKWebView>,
     handler: Retained<BridgeHandler>,
+    login_handler: Retained<LoginHandler>,
     ucc: Retained<WKUserContentController>,
 }
 
@@ -537,6 +825,10 @@ pub struct Engine {
     /// white WKWebView.
     warming: RefCell<HashSet<TabId>>,
     pending_restore: HashMap<TabId, String>,
+    /// Native-only in-memory login captures awaiting post-navigation confirmation.
+    pending_captures: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
+    /// Native-only confirmed login captures awaiting explicit user Save/Decline.
+    offered_logins: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
 }
 
 impl Engine {
@@ -554,6 +846,8 @@ impl Engine {
             slept: Rc::new(RefCell::new(HashMap::new())),
             warming: RefCell::new(HashSet::new()),
             pending_restore: HashMap::new(),
+            pending_captures: Rc::default(),
+            offered_logins: Rc::default(),
         }
     }
 
@@ -648,7 +942,27 @@ impl Engine {
     pub fn create_with_privacy(&mut self, tab: TabId, url: &str, private: bool) -> &Retained<WKWebView> {
         self.clear_error(tab);
         let mtm = self.mtm;
-        let handler = BridgeHandler::new(mtm, HandlerIvars { tab, hub: self.hub.clone(), events: self.events.clone(), downloads: RefCell::new(HashMap::new()) });
+        let last_interaction = Rc::new(Cell::new(None));
+        let handler = BridgeHandler::new(
+            mtm,
+            HandlerIvars {
+                tab,
+                hub: self.hub.clone(),
+                events: self.events.clone(),
+                downloads: RefCell::new(HashMap::new()),
+                pending_captures: self.pending_captures.clone(),
+                offered_logins: self.offered_logins.clone(),
+            },
+        );
+        let login_handler = LoginHandler::new(
+            mtm,
+            LoginHandlerIvars {
+                tab,
+                events: self.events.clone(),
+                last_interaction: last_interaction.clone(),
+                pending_captures: self.pending_captures.clone(),
+            },
+        );
         let ucc = unsafe { WKUserContentController::new(mtm) };
         let script = unsafe {
             WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
@@ -658,9 +972,28 @@ impl Engine {
                 true,
             )
         };
+        let login_world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), mtm) };
+        let login_script = unsafe {
+            WKUserScript::initWithSource_injectionTime_forMainFrameOnly_inContentWorld(
+                WKUserScript::alloc(mtm),
+                &NSString::from_str(LOGIN_WATCH_JS),
+                WKUserScriptInjectionTime::AtDocumentStart,
+                true,
+                &login_world,
+            )
+        };
         unsafe {
             ucc.addUserScript(&script);
             ucc.addScriptMessageHandler_name(ProtocolObject::from_ref(&*handler), &NSString::from_str(HANDLER));
+            // Private tabs never offer to save or fill logins (#57).
+            if !private {
+                ucc.addUserScript(&login_script);
+                ucc.addScriptMessageHandler_contentWorld_name(
+                    ProtocolObject::from_ref(&*login_handler),
+                    &login_world,
+                    &NSString::from_str(LOGIN_HANDLER),
+                );
+            }
             if let Some(list) = self.rules.borrow().as_ref() {
                 ucc.addContentRuleList(list);
             }
@@ -683,7 +1016,7 @@ impl Engine {
             }
         }
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0));
-        let view = RelayWebView::new(mtm, frame, &config);
+        let view = RelayWebView::new(mtm, frame, &config, last_interaction);
         apply_appearance(&view, self.appearance);
         unsafe {
             view.setInspectable(true); // Develop menu / Web Inspector fallback
@@ -698,7 +1031,7 @@ impl Engine {
             }
         });
         self.uccs.borrow_mut().push(ucc.clone());
-        self.tabs.insert(tab, WebTab { view, handler, ucc });
+        self.tabs.insert(tab, WebTab { view, handler, login_handler, ucc });
         &self.tabs[&tab].view
     }
 
@@ -709,6 +1042,53 @@ impl Engine {
             let op = unsafe { t.view.printOperationWithPrintInfo(&info) };
             let _ = op.runOperation();
         }
+    }
+
+    /// Fill a login form in the isolated `relay.login` content world using
+    /// `NSDictionary` arguments (never interpolating the password into JS source).
+    /// Live native URL of `tab` (never page-supplied).
+    pub fn current_url(&self, tab: TabId) -> Option<String> {
+        let t = self.tabs.get(&tab)?;
+        unsafe { t.view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string())
+    }
+
+    pub fn fill_login(&self, tab: TabId, form_idx: usize, username: &str, password: &str) {
+        let Some(t) = self.tabs.get(&tab) else { return };
+        let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), self.mtm) };
+        let k_form = NSString::from_str("formIdx");
+        let k_user = NSString::from_str("username");
+        let k_pass = NSString::from_str("password");
+        let v_form = NSNumber::new_i64(form_idx as i64);
+        let v_user = NSString::from_str(username);
+        let v_pass = NSString::from_str(password);
+        let args: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
+            &[&*k_form, &*k_user, &*k_pass],
+            &[v_form.as_ref(), v_user.as_ref(), v_pass.as_ref()],
+        );
+        unsafe {
+            t.view.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
+                &NSString::from_str(LOGIN_FILL_JS),
+                Some(&args),
+                None,
+                &world,
+                None,
+            );
+        }
+    }
+
+    /// Pop the confirmed pending login `(url, username, password)` for `tab` so
+    /// `WebHost` can write it directly to the Keychain and drop it immediately.
+    pub fn take_pending_login(&self, tab: TabId) -> Option<(String, String, String)> {
+        self.offered_logins
+            .borrow_mut()
+            .remove(&tab)
+            .map(|c| (c.url, c.username, c.password))
+    }
+
+    /// Discard any pending or offered login capture for `tab`.
+    pub fn drop_pending_login(&self, tab: TabId) {
+        self.pending_captures.borrow_mut().remove(&tab);
+        self.offered_logins.borrow_mut().remove(&tab);
     }
 
     pub fn navigate(&self, tab: TabId, url: &str) {
@@ -892,10 +1272,12 @@ impl Engine {
         }
         self.slept.borrow_mut().remove(&tab);
         self.warming.borrow_mut().remove(&tab);
+        self.drop_pending_login(tab);
     }
 
     /// Snapshot, remember URL + scroll, then destroy the WKWebView (0 MB).
     pub fn sleep(&mut self, tab: TabId, scroll: (f64, f64)) {
+        self.drop_pending_login(tab);
         let Some(t) = self.tabs.remove(&tab) else { return };
         self.uccs.borrow_mut().retain(|u| !std::ptr::eq::<WKUserContentController>(&**u, &*t.ucc));
         let url = unsafe { t.view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();
@@ -1076,14 +1458,29 @@ fn apply_appearance(view: &WKWebView, dark: Option<bool>) {
 }
 
 fn teardown(t: &WebTab) {
+    let mtm = MainThreadMarker::from(&*t.view);
+    let login_world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), mtm) };
     unsafe {
         t.ucc.removeScriptMessageHandlerForName(&NSString::from_str(HANDLER));
+        t.ucc.removeScriptMessageHandlerForName_contentWorld(&NSString::from_str(LOGIN_HANDLER), &login_world);
         t.view.setUIDelegate(None);
         t.view.setNavigationDelegate(None);
         t.view.stopLoading();
     }
     t.view.removeFromSuperview();
-    let _ = &t.handler;
+    let _ = (&t.handler, &t.login_handler);
+}
+
+fn same_origin_url(a: &str, b: &str) -> bool {
+    let origin_key = |u: &str| -> Option<(String, String)> {
+        let (scheme, rest) = u.split_once("://")?;
+        let auth = rest.split(['/', '?', '#']).next()?;
+        Some((scheme.to_ascii_lowercase(), auth.to_ascii_lowercase()))
+    };
+    match (origin_key(a), origin_key(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
 }
 
 fn jpeg_from_image(img: &NSImage) -> Option<Vec<u8>> {
