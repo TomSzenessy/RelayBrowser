@@ -78,7 +78,7 @@ namespaces (`storage`, `runtime.sendMessage`, `tabs`, `scripting`,
 never wrapped. Only `sidePanel` and `offscreen` have native receivers.
 
 `page_text` posts `{kind:"page_text",url,text}` with up to 20,000 characters
-of visible `document.body.innerText`; the hub caches it per URL for the AI
+of visible `document.body.innerText` (the WebKit test asserts the reply); the hub caches it per URL for the AI
 assistant and clears it on navigation.
 
 `float_video` pins the first `<video>` to a fixed bottom-right overlay with

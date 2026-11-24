@@ -679,6 +679,8 @@ test("hovering a link posts its target and clearing posts null", async () => {
 });
 
 test("page_text posts bounded visible text with its URL", async () => {
+  const run = cmd => page.evaluate(s => eval(s), `window.__relay.exec(${JSON.stringify(cmd)}), void 0`)
+    .then(() => until(m => m.kind === "result" && m.id === cmd.id)).then(r => r.hit);
   const res = await run({ id: 401, op: "page_text" });
   assert.equal(res.value, true);
   const hit = await until(m => m.kind === "page_text" && m.url === PAGE_URL);
