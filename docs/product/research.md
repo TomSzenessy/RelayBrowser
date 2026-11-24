@@ -79,25 +79,25 @@ network state, with no screenshots and no second automation stack. Relay
 also uses the system WebKit, so it stays small and Apple handles engine
 security updates.
 
-## Search parity snapshot (2026-11-22)
+## Search parity snapshot (2026-11-24)
 
 "At least as good as Search" is the target, not the current claim. This is the
-honest gap list; each `no` is a candidate for the next slices, not a promise.
+honest gap list; Mac visual/runtime verification remains pending for UI rows.
 
 | Area | Search | Relay now | Next |
 |---|---|---|---|
 | Tabs: side/top, fold, close, pin | yes | yes (`↔`/`⌘S`/`×`/pin) | visual review on a Mac |
-| Split / find / ad block | yes | yes | — |
-| New tab: home grid, recents, apps | home bookmark grid | start page with recent/frequent/apps/bookmarks | shortcut/sidebar slices |
-| Custom hotkeys | full Settings › Shortcuts | fixed key map + native menu | **shortcut editor** |
-| Collapsible side column | yes, drag resize | tab strip only; Inspector pane | **agent/inspector sidebar** |
-| History / bookmarks / downloads panels | three panels | palette + bookmark toggle | panels |
-| Reading mode / PiP | yes | no | later |
-| Passwords | save, autofill, Keychain | import only | later |
-| Themes | light/dark/mural | system light/dark | theme tokens |
-| Web apps | no (Search is the app) | **install-site-as-app** | icons, uninstall UI |
-| Agents / MCP | no page MCP | page-control MCP | **shell-control MCP** |
-| Spaces / sync / updater | yes | no | out of scope for now |
+| Split / find / ad block / CMP rules | yes | yes (`⌘\`/`⌘F`/EasyList+CMP) | visual review on a Mac |
+| New tab: home grid, recents, apps | home bookmark grid | start page with recent/frequent/apps/bookmarks/note | visual review on a Mac |
+| Custom hotkeys | full Settings › Shortcuts | 49-action table + Settings editor + live native menus | Mac key-equivalent check |
+| Collapsible side column | yes, drag resize | Agent + native Rust Inspector (detail drawers + cURL) | drag resize |
+| History / bookmarks / downloads panels | three panels | `⌘Y`/`⇧⌘B` Library + `⇧⌘J` Downloads panel (progress/cancel/retry) | VoiceOver (#64) |
+| Reading mode / PiP | yes | yes (`⇧⌘R` inert overlay / `⇧⌘P` PiP) | Mac video observation |
+| Passwords | save, autofill, Keychain | Keychain CSV import + pure fill/save model (`login.rs`) | owner security review (#57) |
+| Themes | light/dark/mural | System/Light/Dark + WCAG AA accent picker | visual review on a Mac |
+| Web apps | no (Search is the app) | **install-site-as-app** + chromeless `--app` | Mac launch observation |
+| Agents / MCP | page MCP + Stop | page MCP (`read_markdown`, `batch_actions`, `screenshot`, etc.) + **shell-control MCP** + 9-client Connect board | live Claude Code check on Mac |
+| Spaces / sync / updater | yes | no | out of scope for v1 |
 
 ## The next platform layer: the same MCP shapes the browser
 

@@ -299,7 +299,7 @@ fn doctor_distinguishes_a_stale_socket_from_a_listening_one() {
 #[test]
 fn mcp_config_prints_each_client_and_rejects_unknown() {
     let dir = tempfile::tempdir().unwrap();
-    for client in ["claude-code", "codex", "opencode", "cursor", "zed"] {
+    for client in ["claude-code", "codex", "opencode", "cursor", "zed", "vscode", "windsurf", "claude-desktop", "gemini"] {
         let out = relay(dir.path(), &["mcp-config", client]);
         assert!(out.status.success(), "{client}: {}", String::from_utf8_lossy(&out.stderr));
         let text = String::from_utf8_lossy(&out.stdout);
@@ -309,10 +309,10 @@ fn mcp_config_prints_each_client_and_rejects_unknown() {
     let all = relay(dir.path(), &["mcp-config"]);
     assert!(all.status.success());
     let text = String::from_utf8_lossy(&all.stdout);
-    for name in ["Claude Code", "Codex", "OpenCode", "Cursor", "Zed"] {
+    for name in ["Claude Code", "Codex", "OpenCode", "Cursor", "Zed", "VS Code", "Windsurf", "Claude Desktop", "Gemini CLI"] {
         assert!(text.contains(name), "missing {name} in:\n{text}");
     }
-    let bad = relay(dir.path(), &["mcp-config", "vscode"]);
+    let bad = relay(dir.path(), &["mcp-config", "unknown-agent"]);
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown client"));
 }

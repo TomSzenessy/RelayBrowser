@@ -37,9 +37,9 @@ impl SimPage {
 impl Browser for SimPage {
     fn open(&self, tab: TabId, url: &str) { self.load(tab, url) }
     fn navigate(&self, tab: TabId, url: &str) { self.load(tab, url) }
-    fn go_back(&self, _: TabId) {}
-    fn go_forward(&self, _: TabId) {}
-    fn reload(&self, _: TabId) {}
+    fn go_back(&self, tab: TabId) { self.load(tab, "https://shop.test/prev") }
+    fn go_forward(&self, tab: TabId) { self.load(tab, "https://shop.test/next") }
+    fn reload(&self, tab: TabId) { self.load(tab, "https://shop.test/cart") }
     fn close(&self, _: TabId) {}
     fn activate(&self, _: TabId) {}
     fn refresh_cookies(&self, tab: TabId) {
@@ -54,6 +54,7 @@ impl Browser for SimPage {
             "click" => json!({"id": cmd["target"], "tag": "button", "text": "Pay now"}),
             "type" => json!({"id": cmd["target"], "tag": "input", "text": cmd["text"]}),
             "read_text" => json!("Your cart\nPay now"),
+            "markdown" => json!("# Your cart\n\nPay now"),
             "press_key" => json!({"key": cmd["key"], "tag": "input", "prevented": false}),
             "eval_js" => json!({"result": {"sum": 3, "script_len": cmd["script"].as_str().unwrap_or("").len()}}),
             "set_cookie" => json!({"name": cmd["name"], "set": true}),
@@ -539,3 +540,68 @@ async fn socket_is_private_and_not_stolen() {
     let err = relay_mcp::serve_socket(&path, hub, page, None).await.unwrap_err();
     assert!(err.to_string().contains("another Relay instance"), "{err}");
 }
+
+#[tokio::test]
+async fn read_markdown_and_nav_tools_obey_policy_and_stop() {
+    let hub = SharedHub::new();
+    let page = Arc::new(SimPage { hub: hub.clone(), log: Mutex::new(vec![]) });
+    let audit = Arc::new(Mutex::new(Store::in_memory().unwrap()));
+    let server = RelayMcp::new(hub.clone(), page.clone()).with_audit(audit.clone());
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let server_task = tokio::spawn(async move {
+        let running = server.serve(server_io).await.unwrap();
+        let _ = running.waiting().await;
+    });
+    let client = ().serve(client_io).await.unwrap();
+
+    let (err, _) = call(&client, "open_tab", json!({"url": "https://shop.test/cart"})).await;
+    assert!(!err);
+    let tab = hub.lock().tab_ids()[0];
+
+    let (err, md) = call(&client, "read_markdown", json!({"tab_id": tab})).await;
+    assert!(!err, "{md}");
+    assert!(md.contains("# Your cart"), "{md}");
+
+    let (err, sc) = call(&client, "scroll_into_view", json!({"tab_id": tab, "element_id": 4})).await;
+    assert!(!err, "{sc}");
+
+    let (err, fw) = call(&client, "go_forward", json!({"tab_id": tab})).await;
+    assert!(!err, "{fw}");
+    assert!(fw.contains("https://shop.test/next"), "{fw}");
+
+    let (err, rl) = call(&client, "reload", json!({"tab_id": tab})).await;
+    assert!(!err, "{rl}");
+    assert!(rl.contains("https://shop.test/cart"), "{rl}");
+
+    // ReadOnly allows read_markdown, refuses mutating go_forward/reload.
+    hub.set_agent_policy("shop.test", AgentPolicy::ReadOnly);
+    let (err, md_ro) = call(&client, "read_markdown", json!({"tab_id": tab})).await;
+    assert!(!err, "{md_ro}");
+    let (err, fw_ro) = call(&client, "go_forward", json!({"tab_id": tab})).await;
+    assert!(err, "go_forward must fail under ReadOnly: {fw_ro}");
+    let (err, rl_ro) = call(&client, "reload", json!({"tab_id": tab})).await;
+    assert!(err, "reload must fail under ReadOnly: {rl_ro}");
+
+    // Block refuses read_markdown too.
+    hub.set_agent_policy("shop.test", AgentPolicy::Block);
+    let (err, md_blk) = call(&client, "read_markdown", json!({"tab_id": tab})).await;
+    assert!(err, "read_markdown must fail under Block: {md_blk}");
+
+    // Stop refuses everything fast.
+    hub.set_agent_policy("shop.test", AgentPolicy::Allow);
+    hub.set_agents_paused(true);
+    let msg = call_message(&client, "read_markdown", json!({"tab_id": tab})).await;
+    assert!(msg.contains("paused"), "{msg}");
+
+    let rows = audit.lock().unwrap().agent_audit(50).unwrap();
+    assert!(rows.iter().any(|r| r.tool == "read_markdown" && r.outcome == "ok"));
+    assert!(rows.iter().any(|r| r.tool == "go_forward" && r.outcome == "ok"));
+    assert!(rows.iter().any(|r| r.tool == "reload" && r.outcome == "ok"));
+    assert!(rows.iter().any(|r| r.tool == "scroll_into_view" && r.outcome == "ok"));
+    assert!(rows.iter().any(|r| r.tool == "go_forward" && r.outcome == "error"), "refused go_forward must audit as error");
+    assert!(rows.iter().any(|r| r.tool == "reload" && r.outcome == "error"), "refused reload must audit as error");
+
+    let _ = client.cancel().await;
+    server_task.abort();
+}
+

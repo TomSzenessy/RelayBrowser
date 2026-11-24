@@ -33,7 +33,7 @@ USAGE:
   relay clear-data [--history] [--session] [--bookmarks] [--audit] --yes
                                     delete stored history/session/bookmarks and/or the agent audit log
   relay audit [--limit N]           show the lean log of agent tool calls
-  relay mcp-config [CLIENT]         print the MCP config for claude-code, codex, opencode, cursor, or zed
+  relay mcp-config [CLIENT]         print the MCP config for 9 clients (claude-code, codex, opencode, cursor, zed, vscode, windsurf, claude-desktop, gemini)
   relay import-chrome [--dry-run] [--profile DIR]
                                     import Chrome bookmarks + history into Relay's profile
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
@@ -418,7 +418,7 @@ fn format_unix(seconds: i64) -> String {
 }
 
 fn mcp_config(args: &[String]) -> anyhow::Result<()> {
-    const USAGE: &str = "usage: relay mcp-config [claude-code|codex|opencode|cursor|zed]";
+    const USAGE: &str = "usage: relay mcp-config [claude-code|codex|opencode|cursor|zed|vscode|windsurf|claude-desktop|gemini]";
     let mut wanted = None;
     for arg in args {
         match arg.as_str() {

@@ -490,6 +490,7 @@ fn op_tool(op: &Op) -> &'static str {
         Op::Highlight { .. } => "highlight_element",
         Op::ReadText { .. } => "read_text",
         Op::Scroll { .. } | Op::ScrollTo { .. } => "scroll",
+        Op::ScrollIntoView { .. } => "scroll_into_view",
         Op::Markdown => "read_markdown",
         Op::WebApp => "web_app",
         Op::Favicon => "favicon",
@@ -499,6 +500,10 @@ fn op_tool(op: &Op) -> &'static str {
         Op::SetCookie { .. } => "set_cookie",
         _ => "op",
     }
+}
+
+fn audit_outcome(result: &Result<CallToolResult, ErrorData>) -> &'static str {
+    if matches!(result, Ok(r) if !r.is_error.unwrap_or(false)) { "ok" } else { "error" }
 }
 
 #[tool_router]
@@ -836,13 +841,72 @@ impl RelayMcp {
     #[tool(description = "Go back in a tab's history.")]
     async fn go_back(&self, Parameters(a): Parameters<TabArg>) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
+        let mut host = String::new();
         let result = reply(async {
             let tab = self.tab(a.tab_id)?;
+            let (h, policy) = self.tab_policy(tab)?;
+            host = h;
+            if policy != relay_bridge::AgentPolicy::Allow {
+                return Err(if policy == relay_bridge::AgentPolicy::Block {
+                    HubError::Blocked(host.clone())
+                } else {
+                    HubError::ReadOnly(host.clone())
+                });
+            }
+            self.ensure_awake(tab).await?;
             let before = self.load_seq(tab)?;
             self.browser.go_back(tab);
             self.after_load(tab, before).await
         }.await);
-        self.audit("go_back", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("go_back", &host, a.tab_id, audit_outcome(&result));
+        result
+    }
+
+    #[tool(description = "Go forward in a tab's history.")]
+    async fn go_forward(&self, Parameters(a): Parameters<TabArg>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let mut host = String::new();
+        let result = reply(async {
+            let tab = self.tab(a.tab_id)?;
+            let (h, policy) = self.tab_policy(tab)?;
+            host = h;
+            if policy != relay_bridge::AgentPolicy::Allow {
+                return Err(if policy == relay_bridge::AgentPolicy::Block {
+                    HubError::Blocked(host.clone())
+                } else {
+                    HubError::ReadOnly(host.clone())
+                });
+            }
+            self.ensure_awake(tab).await?;
+            let before = self.load_seq(tab)?;
+            self.browser.go_forward(tab);
+            self.after_load(tab, before).await
+        }.await);
+        self.audit("go_forward", &host, a.tab_id, audit_outcome(&result));
+        result
+    }
+
+    #[tool(description = "Reload a tab and wait for the new page load.")]
+    async fn reload(&self, Parameters(a): Parameters<TabArg>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        let mut host = String::new();
+        let result = reply(async {
+            let tab = self.tab(a.tab_id)?;
+            let (h, policy) = self.tab_policy(tab)?;
+            host = h;
+            if policy != relay_bridge::AgentPolicy::Allow {
+                return Err(if policy == relay_bridge::AgentPolicy::Block {
+                    HubError::Blocked(host.clone())
+                } else {
+                    HubError::ReadOnly(host.clone())
+                });
+            }
+            self.ensure_awake(tab).await?;
+            let before = self.load_seq(tab)?;
+            self.browser.reload(tab);
+            self.after_load(tab, before).await
+        }.await);
+        self.audit("reload", &host, a.tab_id, audit_outcome(&result));
         result
     }
 
@@ -1108,12 +1172,32 @@ impl RelayMcp {
         }.await)
     }
 
+    #[tool(description = "Extract the page's main content as clean Markdown (max 200 KB; skips nav/aside/footer/scripts). Ideal for reading docs or articles with fewer tokens than read_dom.")]
+    async fn read_markdown(&self, Parameters(a): Parameters<TabArg>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        reply(async {
+            let tab = self.tab(a.tab_id)?;
+            let v = self.op(tab, Op::Markdown).await?;
+            Ok(ok(v.as_str().unwrap_or_default().to_string()))
+        }.await)
+    }
+
     #[tool(description = "Scroll the page vertically by dy pixels.")]
     async fn scroll(&self, Parameters(a): Parameters<ScrollArgs>) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
         reply(async {
             let tab = self.tab(a.tab_id)?;
             Ok(json(&self.op(tab, Op::Scroll { x: 0.0, y: a.dy }).await?))
+        }.await)
+    }
+
+    #[tool(description = "Scroll an element by id into the visible viewport.")]
+    async fn scroll_into_view(&self, Parameters(a): Parameters<ElementArgs>) -> Result<CallToolResult, ErrorData> {
+        self.ensure_running()?;
+        reply(async {
+            let tab = self.tab(a.tab_id)?;
+            self.op(tab, Op::ScrollIntoView { target: a.element_id }).await?;
+            Ok(ok("Scrolled into view"))
         }.await)
     }
 

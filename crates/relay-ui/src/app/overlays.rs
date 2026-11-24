@@ -370,8 +370,10 @@ impl RelayApp {
 
     pub(super) fn render_connect(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let mut rows = div().flex().flex_col();
-        for client in mcp_config::Client::ALL {
+        let mut clients: Vec<(mcp_config::Client, bool)> = mcp_config::Client::ALL.iter().map(|&c| (c, c.is_installed())).collect();
+        clients.sort_by_key(|(_, detected)| !*detected);
+        let mut rows = div().id("connect-list").flex().flex_col().max_h(px(420.)).overflow_y_scroll();
+        for (client, detected) in clients {
             rows = rows.child(
                 div()
                     .id(SharedString::from(format!("connect-{}", client.id())))
@@ -389,7 +391,25 @@ impl RelayApp {
                             .flex()
                             .flex_col()
                             .gap_0p5()
-                            .child(div().text_size(px(13.)).text_color(t.text).child(client.name()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().text_size(px(13.)).text_color(t.text).child(client.name()))
+                                    .when(detected, |d| {
+                                        d.child(
+                                            div()
+                                                .px_1p5()
+                                                .py_0p5()
+                                                .rounded(px(4.))
+                                                .bg(t.active)
+                                                .text_size(px(10.))
+                                                .text_color(t.accent)
+                                                .child("Detected"),
+                                        )
+                                    }),
+                            )
                             .child(div().text_size(px(10.)).text_color(t.muted).child(client.target())),
                     )
                     .child(
