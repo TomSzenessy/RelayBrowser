@@ -93,7 +93,7 @@ honest gap list; Mac visual/runtime verification remains pending for UI rows.
 | Tabs: side/top, fold, close, pin | yes | yes (`↔`/`⌘S`/`×`/pin) | visual review on a Mac |
 | Split / find / ad block / CMP rules | yes | yes (`⌘\`/`⌘F`/EasyList+CMP) | visual review on a Mac |
 | New tab: home grid, recents, apps | home bookmark grid | start page with recent/frequent/apps/bookmarks/note | visual review on a Mac |
-| Custom hotkeys | full Settings › Shortcuts | 60-action table + Settings editor + live native menus | Mac key-equivalent check |
+| Custom hotkeys | full Settings › Shortcuts | 61-action table + Settings editor + live native menus | Mac key-equivalent check |
 | Collapsible side column | yes, drag resize | Agent + native Rust Inspector (detail drawers + cURL) | drag resize |
 | History / bookmarks / downloads panels | three panels | `⌘Y`/`⇧⌘B` Library + `⇧⌘J` Downloads panel (progress/cancel/retry) | VoiceOver (#64) |
 | Reading mode / PiP | yes | yes (`⇧⌘R` inert overlay / `⇧⌘P` PiP) | Mac video observation |

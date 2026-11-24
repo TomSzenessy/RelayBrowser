@@ -1061,6 +1061,63 @@ impl RelayApp {
         )
     }
 
+    pub(super) fn render_tab_switcher(&self, switcher: &TabSwitcher, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mut rows = div().id("switcher-rows").flex().flex_col().gap_1().max_h(px(380.)).overflow_y_scroll().p_2();
+        for (index, (_id, title, url)) in switcher.tabs.iter().enumerate() {
+            let selected = index == switcher.selected;
+            rows = rows.child(
+                div()
+                    .id(("switcher-row", index))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .h(px(40.))
+                    .px_3()
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .when(selected, |d| d.bg(t.active))
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        if let Some(s) = app.tab_switcher.as_mut() {
+                            s.selected = index;
+                        }
+                        app.activate_tab_switcher(cx);
+                    }))
+                    .child(self.site_icon(url, title, 16.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(div().text_size(px(12.)).text_color(t.text).whitespace_nowrap().text_ellipsis().child(SharedString::from(if title.is_empty() { palette::short_url(url) } else { title.clone() })))
+                            .child(div().text_size(px(10.)).text_color(t.muted).whitespace_nowrap().text_ellipsis().child(SharedString::from(palette::short_url(url)))),
+                    )
+                    .when(selected, |d| d.child(div().text_size(px(9.)).text_color(t.muted).child("↩"))),
+            );
+        }
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(110.)).bg(t.scrim).child(
+            div()
+                .id("tab-switcher")
+                .w(px(520.))
+                .flex()
+                .flex_col()
+                .rounded(px(12.))
+                .bg(t.raised)
+                .shadow_lg()
+                .overflow_hidden()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.close_tab_switcher();
+                    cx.notify();
+                }))
+                .child(div().px_4().py_3().text_size(px(14.)).text_color(t.text).child("Switch tab"))
+                .child(rows)
+                .child(div().px_4().py_2().text_size(px(9.)).text_color(t.muted).child("↑/↓ select · ↩ opens · esc cancels")),
+        )
+    }
+
     pub(super) fn render_ai_chat(&self, chat: &AiChat, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut messages = div().id("ai-messages").flex().flex_col().gap_2().px_4().py_3().max_h(px(330.)).overflow_y_scroll();

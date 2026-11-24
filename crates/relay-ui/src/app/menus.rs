@@ -85,6 +85,7 @@ pub(super) fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
                 item("Float Video", ToggleFloatVideo),
                 item("Float Video in Panel", ToggleFloatPanel),
                 item("Ask AI…", AskAi),
+                item("Tab Switcher…", ShowTabSwitcher),
                 sep(),
                 item("Downloads…", ShowDownloads),
                 item("Reload Page", Reload),

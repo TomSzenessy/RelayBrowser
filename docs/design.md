@@ -24,6 +24,7 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 
 - **Tab switching:** Ctrl+Tab / Ctrl+Shift+Tab walk the current space in
   most-recently-used order; the MRU list is per session and drops closed tabs.
+  ⌘⌥T opens a visual switcher over the same MRU order (↑/↓, ↩, Esc or click).
 - **Tab strip:** a vertical list of title rows with status dots, an optional
   54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
   group: a heading with a colour dot, name, count, and collapse chevron; the
@@ -204,6 +205,7 @@ and displayed shortcuts cannot drift either.
 | ⌘⇧F | Float video |
 | ⌘⌥⇧F | Float video in panel |
 | ⌘⇧A | Ask AI |
+| ⌘⌥T | Tab switcher |
 | ⌘G | Find next |
 | ⌘⇧G | Find previous |
 | ⌘= | Zoom in |

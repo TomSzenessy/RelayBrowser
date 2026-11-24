@@ -48,7 +48,7 @@ fn group_color(name: &str) -> u32 {
 }
 
 impl RelayApp {
-    fn site_icon(&self, url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
+    pub(super) fn site_icon(&self, url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
         match host_of(url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone()) {
             Some(icon) => img(icon).size(px(size_px)).flex_shrink_0().rounded(px(3.)).into_any_element(),
             None => monogram_icon(url, title, size_px),

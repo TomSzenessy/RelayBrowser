@@ -59,6 +59,7 @@ actions!(
         ToggleFloatVideo,
         ToggleFloatPanel,
         AskAi,
+        ShowTabSwitcher,
         FindNext,
         FindPrevious,
         ZoomIn,
@@ -180,6 +181,11 @@ struct SpacePrompt {
 }
 
 /// A minimal chat with the configured OpenAI-compatible endpoint.
+struct TabSwitcher {
+    tabs: Vec<(TabId, String, String)>,
+    selected: usize,
+}
+
 struct PendingAi {
     prompt: String,
     history: Vec<(bool, String)>,
@@ -389,6 +395,7 @@ pub struct RelayApp {
     /// Send visible page text as AI context (opt-out privacy switch).
     ai_page_context: bool,
     ai_chat: Option<AiChat>,
+    tab_switcher: Option<TabSwitcher>,
     ai_stream: Option<std::sync::mpsc::Receiver<relay_extensions::ai::StreamEvent>>,
     ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     last_handoff: Option<String>,
@@ -705,6 +712,7 @@ impl RelayApp {
             ai_has_key,
             ai_page_context,
             ai_chat: None,
+            tab_switcher: None,
             ai_stream: None,
             ai_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_handoff: None,
@@ -2292,6 +2300,47 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn open_tab_switcher(&mut self, cx: &mut Context<Self>) {
+        let (space, active) = {
+            let hub = self.hub.lock();
+            (hub.current_space().to_string(), hub.active())
+        };
+        let mut ids: Vec<TabId> = self.mru.iter().copied().collect();
+        let space_ids = self.hub.lock().space_tab_ids();
+        for id in &space_ids {
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+        ids.retain(|id| self.hub.lock().tab_space(*id) == Some(space.as_str()));
+        let tabs: Vec<(TabId, String, String)> = ids
+            .into_iter()
+            .filter_map(|id| self.hub.lock().tab(id).map(|t| (id, t.title.clone(), t.url.clone())))
+            .collect();
+        if tabs.is_empty() {
+            self.toast("No tabs in this space");
+            cx.notify();
+            return;
+        }
+        let selected = tabs.iter().position(|(id, _, _)| Some(*id) == active).map_or(0, |i| if i + 1 < tabs.len() { i + 1 } else { 0 });
+        self.tab_switcher = Some(TabSwitcher { tabs, selected });
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_tab_switcher(&mut self) {
+        self.tab_switcher = None;
+        self.focus_active_page();
+    }
+
+    fn activate_tab_switcher(&mut self, cx: &mut Context<Self>) {
+        let Some(switcher) = self.tab_switcher.take() else { return };
+        if let Some((id, _, _)) = switcher.tabs.get(switcher.selected) {
+            self.activate(*id);
+        }
+        cx.notify();
+    }
+
     fn open_ai_chat(&mut self, cx: &mut Context<Self>) {
         if !self.ai_has_key {
             self.settings_open = true;
@@ -3289,6 +3338,7 @@ impl RelayApp {
             Command::ToggleCompatMode => self.toggle_compat_mode(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
             Command::AskAi => self.open_ai_chat(cx),
+            Command::ShowTabSwitcher => self.open_tab_switcher(cx),
             Command::DuplicateTab => {
                 if let Some(url) = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())) {
                     self.open_url(url, true);
@@ -3491,6 +3541,26 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.tab_switcher.is_some() {
+            match k.key.as_str() {
+                "escape" => self.close_tab_switcher(),
+                "enter" => self.activate_tab_switcher(cx),
+                "up" => {
+                    if let Some(s) = self.tab_switcher.as_mut() {
+                        s.selected = s.selected.saturating_sub(1);
+                    }
+                }
+                "down" | "tab" => {
+                    if let Some(s) = self.tab_switcher.as_mut() {
+                        s.selected = (s.selected + 1).min(s.tabs.len().saturating_sub(1));
+                    }
+                }
+                _ => {}
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.ai_chat.is_some() {
             match k.key.as_str() {
                 "escape" => self.close_ai_chat(),
@@ -4411,6 +4481,9 @@ impl Render for RelayApp {
             .on_action(cx.listener(|app, _: &AskAi, _, cx| {
                 app.open_ai_chat(cx);
             }))
+            .on_action(cx.listener(|app, _: &ShowTabSwitcher, _, cx| {
+                app.open_tab_switcher(cx);
+            }))
             .on_action(cx.listener(|app, _: &ShowDownloads, _, cx| {
                 app.open_downloads(cx);
             }))
@@ -4497,6 +4570,9 @@ impl Render for RelayApp {
         }
         if let Some(prompt) = &self.space_prompt {
             root = root.child(self.render_space_prompt(prompt, cx));
+        }
+        if let Some(switcher) = &self.tab_switcher {
+            root = root.child(self.render_tab_switcher(switcher, cx));
         }
         if let Some(chat) = &self.ai_chat {
             root = root.child(self.render_ai_chat(chat, cx));

@@ -22,6 +22,7 @@ find|secondary-f
 float-video|secondary-shift-f
 float-panel|secondary-alt-shift-f
 ask-ai|secondary-shift-a
+tab-switcher|secondary-alt-t
 find-next|secondary-g
 find-prev|secondary-shift-g
 zoom-in|secondary-=
