@@ -343,7 +343,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
         }
         "blocking" | "mcp" | "restore_session" | "tabs_folded" | "bottom_bar" | "autofill_logins" | "login_offers" | "login_fill"
-        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "tab_icons_only" | "extension_toolbar" | "handoff" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
+        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "tab_icons_only" | "extension_toolbar" | "handoff" | "ai_page_context" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
         | "downloads_ask" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
@@ -431,6 +431,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("tab_icons_only = {}", setting("tab_icons_only", "off"));
             println!("extension_toolbar = {}", setting("extension_toolbar", "on"));
             println!("handoff = {}", setting("handoff", "off"));
+            println!("ai_page_context = {}", setting("ai_page_context", "on"));
             println!("sync_folder = {}", setting("sync_folder", ""));
             println!("bookmarks_icons_only = {}", setting("bookmarks_icons_only", "off"));
             println!("bookmarks_new_tab_only = {}", setting("bookmarks_new_tab_only", "off"));

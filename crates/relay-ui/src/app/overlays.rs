@@ -2546,10 +2546,20 @@ impl RelayApp {
                             .child(SharedString::from(label)),
                     );
                 }
+                let context_sw = switch("settings-ai-context", self.ai_page_context, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.ai_page_context = !app.ai_page_context;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("ai_page_context", if app.ai_page_context { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let content = div()
                     .flex()
                     .flex_col()
                     .child(preset_bar)
+                    .child(row("Send visible page text", Some("Context for answers; off sends only URL, title, and your question"), context_sw))
                     .child(field("settings-ai-endpoint", "Endpoint", SharedString::from(self.ai_endpoint.clone()), 0, "OpenAI-compatible base URL"))
                     .child(field("settings-ai-model", "Model", SharedString::from(self.ai_model.clone()), 1, "Model name sent to the endpoint"))
                     .child(field("settings-ai-key", "API key", SharedString::from(key_value), 2, "Saved only in the macOS Keychain; never in settings or logs"))

@@ -386,6 +386,8 @@ pub struct RelayApp {
     ai_key_draft: String,
     ai_focus: u8,
     ai_has_key: bool,
+    /// Send visible page text as AI context (opt-out privacy switch).
+    ai_page_context: bool,
     ai_chat: Option<AiChat>,
     ai_stream: Option<std::sync::mpsc::Receiver<relay_extensions::ai::StreamEvent>>,
     ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -607,6 +609,7 @@ impl RelayApp {
             .and_then(|s| s.setting("ai_model").ok().flatten())
             .unwrap_or_else(|| relay_extensions::ai::DEFAULT_MODEL.to_string());
         let ai_has_key = ai_key(store.as_ref()).is_some();
+        let ai_page_context = setting_enabled(store.as_ref().and_then(|s| s.setting("ai_page_context").ok().flatten()).as_deref());
         let extension_toolbar = setting_enabled(store.as_ref().and_then(|s| s.setting("extension_toolbar").ok().flatten()).as_deref());
         let sync_folder = store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default();
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
@@ -700,6 +703,7 @@ impl RelayApp {
             ai_key_draft: String::new(),
             ai_focus: 0,
             ai_has_key,
+            ai_page_context,
             ai_chat: None,
             ai_stream: None,
             ai_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2334,6 +2338,10 @@ impl RelayApp {
         chat.error = None;
         chat.messages.push((true, prompt.clone()));
         chat.busy = true;
+        if !self.ai_page_context {
+            self.dispatch_ai(prompt, String::new(), url, title, history, cx);
+            return;
+        }
         match page {
             Some(page) => self.dispatch_ai(prompt, page, url, title, history, cx),
             None => {
@@ -3933,6 +3941,7 @@ impl RelayApp {
             "address_bar" => self.show_address_bar = setting_enabled(Some(value)),
             "tab_icons_only" => self.tab_icons_only = setting_enabled(Some(value)),
             "handoff" => self.handoff = setting_enabled(Some(value)),
+            "ai_page_context" => self.ai_page_context = setting_enabled(Some(value)),
             "extension_toolbar" => self.extension_toolbar = setting_enabled(Some(value)),
             "bookmarks_icons_only" => self.bookmarks_icons_only = setting_enabled(Some(value)),
             "bookmarks_new_tab_only" => self.bookmarks_new_tab_only = setting_enabled(Some(value)),

@@ -39,7 +39,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   title, up to 20,000 characters of visible page text, and the question, then
   streams the reply (SSE, with a non-SSE fallback and a Stop button); prior
   turns (last 10) are sent with follow-ups; OpenAI/Ollama/LM Studio/OpenRouter
-  presets fill endpoint/model; Esc closes.
+  presets fill endpoint/model; a **Send visible page text** switch disables
+  body context; Esc closes.
 - **Motion:** palette, Settings, and Library fade in over 140 ms with
   ease-out-quint; no other transitions are animated yet.
 - **Palette:** also exposes duplicate, mute, and sleep tab commands.
