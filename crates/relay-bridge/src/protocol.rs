@@ -191,6 +191,8 @@ pub enum Op {
     /// Toggle picture-in-picture for the first `<video>` using WebKit/Safari's
     /// presentation mode or the standard API.
     PictureInPicture,
+    /// Play/pause the first media element in response to a system media key.
+    Media { action: String },
     /// Mute or unmute every media element. `None` flips the page's current
     /// state, so one menu item works as a toggle without native state.
     Mute { #[serde(skip_serializing_if = "Option::is_none")] muted: Option<bool> },
@@ -213,6 +215,7 @@ impl Op {
                 | Op::SetCookie { .. }
                 | Op::Reader { .. }
                 | Op::Mute { .. }
+                | Op::Media { .. }
         )
     }
 }
@@ -306,6 +309,11 @@ mod tests {
         assert_eq!(op, Op::Mute { muted: Some(true) });
         let s = Command { id: 7, op }.to_script();
         assert!(s.contains(r#""op":"mute""#), "{s}");
+        let op: Op = serde_json::from_str(r#"{"op":"media","action":"toggle"}"#).unwrap();
+        assert_eq!(op, Op::Media { action: "toggle".into() });
+        assert!(op.mutates());
+        let s = Command { id: 8, op }.to_script();
+        assert!(s.contains(r#""op":"media""#), "{s}");
     }
 
     #[test]

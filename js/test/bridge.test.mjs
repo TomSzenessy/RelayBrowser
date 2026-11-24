@@ -654,6 +654,9 @@ test("mute flips every media element and reports the count", async () => {
   assert.equal(await page.evaluate(() => document.getElementById("a").muted), false);
   const off = await run({ id: 301, op: "mute", muted: true });
   assert.equal(off.ok, true, off.error);
+  const paused = await run({ id: 302, op: "media", action: "pause" });
+  assert.equal(paused.ok, true, paused.error);
+  assert.equal(paused.value, true);
   assert.equal(await page.evaluate(() => document.getElementById("v").muted), true);
   assert.equal(await page.evaluate(() => document.getElementById("a").muted), true);
 });

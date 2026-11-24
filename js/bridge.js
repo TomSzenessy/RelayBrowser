@@ -622,6 +622,15 @@
     },
     storage: storageSummary,
     reader: reader,
+    media: function (c) {
+      var el = document.querySelector("video, audio");
+      if (!el) return false;
+      var action = String(c.action || "").toLowerCase();
+      if (action === "play") { el.play(); return true; }
+      if (action === "pause") { el.pause(); return true; }
+      if (action === "toggle") { if (el.paused) el.play(); else el.pause(); return true; }
+      return false;
+    },
     mute: function (c) {
       var media = document.querySelectorAll("audio, video");
       if (!media.length) return 0;

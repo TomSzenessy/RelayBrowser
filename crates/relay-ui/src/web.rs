@@ -303,6 +303,11 @@ mod imp {
             self.engine.set_login_capture(enabled);
         }
 
+        /// A media key pressed while the app was active, if any.
+        pub fn take_media_key(&self) -> Option<&'static str> {
+            self.engine.take_media_key()
+        }
+
         /// Remove cookies, cache, and local storage for every site.
         pub fn clear_site_data(&self) {
             self.engine.clear_site_data();
@@ -388,6 +393,7 @@ mod imp {
         pub fn decline_save_login(&self, _tab: TabId) {}
         pub fn set_login_capture(&mut self, _enabled: bool) {}
         pub fn clear_site_data(&self) {}
+        pub fn take_media_key(&self) -> Option<&'static str> { None }
         pub fn set_default_browser(&self) {}
         pub fn export_pdf(&self, _tab: TabId) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {

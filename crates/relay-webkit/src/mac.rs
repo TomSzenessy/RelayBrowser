@@ -17,6 +17,7 @@ use objc2_app_kit::{
     NSModalResponseOK, NSPrintInfo, NSSavePanel, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_app_kit::NSWorkspace;
+use objc2_media_player::{MPRemoteCommandCenter, MPRemoteCommandHandlerStatus};
 use objc2_foundation::{
     NSArray, NSBundle, NSData, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect,
     NSSize, NSString, NSURL, NSURLRequest, NSURLResponse,
@@ -33,6 +34,8 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 const HANDLER: &str = "relay";
@@ -199,6 +202,28 @@ fn new_login_nonce() -> String {
         out.push_str(&format!("{:016x}", hasher.finish()));
     }
     out
+}
+
+/// Register the system media keys. Handlers only set an atomic request code;
+/// the shell drains it on its main-thread pump, which keeps the blocks free of
+/// non-Send callbacks. Returns the opaque targets that must stay alive.
+fn install_media_keys(media_key: Arc<AtomicU8>) -> Vec<Retained<AnyObject>> {
+    let center = unsafe { MPRemoteCommandCenter::sharedCommandCenter() };
+    let mut targets = Vec::new();
+    for (command, code) in [
+        (unsafe { center.playCommand() }, 1u8),
+        (unsafe { center.pauseCommand() }, 2),
+        (unsafe { center.togglePlayPauseCommand() }, 3),
+    ] {
+        unsafe { command.setEnabled(true) };
+        let key = media_key.clone();
+        let handler = RcBlock::new(move |_event: NonNull<objc2_media_player::MPRemoteCommandEvent>| {
+            key.store(code, Ordering::Relaxed);
+            MPRemoteCommandHandlerStatus::Success
+        });
+        targets.push(unsafe { command.addTargetWithHandler(&handler) });
+    }
+    targets
 }
 
 /// Things the engine needs the shell to do. Never carries passwords.
@@ -993,10 +1018,16 @@ pub struct Engine {
     login_capture: Rc<Cell<bool>>,
     /// Per-tab isolated-world nonce, rotated on navigation.
     login_nonces: HashMap<TabId, Rc<RefCell<String>>>,
+    /// Media-key request codes set from MediaPlayer, drained by the shell.
+    media_key: Arc<AtomicU8>,
+    /// Opaque targets returned by MPRemoteCommand; retained for the process.
+    _media_targets: Vec<Retained<AnyObject>>,
 }
 
 impl Engine {
     pub fn new(mtm: MainThreadMarker, hub: SharedHub, events: impl Fn(EngineEvent) + 'static) -> Self {
+        let media_key = Arc::new(AtomicU8::new(0));
+        let media_targets = install_media_keys(media_key.clone());
         Self {
             mtm,
             hub,
@@ -1014,6 +1045,8 @@ impl Engine {
             offered_logins: Rc::default(),
             login_capture: Rc::new(Cell::new(true)),
             login_nonces: HashMap::new(),
+            media_key,
+            _media_targets: media_targets,
         }
     }
 
@@ -1026,6 +1059,17 @@ impl Engine {
         let done = RcBlock::new(move || events(EngineEvent::SiteDataCleared));
         unsafe {
             store.removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done);
+        }
+    }
+
+    /// Drain a media key pressed while the app was active. 1 play, 2 pause,
+    /// 3 toggle; the shell maps it to the active tab.
+    pub fn take_media_key(&self) -> Option<&'static str> {
+        match self.media_key.swap(0, Ordering::Relaxed) {
+            1 => Some("play"),
+            2 => Some("pause"),
+            3 => Some("toggle"),
+            _ => None,
         }
     }
 

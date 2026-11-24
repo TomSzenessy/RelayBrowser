@@ -992,6 +992,11 @@ impl RelayApp {
             self.title_cache = (u64::MAX, String::new());
             cx.notify();
         }
+        if let Some(action) = self.web.borrow().take_media_key() {
+            if let Some(tab) = self.active() {
+                self.eval_op(tab, Op::Media { action: action.to_string() });
+            }
+        }
         if self.download_poll_at.elapsed() > Duration::from_millis(500) {
             self.download_poll_at = std::time::Instant::now();
             self.web.borrow().poll_downloads();

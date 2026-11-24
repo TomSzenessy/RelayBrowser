@@ -21,5 +21,6 @@ objc2.workspace = true
 objc2-foundation.workspace = true
 objc2-app-kit.workspace = true
 objc2-web-kit.workspace = true
+objc2-media-player = "0.3"
 objc2-core-foundation = "0.3"
 block2 = "0.6"
