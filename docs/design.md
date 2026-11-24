@@ -22,6 +22,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
         ⌘K palette floats centred over everything (560 pt wide)
 ```
 
+- **Tab switching:** Ctrl+Tab / Ctrl+Shift+Tab walk the current space in
+  most-recently-used order; the MRU list is per session and drops closed tabs.
 - **Tab strip:** a vertical list of title rows with status dots, an optional
   54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
   group: a heading with a colour dot, name, count, and collapse chevron; the
@@ -169,8 +171,8 @@ and displayed shortcuts cannot drift either.
 | ⌘R | Reload page |
 | ⌘[ | Go back |
 | ⌘] | Go forward |
-| ⌃Tab | Next tab |
-| ⌃⇧Tab | Previous tab |
+| ⌃Tab | Next recent tab |
+| ⌃⇧Tab | Previous recent tab |
 | ⌘⌥I | Toggle Inspector |
 | ⌘⌥U | WebKit Web Inspector |
 | ⌘\ | Toggle split view |

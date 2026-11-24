@@ -124,6 +124,15 @@ fn byte_size_reads_naturally() {
 }
 
 #[test]
+fn mru_cycle_wraps_and_falls_back_to_the_first() {
+    assert_eq!(mru_next(&[3, 2, 1], None, 1), Some(2));
+    assert_eq!(mru_next(&[3, 2, 1], Some(3), 1), Some(2));
+    assert_eq!(mru_next(&[3, 2, 1], Some(3), -1), Some(1));
+    assert_eq!(mru_next(&[3, 2, 1], Some(1), 1), Some(3));
+    assert_eq!(mru_next(&[], Some(1), 1), None);
+}
+
+#[test]
 fn profile_names_are_short_and_directory_safe() {
     assert_eq!(profile_name("Work / Client"), "Work-Client");
     assert_eq!(profile_name("  personal  "), "personal");

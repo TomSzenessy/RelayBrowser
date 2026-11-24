@@ -89,8 +89,8 @@ action_table! {
     Reload => "reload", "Reload page", "secondary-r";
     Back => "back", "Go back", "secondary-[";
     Forward => "forward", "Go forward", "secondary-]";
-    NextTab => "next-tab", "Next tab", "ctrl-tab";
-    PrevTab => "prev-tab", "Previous tab", "ctrl-shift-tab";
+    NextTab => "next-tab", "Next recent tab", "ctrl-tab";
+    PrevTab => "prev-tab", "Previous recent tab", "ctrl-shift-tab";
     ToggleInspector => "inspector", "Toggle Inspector", "secondary-alt-i";
     WebInspector => "web-inspector", "WebKit Web Inspector", "secondary-alt-u";
     ToggleSplit => "split", "Toggle split view", "secondary-\\";

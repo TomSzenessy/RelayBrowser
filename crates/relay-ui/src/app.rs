@@ -353,6 +353,8 @@ pub struct RelayApp {
     tab_icons_only: bool,
     /// Host whose Site Card is open.
     site_card: Option<String>,
+    /// Recently activated tabs, newest first; Ctrl+Tab walks this order.
+    mru: Vec<TabId>,
     /// Current named profile (empty is Default).
     profile_name: String,
     profile_prompt: Option<ProfilePrompt>,
@@ -637,6 +639,7 @@ impl RelayApp {
             show_address_bar,
             tab_icons_only,
             site_card: None,
+            mru: Vec::new(),
             profile_name: std::env::var("RELAY_PROFILE").unwrap_or_default(),
             profile_prompt: None,
             bookmarks_icons_only,
@@ -1383,6 +1386,9 @@ impl RelayApp {
         if let Some(h) = self.hints.take() {
             self.eval_op(h.tab, Op::HideHints);
         }
+        self.mru.retain(|id| *id != tab);
+        self.mru.insert(0, tab);
+        self.mru.truncate(50);
         self.hub.update(|h| h.set_active(tab));
         self.web.borrow_mut().wake(tab);
         self.focus_pending = Some(tab);
@@ -1450,6 +1456,7 @@ impl RelayApp {
             self.login_save_prompt = None;
             self.web.borrow().decline_save_login(tab);
         }
+        self.mru.retain(|id| *id != tab);
         self.snapshots.remove(&tab);
         self.compat_tabs.remove(&tab);
         self.web.borrow_mut().apply(BrowserRequest::Close(tab));
@@ -2483,16 +2490,23 @@ impl RelayApp {
     }
 
     fn cycle(&mut self, delta: isize) {
-        let (ids, active) = {
+        let (space_ids, active) = {
             let h = self.hub.lock();
             (h.space_tab_ids(), h.active())
         };
-        if ids.is_empty() {
+        if space_ids.is_empty() {
             return;
         }
-        let pos = active.and_then(|a| ids.iter().position(|t| *t == a)).unwrap_or(0) as isize;
-        let next = ids[((pos + delta).rem_euclid(ids.len() as isize)) as usize];
-        self.activate(next);
+        let mut order: Vec<TabId> = self.mru.iter().copied().filter(|id| space_ids.contains(id)).collect();
+        for id in &space_ids {
+            if !order.contains(id) {
+                order.push(*id);
+            }
+        }
+        let next = mru_next(&order, active, delta);
+        if let Some(next) = next {
+            self.activate(next);
+        }
     }
 
     fn select_index(&mut self, i: usize) {
@@ -4073,6 +4087,15 @@ fn compat_change(view_has_compat: bool, site_wants_compat: bool) -> CompatChange
 
 /// Browser-style zoom presets; `direction` 1 / -1 steps, 0 resets.
 const ZOOM_STEPS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+/// Next tab in the MRU order, wrapping; `None` when the list is empty.
+fn mru_next(order: &[TabId], active: Option<TabId>, delta: isize) -> Option<TabId> {
+    if order.is_empty() {
+        return None;
+    }
+    let pos = active.and_then(|a| order.iter().position(|t| *t == a)).unwrap_or(0) as isize;
+    Some(order[((pos + delta).rem_euclid(order.len() as isize)) as usize])
+}
 
 fn zoom_step(current: f64, direction: i8) -> f64 {
     let current = if current.is_finite() && current > 0.0 { current } else { 1.0 };
