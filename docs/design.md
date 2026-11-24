@@ -267,8 +267,9 @@ Behaviour that is not a single action:
   delegate at runtime and opens an incoming http(s) URL in a new tab; the
   runtime method is type-correct but receiving was not observed on hardware.
 - **Folder sync:** Settings → General can point at a Dropbox/iCloud folder;
-  launch merges the folder's profile file (local settings win) and the app
-  rewrites it immediately and every minute. **Sync now** merges on demand and
+  launch merges the folder's profile file (local settings win); the app
+  re-merges and atomically rewrites it immediately and every minute, so two
+  Macs converge without a manual pull. **Sync now** merges on demand and
   **iCloud** picks `iCloud Drive/Relay` in one click.
 - **Backup/restore:** Settings → General writes a private JSON export via a
   save panel and merges a chosen backup (local settings win; extensions and

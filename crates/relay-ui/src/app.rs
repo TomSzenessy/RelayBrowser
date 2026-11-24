@@ -1179,7 +1179,7 @@ impl RelayApp {
         }
         if !self.sync_folder.is_empty() && self.last_sync.elapsed() > Duration::from_secs(60) {
             self.last_sync = Instant::now();
-            self.sync_profile_folder(false);
+            self.sync_profile_folder(true);
         }
         if self.extension_toolbar && self.last_ext_icons.elapsed() > Duration::from_secs(2) {
             self.last_ext_icons = Instant::now();
@@ -2657,7 +2657,14 @@ impl RelayApp {
             }
         }
         if let Ok(json) = store.export_json() {
-            let _ = write_private_file(&file, json.as_bytes());
+            // Write to a per-process temp then rename, so another Mac never
+            // reads a half-written profile file.
+            let tmp = file.with_extension(format!("json.tmp-{}", std::process::id()));
+            if write_private_file(&tmp, json.as_bytes()).is_ok() {
+                let _ = std::fs::rename(&tmp, &file);
+            } else {
+                let _ = std::fs::remove_file(&tmp);
+            }
         }
     }
 
