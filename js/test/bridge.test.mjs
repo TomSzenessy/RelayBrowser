@@ -657,6 +657,13 @@ test("mute flips every media element and reports the count", async () => {
   const paused = await run({ id: 302, op: "media", action: "pause" });
   assert.equal(paused.ok, true, paused.error);
   assert.equal(paused.value, true);
+
+  const floated = await run({ id: 303, op: "float_video", on: true });
+  assert.equal(floated.value, true);
+  assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("v")).position), "fixed");
+  const restored = await run({ id: 304, op: "float_video", on: false });
+  assert.equal(restored.value, true);
+  assert.notEqual(await page.evaluate(() => getComputedStyle(document.getElementById("v")).position), "fixed");
   assert.equal(await page.evaluate(() => document.getElementById("v").muted), true);
   assert.equal(await page.evaluate(() => document.getElementById("a").muted), true);
 });

@@ -40,7 +40,7 @@ ordinary text/search fields keep their values for debugging.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`, `set_cookie`, `reader`, `picture_in_picture`, `mute`, `media`. Element ids are
+`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`, `set_cookie`, `reader`, `picture_in_picture`, `mute`, `media`, `float_video`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
 `markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub; an MCP tool for it is Tier 2.
@@ -76,6 +76,10 @@ namespaces (`storage`, `runtime.sendMessage`, `tabs`, `scripting`,
 `permissions`, `windows`) onto WebKit's promise-only `browser.*`, setting
 `chrome.runtime.lastError` during a failed callback. Event registration is
 never wrapped. Only `sidePanel` and `offscreen` have native receivers.
+
+`float_video` pins the first `<video>` to a fixed bottom-right overlay with
+important inline styles, saving its previous `style` attribute; `{on:false}`
+restores it. It returns false when the page has no video.
 
 `media` plays/pauses the first `audio`/`video` element (`action` =
 `play`|`pause`|`toggle`) for a system media key; it returns false when the

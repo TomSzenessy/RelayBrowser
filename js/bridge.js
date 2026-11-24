@@ -622,6 +622,31 @@
     },
     storage: storageSummary,
     reader: reader,
+    float_video: function (c) {
+      var v = document.querySelector("video");
+      if (!v) return false;
+      var previous = v.__relayFloatStyle;
+      if (!c.on) {
+        if (previous !== undefined) {
+          if (previous === null) v.removeAttribute("style"); else v.setAttribute("style", previous);
+          delete v.__relayFloatStyle;
+        }
+        return true;
+      }
+      if (previous === undefined) v.__relayFloatStyle = v.getAttribute("style");
+      var s = v.style;
+      s.setProperty("position", "fixed", "important");
+      s.setProperty("right", "16px", "important");
+      s.setProperty("bottom", "16px", "important");
+      s.setProperty("width", "min(38vw, 480px)", "important");
+      s.setProperty("height", "auto", "important");
+      s.setProperty("max-height", "42vh", "important");
+      s.setProperty("z-index", "2147483646", "important");
+      s.setProperty("background", "#000", "important");
+      s.setProperty("border-radius", "10px", "important");
+      s.setProperty("box-shadow", "0 12px 32px rgba(0,0,0,.45)", "important");
+      return true;
+    },
     media: function (c) {
       var el = document.querySelector("video, audio");
       if (!el) return false;

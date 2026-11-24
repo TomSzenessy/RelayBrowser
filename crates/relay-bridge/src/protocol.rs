@@ -193,6 +193,8 @@ pub enum Op {
     PictureInPicture,
     /// Play/pause the first media element in response to a system media key.
     Media { action: String },
+    /// Float the first `<video>` in a fixed corner overlay, or restore it.
+    FloatVideo { on: bool },
     /// Mute or unmute every media element. `None` flips the page's current
     /// state, so one menu item works as a toggle without native state.
     Mute { #[serde(skip_serializing_if = "Option::is_none")] muted: Option<bool> },
@@ -216,6 +218,7 @@ impl Op {
                 | Op::Reader { .. }
                 | Op::Mute { .. }
                 | Op::Media { .. }
+                | Op::FloatVideo { .. }
         )
     }
 }
@@ -314,6 +317,11 @@ mod tests {
         assert!(op.mutates());
         let s = Command { id: 8, op }.to_script();
         assert!(s.contains(r#""op":"media""#), "{s}");
+        let op: Op = serde_json::from_str(r#"{"op":"float_video","on":true}"#).unwrap();
+        assert_eq!(op, Op::FloatVideo { on: true });
+        assert!(op.mutates());
+        let s = Command { id: 9, op }.to_script();
+        assert!(s.contains(r#""op":"float_video""#), "{s}");
     }
 
     #[test]

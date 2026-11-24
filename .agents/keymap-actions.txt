@@ -19,6 +19,7 @@ copy-markdown|secondary-shift-m
 bookmark|secondary-d
 pin|secondary-alt-p
 find|secondary-f
+float-video|secondary-shift-f
 find-next|secondary-g
 find-prev|secondary-shift-g
 zoom-in|secondary-=

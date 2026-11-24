@@ -71,6 +71,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   Mode, Print, and Inspect Element, with the page's own link/image items
   preserved. The shell draws the tab menu as a floating panel when the strip
   is horizontal.
+- **Float video:** ⌘⇧F or View → Float Video pins the first `<video>` to a
+  fixed 16 pt corner overlay with a shadow; the same command restores the
+  original style. PiP remains a separate native option.
 - **Media keys:** the system play/pause key controls the first media element
   in the active tab; the native MediaPlayer handlers only enqueue a request,
   which the shell maps to `Op::media` on its main-thread pump.
@@ -162,6 +165,7 @@ and displayed shortcuts cannot drift either.
 | ⌘D | Bookmark this page |
 | ⌘⌥P | Pin / unpin tab |
 | ⌘F | Find in page |
+| ⌘⇧F | Float video |
 | ⌘G | Find next |
 | ⌘⇧G | Find previous |
 | ⌘= | Zoom in |

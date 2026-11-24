@@ -55,6 +55,7 @@ actions!(
         ToggleBookmark,
         TogglePin,
         Find,
+        ToggleFloatVideo,
         FindNext,
         FindPrevious,
         ZoomIn,
@@ -355,6 +356,8 @@ pub struct RelayApp {
     downloads_selected: usize,
     download_poll_at: std::time::Instant,
     reader_tabs: HashSet<TabId>,
+    /// Per-tab floating-video state, so the shortcut toggles both ways.
+    float_tabs: std::rc::Rc<std::cell::RefCell<HashMap<TabId, bool>>>,
     /// History/Bookmarks modal; `None` when closed.
     library: Option<Library>,
     panel: Panel,
@@ -602,6 +605,7 @@ impl RelayApp {
             downloads_selected: 0,
             download_poll_at: std::time::Instant::now(),
             reader_tabs: HashSet::new(),
+            float_tabs: std::rc::Rc::default(),
             library: None,
             panel: Panel::Elements,
             tree: Tree::default(),
@@ -1977,6 +1981,22 @@ impl RelayApp {
 
     /// Mute / unmute every media element in a tab. JS reports the page's own
     /// current state, so the native side needs no duplicate media model.
+    /// Float the active page's first video in a fixed corner overlay.
+    fn toggle_float_video(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active() else { return };
+        let on = self
+            .float_tabs
+            .borrow()
+            .get(&tab)
+            .copied()
+            .map(|on| !on)
+            .unwrap_or(true);
+        self.float_tabs.borrow_mut().insert(tab, on);
+        self.eval_op(tab, Op::FloatVideo { on });
+        self.toast(if on { "Video floated" } else { "Video restored" });
+        cx.notify();
+    }
+
     fn toggle_mute(&mut self, tab: TabId) {
         self.eval_op(tab, Op::Mute { muted: None });
     }
@@ -3275,6 +3295,9 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &TogglePictureInPicture, _, cx| {
                 app.toggle_picture_in_picture(cx);
+            }))
+            .on_action(cx.listener(|app, _: &ToggleFloatVideo, _, cx| {
+                app.toggle_float_video(cx);
             }))
             .on_action(cx.listener(|app, _: &ShowDownloads, _, cx| {
                 app.open_downloads(cx);
