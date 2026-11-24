@@ -175,7 +175,8 @@ on this repository); never use a public issue for an unpatched report.
   text and refuses angle brackets or `javascript:`. `shell_apply` records the MCP client name, plan id, result, and
   before/after hashes, not values. Denied attempts and failed writes are
   audited; an unknown or expired id returns an error and writes no row because
-  nothing was applied. No arbitrary code or shortcut writes.
+  nothing was applied. No arbitrary code can be written; shortcut overrides
+  are validated against the shared action table and the live keymap.
 - **Shell read tools:** `shell_*` tools return a bounded allowlist of settings,
   shortcut overrides and defaults, section order, live sidebar state, installed
   apps, and version. They cannot write or execute code; the page/agent boundary
