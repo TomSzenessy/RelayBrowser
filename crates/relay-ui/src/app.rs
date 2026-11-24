@@ -2359,6 +2359,23 @@ impl RelayApp {
         }
     }
 
+    fn use_icloud_sync(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return };
+        let dir = icloud_relay_dir(&home);
+        if std::fs::create_dir_all(&dir).is_err() {
+            self.toast("iCloud Drive is not available on this Mac");
+            cx.notify();
+            return;
+        }
+        self.sync_folder = dir.to_string_lossy().into_owned();
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("sync_folder", &self.sync_folder);
+        }
+        self.sync_profile_folder(true);
+        self.toast("Syncing through iCloud Drive/Relay");
+        cx.notify();
+    }
+
     fn choose_sync_folder(&mut self, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -4245,6 +4262,11 @@ pub(crate) fn profile_name(raw: &str) -> String {
         }
     }
     out.trim_matches('-').chars().take(32).collect()
+}
+
+/// iCloud Drive's Relay folder under a home directory.
+pub(crate) fn icloud_relay_dir(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("Library/Mobile Documents/com~apple~CloudDocs/Relay")
 }
 
 /// Only ordinary http(s) browser tabs are advertised through Handoff.

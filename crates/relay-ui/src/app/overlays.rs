@@ -1434,6 +1434,9 @@ impl RelayApp {
                 let sync_now = btn("settings-sync-now", "Sync now".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| app.sync_now(cx)))
                     .into_any_element();
+                let sync_icloud = btn("settings-sync-icloud", "iCloud".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.use_icloud_sync(cx)))
+                    .into_any_element();
                 let sync_control = div()
                     .max_w(px(340.))
                     .flex()
@@ -1453,6 +1456,7 @@ impl RelayApp {
                     )
                     .child(sync_choose)
                     .child(sync_now)
+                    .child(sync_icloud)
                     .into_any_element();
                 let backup_btn = btn("settings-backup", "Back up…".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| app.backup_profile(cx)))

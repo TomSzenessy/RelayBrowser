@@ -254,7 +254,8 @@ Behaviour that is not a single action:
   advertise. A Relay receiver on another device is not implemented.
 - **Folder sync:** Settings → General can point at a Dropbox/iCloud folder;
   launch merges the folder's profile file (local settings win) and the app
-  rewrites it immediately and every minute. **Sync now** merges on demand.
+  rewrites it immediately and every minute. **Sync now** merges on demand and
+  **iCloud** picks `iCloud Drive/Relay` in one click.
 - **Backup/restore:** Settings → General writes a private JSON export via a
   save panel and merges a chosen backup (local settings win; extensions and
   session tabs are not imported). `relay import FILE` does the same.

@@ -133,6 +133,12 @@ fn mru_cycle_wraps_and_falls_back_to_the_first() {
 }
 
 #[test]
+fn icloud_sync_lives_under_the_cloud_docs_folder() {
+    let dir = icloud_relay_dir(std::path::Path::new("/Users/me"));
+    assert_eq!(dir, std::path::Path::new("/Users/me/Library/Mobile Documents/com~apple~CloudDocs/Relay"));
+}
+
+#[test]
 fn handoff_only_advertises_ordinary_web_tabs() {
     assert_eq!(handoff_target("https://a.test/", false, true, false), Some("https://a.test/"));
     assert_eq!(handoff_target("http://a.test/", false, true, false), Some("http://a.test/"));
