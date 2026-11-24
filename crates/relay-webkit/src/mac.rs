@@ -282,6 +282,9 @@ fn install_handoff_receiver() {
             return;
         }
         let sel = sel!(application:continueUserActivity:restorationHandler:);
+        #[cfg(target_arch = "aarch64")]
+        let types = c"B@:@@@?".as_ptr();
+        #[cfg(not(target_arch = "aarch64"))]
         let types = c"c@:@@@?".as_ptr();
         let imp = <unsafe extern "C" fn(*mut AnyObject, Sel, *mut NSApplication, *mut NSUserActivity, *mut AnyObject) -> Bool as objc2::runtime::MethodImplementation>::__imp(continue_handoff);
         unsafe {
