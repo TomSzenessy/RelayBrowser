@@ -59,8 +59,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   Bookmarks rows have a move prompt for the folder path. Esc or click-outside
   closes and returns focus to the page.
 - **Downloads:** the destination defaults to `~/Downloads/Relay`, can be set
-  with `relay config set downloads_dir PATH`, and Settings → General can ask
-  for a save panel per file. The modal (`⇧⌘J`) has **Active** and **Finished**
+  with `relay config set downloads_dir PATH` or the Settings → General
+  **Choose…** folder picker, and Settings can ask for a save panel per file. The modal (`⇧⌘J`) has **Active** and **Finished**
   sections. A row shows the filename, the state with byte progress and the
   source URL, then the destination path with the home directory as `~`; long
   text ellipsizes instead of widening the panel. A running row offers Cancel, a

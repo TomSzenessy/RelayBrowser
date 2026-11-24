@@ -1416,15 +1416,27 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let choose_downloads = btn("settings-downloads-choose", "Choose…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.choose_download_folder(cx)))
+                    .into_any_element();
                 let downloads_path = div()
                     .max_w(px(300.))
-                    .text_size(px(10.))
-                    .font_family("Menlo")
-                    .text_color(t.muted)
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(SharedString::from(app_downloads_label(&self.downloads_dir)))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(10.))
+                            .font_family("Menlo")
+                            .text_color(t.muted)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(app_downloads_label(&self.downloads_dir))),
+                    )
+                    .child(choose_downloads)
                     .into_any_element();
                 general_card = general_card.child(row("Downloads folder", Some("Set with relay config set downloads_dir PATH"), downloads_path));
                 general_card = general_card.child(row("Ask where to save each file", Some("Show a save panel for every download"), ask_downloads_sw));

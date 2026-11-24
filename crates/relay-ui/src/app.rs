@@ -16,7 +16,8 @@ use crate::webapp;
 use gpui::{
     actions, canvas, div, fill, img, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, GlobalElementId, Hsla, Image, ImageFormat,
-    InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem, ModifiersChangedEvent, MouseButton, MouseDownEvent, Pixels,
+    InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    PathPromptOptions, Pixels,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
@@ -2304,6 +2305,30 @@ impl RelayApp {
         if let Some(store) = &self.store {
             let _ = store.set_setting("active_space", self.hub.lock().current_space());
         }
+    }
+
+    fn choose_download_folder(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose download folder".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(Result::ok).flatten().and_then(|mut paths| paths.pop());
+            if let Some(path) = picked {
+                let _ = this.update(cx, |app, cx| {
+                    app.downloads_dir = path.to_string_lossy().into_owned();
+                    app.persist_downloads();
+                    if let Some(store) = &app.store {
+                        let _ = store.set_setting("downloads_dir", &app.downloads_dir);
+                    }
+                    app.toast(format!("Downloads save to {}", app.downloads_dir));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn persist_downloads(&self) {
