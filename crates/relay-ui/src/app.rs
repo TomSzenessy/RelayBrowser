@@ -413,6 +413,11 @@ impl RelayApp {
         web.set_appearance(Some(web_dark));
         let keymap = Keymap::from_setting(store.as_ref().and_then(|s| s.setting("keybindings").ok().flatten()).as_deref());
         let show_tab_numbers = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_numbers").ok().flatten()).as_deref());
+        let bookmarked_urls: HashSet<String> = store
+            .as_ref()
+            .and_then(|s| s.bookmarks().ok())
+            .map(|list| list.into_iter().map(|b| b.url).collect())
+            .unwrap_or_default();
         let mut app = Self {
             hub,
             web: Rc::new(RefCell::new(web)),
@@ -425,7 +430,7 @@ impl RelayApp {
             last_web_dark: Some(web_dark),
             favicons: cached_favicons(),
             favicon_pending: HashSet::new(),
-            bookmarked_urls: HashSet::new(),
+            bookmarked_urls,
             cmd_held: false,
             show_tab_numbers,
             shortcuts: None,
@@ -1162,7 +1167,13 @@ impl RelayApp {
     pub(super) fn remove_extension(&mut self, id: &str, cx: &mut Context<Self>) {
         if let Some(store) = &self.store {
             match store.remove_extension(id) {
-                Ok(true) => self.toast("Extension removed (takes effect on next launch)"),
+                Ok(true) => {
+                    if relay_extensions::crx::is_extension_id(id) {
+                        let dir = relay_bridge::paths::relay_home().join("extensions").join(id);
+                        let _ = std::fs::remove_dir_all(dir);
+                    }
+                    self.toast("Extension removed (takes effect on next launch)");
+                }
                 Ok(false) => self.toast("Extension not found"),
                 Err(e) => self.toast(format!("Remove failed: {e}")),
             }
@@ -1186,17 +1197,18 @@ impl RelayApp {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let id_bg = id.clone();
-            let res: Result<(String, String, std::path::PathBuf), String> = std::thread::spawn(move || {
-                let bytes = relay_extensions::crx::download(&id_bg).map_err(|e| e.to_string())?;
-                let dir = relay_extensions::crx::unpack(&bytes, &id_bg, &relay_bridge::paths::relay_home().join("extensions"))
-                    .map_err(|e| e.to_string())?;
-                relay_extensions::manifest::install_shims(&dir).map_err(|e| e.to_string())?;
-                let m = relay_extensions::manifest::Manifest::read(&dir).map_err(|e| e.to_string())?;
-                let name = m.display_name(&dir);
-                Ok((name, m.version, dir))
-            })
-            .join()
-            .unwrap_or_else(|_| Err("extension installer panicked".into()));
+            let res: Result<(String, String, std::path::PathBuf), String> = cx
+                .background_executor()
+                .spawn(async move {
+                    let bytes = relay_extensions::crx::download(&id_bg).map_err(|e| e.to_string())?;
+                    let dir = relay_extensions::crx::unpack(&bytes, &id_bg, &relay_bridge::paths::relay_home().join("extensions"))
+                        .map_err(|e| e.to_string())?;
+                    relay_extensions::manifest::install_shims(&dir).map_err(|e| e.to_string())?;
+                    let m = relay_extensions::manifest::Manifest::read(&dir).map_err(|e| e.to_string())?;
+                    let name = m.display_name(&dir);
+                    Ok((name, m.version, dir))
+                })
+                .await;
             let _ = cx.update(|cx| {
                 let _ = this.update(cx, |app, cx| {
                     app.ext_busy = false;
@@ -1262,22 +1274,23 @@ impl RelayApp {
         self.toast(format!("Importing {} Chrome extension(s)…", to_install.len()));
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let results: Vec<Result<(String, String, String, std::path::PathBuf), String>> = std::thread::spawn(move || {
-                let root = relay_bridge::paths::relay_home().join("extensions");
-                to_install
-                    .into_iter()
-                    .map(|id| {
-                        let bytes = relay_extensions::crx::download(&id).map_err(|e| e.to_string())?;
-                        let dir = relay_extensions::crx::unpack(&bytes, &id, &root).map_err(|e| e.to_string())?;
-                        relay_extensions::manifest::install_shims(&dir).map_err(|e| e.to_string())?;
-                        let m = relay_extensions::manifest::Manifest::read(&dir).map_err(|e| e.to_string())?;
-                        let name = m.display_name(&dir);
-                        Ok((id, name, m.version, dir))
-                    })
-                    .collect()
-            })
-            .join()
-            .unwrap_or_default();
+            let results: Vec<Result<(String, String, String, std::path::PathBuf), String>> = cx
+                .background_executor()
+                .spawn(async move {
+                    let root = relay_bridge::paths::relay_home().join("extensions");
+                    to_install
+                        .into_iter()
+                        .map(|id| {
+                            let bytes = relay_extensions::crx::download(&id).map_err(|e| e.to_string())?;
+                            let dir = relay_extensions::crx::unpack(&bytes, &id, &root).map_err(|e| e.to_string())?;
+                            relay_extensions::manifest::install_shims(&dir).map_err(|e| e.to_string())?;
+                            let m = relay_extensions::manifest::Manifest::read(&dir).map_err(|e| e.to_string())?;
+                            let name = m.display_name(&dir);
+                            Ok((id, name, m.version, dir))
+                        })
+                        .collect()
+                })
+                .await;
             let _ = cx.update(|cx| {
                 let _ = this.update(cx, |app, cx| {
                     app.ext_busy = false;
@@ -1609,7 +1622,7 @@ impl RelayApp {
             result
         };
         match result {
-            Ok(true) => {}
+            Ok(true) => self.refresh_start_page(),
             Ok(false) => self.toast("Already gone"),
             Err(e) => self.toast(format!("Could not delete: {e}")),
         }
@@ -1653,6 +1666,7 @@ impl RelayApp {
             Ok(false) => self.toast("Bookmark removed"),
             Err(e) => self.toast(format!("Could not save the bookmark: {e}")),
         }
+        self.refresh_start_page();
         self.refresh_library();
         cx.notify();
     }
@@ -2673,9 +2687,9 @@ impl Render for RelayApp {
             root = root.child(self.render_challenge_banner(cx));
         }
         if !self.app_mode || self.toast.is_some() || self.hints.is_some() {
-            root = root.child(self.render_status());
+            root = root.child(self.render_status(cx));
         }
-        if show_strip && self.strip.folded && !overlay_open {
+        if show_strip && self.strip.folded && !overlay_open && self.active().is_none() {
             root = root.child(self.render_folded_strip(cx));
         }
         if let Some(f) = &self.find {

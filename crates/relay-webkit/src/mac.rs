@@ -351,7 +351,8 @@ define_class!(
                 Some(a) if a == sel!(relayGoBack:) => unsafe { self.canGoBack() },
                 Some(a) if a == sel!(relayGoForward:) => unsafe { self.canGoForward() },
                 Some(a) if a == sel!(relayCopyPageUrl:) => unsafe { self.URL() }.is_some(),
-                _ => true,
+                Some(a) if a == sel!(relayReload:) || a == sel!(relayPrint:) || a == sel!(relayInspectElement:) => true,
+                _ => unsafe { msg_send![super(self), validateMenuItem: item] },
             }
         }
 

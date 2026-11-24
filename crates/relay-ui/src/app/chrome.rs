@@ -75,7 +75,7 @@ impl RelayApp {
         if strip.folded {
             return self.render_folded_strip(cx);
         }
-        let (active, user, agents) = {
+        let (active, user, agents, shortcut_map) = {
             let h = self.hub.lock();
             let active = h.active();
             let mut user = vec![];
@@ -83,11 +83,23 @@ impl RelayApp {
             for view in h.tab_views() {
                 if view.owner == Owner::Agent { agents.push(view) } else { user.push(view) }
             }
-            (active, user, agents)
+            let ids = h.tab_ids();
+            let mut map: HashMap<TabId, usize> = HashMap::new();
+            for (idx, id) in ids.iter().take(8).enumerate() {
+                map.insert(*id, idx + 1);
+            }
+            if ids.len() >= 9 {
+                if let Some(&last) = ids.last() {
+                    map.insert(last, 9);
+                }
+            }
+            (active, user, agents, map)
         };
         let bookmarked = self.active_is_bookmarked();
         let show_nums = self.cmd_held && self.show_tab_numbers;
-        // Assign 1-based ⌘1–⌘9 shortcut numbers in display order (pinned first, then loose, then agent).
+        let badge_for = |id: TabId| -> Option<usize> {
+            show_nums.then(|| shortcut_map.get(&id).copied()).flatten()
+        };
         let pinned: Vec<&TabView> = user.iter().filter(|v| v.pinned).collect();
         let loose: Vec<&TabView> = user.iter().filter(|v| !v.pinned).collect();
         let vertical = strip.placement.is_vertical();
@@ -139,9 +151,8 @@ impl RelayApp {
             // Arc/Search-style Favorites grid for pinned tabs.
             if !pinned.is_empty() {
                 let mut grid = div().flex().flex_wrap().gap_1p5().pb_1();
-                for (i, tab) in pinned.iter().enumerate() {
-                    let badge = (show_nums && i < 9).then_some(i + 1);
-                    grid = grid.child(self.pin_tile(tab, active, badge, cx));
+                for tab in &pinned {
+                    grid = grid.child(self.pin_tile(tab, active, badge_for(tab.id), cx));
                 }
                 bar = bar.child(grid);
             }
@@ -175,17 +186,13 @@ impl RelayApp {
                 );
             }
             let mut list = div().id("tab-list-scroll").flex_1().flex().flex_col().gap_0p5().overflow_y_scroll();
-            for (i, tab) in loose.iter().enumerate() {
-                let idx = pinned.len() + i;
-                let badge = (show_nums && idx < 9).then_some(idx + 1);
-                list = list.child(self.tab_row(tab, active, true, badge, cx));
+            for tab in &loose {
+                list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
             }
             if !agents.is_empty() {
                 list = list.child(div().mt_2().px_2().pb_1().text_size(px(10.)).text_color(t.agent).child("AGENT"));
-                for (i, tab) in agents.iter().enumerate() {
-                    let idx = pinned.len() + loose.len() + i;
-                    let badge = (show_nums && idx < 9).then_some(idx + 1);
-                    list = list.child(self.tab_row(tab, active, true, badge, cx));
+                for tab in &agents {
+                    list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
                 }
             }
             bar.child(list).child(self.new_tab_button(true, cx)).into_any_element()
@@ -204,16 +211,13 @@ impl RelayApp {
                 .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
                 .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
                 .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
-            for (i, tab) in pinned.iter().chain(loose.iter()).enumerate() {
-                let badge = (show_nums && i < 9).then_some(i + 1);
-                bar = bar.child(self.tab_row(tab, active, false, badge, cx));
+            for tab in pinned.iter().chain(loose.iter()) {
+                bar = bar.child(self.tab_row(tab, active, false, badge_for(tab.id), cx));
             }
             if !agents.is_empty() {
                 bar = bar.child(div().px_1().text_size(px(10.)).text_color(t.agent).child("AGENT"));
-                for (i, tab) in agents.iter().enumerate() {
-                    let idx = pinned.len() + loose.len() + i;
-                    let badge = (show_nums && idx < 9).then_some(idx + 1);
-                    bar = bar.child(self.tab_row(tab, active, false, badge, cx));
+                for tab in &agents {
+                    bar = bar.child(self.tab_row(tab, active, false, badge_for(tab.id), cx));
                 }
             }
             bar.child(self.new_tab_button(false, cx))
@@ -895,7 +899,7 @@ impl RelayApp {
             )
     }
 
-    pub(super) fn render_status(&self) -> impl IntoElement {
+    pub(super) fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let (url, total, asleep, agents) = {
             let h = self.hub.lock();
@@ -925,6 +929,25 @@ impl RelayApp {
             .bg(t.surface)
             .border_t_1()
             .border_color(t.border)
+            .when(self.strip.folded, |d| {
+                d.child(
+                    div()
+                        .id("status-unfold-tabs")
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .border_1()
+                        .border_color(t.border)
+                        .text_size(px(10.))
+                        .text_color(t.text)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            app.toggle_tab_strip(cx);
+                        }))
+                        .child("» Tabs"),
+                )
+            })
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(match (&self.hints, &self.toast) {
                 // Native web views cover GPUI overlays, so hint status lives here.
                 (Some(h), _) => format!("Link hints: type a label{} · Esc cancels", if h.typed.is_empty() { String::new() } else { format!(" ({})", h.typed.to_uppercase()) }),
