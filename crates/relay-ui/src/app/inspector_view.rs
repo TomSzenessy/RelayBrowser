@@ -432,8 +432,9 @@ impl RelayApp {
         let Some(tab_id) = self.active() else {
             return div().p_2().text_color(t.muted).child("No tab").into_any_element();
         };
-        let selected_el = self.selected_element;
-        let selected_net = self.selected_network.clone();
+        let load_seq = self.hub.lock().tab(tab_id).map(|s| s.load_seq).unwrap_or(0);
+        let selected_el = self.selected_element.and_then(|(tid, seq, id)| (tid == tab_id && seq == load_seq).then_some(id));
+        let selected_net = self.selected_network.as_ref().and_then(|(tid, seq, id)| (*tid == tab_id && *seq == load_seq).then(|| id.clone()));
         let rows = self.inspector_rows();
         let mut col = div().flex().flex_col();
         match rows {
@@ -458,7 +459,7 @@ impl RelayApp {
                                 app.eval_op(tab_id, if *hovered { Op::Highlight { target: id } } else { Op::Unhighlight });
                             }))
                             .on_click(cx.listener(move |app, _, _, cx| {
-                                app.selected_element = Some(id);
+                                app.selected_element = Some((tab_id, load_seq, id));
                                 if has_children {
                                     app.tree.toggle(id);
                                     app.tree_epoch = app.tree_epoch.wrapping_add(1);
@@ -485,10 +486,10 @@ impl RelayApp {
                             .hover(|s| s.bg(t.hover))
                             .text_color(if r.failed { t.error } else { t.text })
                             .on_click(cx.listener(move |app, _, _, cx| {
-                                if app.selected_network.as_deref() == Some(req_id.as_str()) {
+                                if app.selected_network.as_ref().is_some_and(|(tid, seq, id)| *tid == tab_id && *seq == load_seq && id == &req_id) {
                                     app.selected_network = None;
                                 } else {
-                                    app.selected_network = Some(req_id.clone());
+                                    app.selected_network = Some((tab_id, load_seq, req_id.clone()));
                                 }
                                 cx.notify();
                             }))
@@ -576,9 +577,10 @@ impl RelayApp {
                 .hover(|s| s.bg(t.hover))
                 .child(label)
         };
+        let load_seq = self.hub.lock().tab(tab_id).map(|s| s.load_seq).unwrap_or(0);
         match self.panel {
             Panel::Elements => {
-                let id = self.selected_element?;
+                let id = self.selected_element.and_then(|(tid, seq, id)| (tid == tab_id && seq == load_seq).then_some(id))?;
                 let detail = {
                     let h = self.hub.lock();
                     inspector::element_detail(h.tab(tab_id)?, id)?
@@ -656,7 +658,7 @@ impl RelayApp {
                 Some(box_el.into_any_element())
             }
             Panel::Network => {
-                let req_id = self.selected_network.as_deref()?;
+                let req_id = self.selected_network.as_ref().and_then(|(tid, seq, id)| (*tid == tab_id && *seq == load_seq).then_some(id.as_str()))?;
                 let row = {
                     let cache = self.inspector_cache.as_ref()?;
                     let InspectorRows::Network(rows) = &cache.rows else { return None };

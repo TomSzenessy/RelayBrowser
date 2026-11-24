@@ -107,6 +107,27 @@ pub struct ElementDetail {
     pub child_count: usize,
 }
 
+/// CSSOM-compatible identifier escaping for class/id tokens (e.g. `w-1/2`, `a.b`, `1x`).
+fn css_escape_ident(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().enumerate().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if ch == '\0' {
+            out.push('\u{FFFD}');
+        } else if ch.is_control() || ch == '\x7f' || (i == 0 && ch.is_ascii_digit()) || (i == 1 && ch.is_ascii_digit() && s.starts_with('-')) {
+            out.push_str(&format!("\\{:x} ", ch as u32));
+        } else if i == 0 && ch == '-' && chars.peek().is_none() {
+            out.push_str("\\-");
+        } else if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || !ch.is_ascii() {
+            out.push(ch);
+        } else {
+            out.push('\\');
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Inspect one node by id: tag, CSS selector preview, sorted attributes, text,
 /// and direct child count. Returns `None` if the node is no longer in the DOM.
 pub fn element_detail(tab: &TabState, id: NodeId) -> Option<ElementDetail> {
@@ -114,12 +135,12 @@ pub fn element_detail(tab: &TabState, id: NodeId) -> Option<ElementDetail> {
     let mut selector = n.tag.clone();
     if let Some(dom_id) = n.attrs.get("id").filter(|s| !s.is_empty()) {
         selector.push('#');
-        selector.push_str(dom_id);
+        selector.push_str(&css_escape_ident(dom_id));
     }
     if let Some(class) = n.attrs.get("class") {
         for c in class.split_whitespace().take(3) {
             selector.push('.');
-            selector.push_str(c);
+            selector.push_str(&css_escape_ident(c));
         }
     }
     let mut attrs: Vec<(String, String)> = n.attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -203,16 +224,13 @@ fn strip_header_controls(s: &str) -> String {
 }
 
 /// Format a recorded request as a POSIX-shell-safe `curl` command.
+/// Note: `row.content_type` is the response Content-Type captured by the
+/// bridge, so it is intentionally not emitted as a request header.
 pub fn network_to_curl(row: &NetworkRow) -> String {
     let method: String = row.method.chars().filter(|c| c.is_ascii_alphabetic()).collect();
     let method = if method.is_empty() { "GET".to_string() } else { method.to_ascii_uppercase() };
     let url = strip_header_controls(&row.full_url);
-    let mut cmd = format!("curl -X {} {}", posix_quote(&method), posix_quote(&url));
-    if let Some(ct) = row.content_type.as_deref().map(strip_header_controls).filter(|s| !s.is_empty()) {
-        if row.request_body.as_deref().is_some_and(|b| !b.is_empty()) {
-            cmd.push_str(&format!(" -H {}", posix_quote(&format!("Content-Type: {ct}"))));
-        }
-    }
+    let mut cmd = format!("curl --globoff -X {} {}", posix_quote(&method), posix_quote(&url));
     if let Some(body) = row.request_body.as_deref().filter(|b| !b.is_empty()) {
         cmd.push_str(&format!(" --data-raw {}", posix_quote(body)));
     }
@@ -304,6 +322,9 @@ mod tests {
         assert_eq!(d.child_count, 1);
         assert_eq!(d.attrs, vec![("data-test".into(), "buy".into()), ("id".into(), "pay".into())]);
         assert!(element_detail(t, 9999).is_none());
+        assert_eq!(css_escape_ident("a.b"), r"a\.b");
+        assert_eq!(css_escape_ident("w-1/2"), r"w-1\/2");
+        assert_eq!(css_escape_ident("1col"), r"\31 col");
     }
 
     #[test]
@@ -333,31 +354,30 @@ mod tests {
         let t = h.tab(tab).unwrap();
         let row = &network_rows(t, "")[0];
         let curl = network_to_curl(row);
-        assert_eq!(
-            curl,
-            "curl -X 'POST' 'https://a.test/api/pay' -H 'Content-Type: application/json' --data-raw '{\"total\":10}'"
-        );
+        assert_eq!(curl, "curl --globoff -X 'POST' 'https://a.test/api/pay' --data-raw '{\"total\":10}'");
+        assert!(!curl.contains("Content-Type"), "response content_type must not be sent as a request header: {curl}");
 
-        // Negative test: single quotes, newlines, and shell metacharacters in URL/method/body
-        // cannot break out of POSIX single-quoting.
+        // Negative test: single quotes, newlines, brackets, and shell metacharacters in URL/method/body
+        // cannot break out of POSIX single-quoting or trigger curl URL globbing.
         let hostile = NetworkRow {
             id: "x".into(),
             api: "fetch".into(),
             method: "POST; rm -rf /".into(),
             status: "200".into(),
             url: "evil.test".into(),
-            full_url: "https://evil.test/?q='$(id)'\nrm -rf /".into(),
+            full_url: "https://evil.test/?ids=[1-3]&q='$(id)'\nrm -rf /".into(),
             time: "1 ms".into(),
             failed: false,
-            content_type: Some("text/plain\r\nX-Injected: 1".into()),
+            content_type: Some("text/html".into()),
             transfer_size: None,
             request_body: Some("a'b$(whoami)".into()),
             response_body: None,
             error: None,
         };
         let safe = network_to_curl(&hostile);
-        assert!(safe.starts_with("curl -X 'POSTRMRF' "));
-        assert!(!safe.contains('\n') && !safe.contains('\r'), "control chars stripped from URL/header: {safe}");
+        assert!(safe.starts_with("curl --globoff -X 'POSTRMRF' "));
+        assert!(!safe.contains('\n') && !safe.contains('\r'), "control chars stripped from URL: {safe}");
+        assert!(safe.contains("ids=[1-3]"), "bracketed query preserved with --globoff: {safe}");
         assert!(safe.contains("'\\''$(id)'\\''"), "single quotes escaped: {safe}");
         assert!(safe.contains("--data-raw 'a'\\''b$(whoami)'"), "body single quotes escaped: {safe}");
     }
