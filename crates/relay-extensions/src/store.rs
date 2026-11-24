@@ -288,6 +288,15 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// Change a bookmark's title; returns false when the URL has no bookmark.
+    pub fn rename_bookmark(&self, url: &str, title: &str) -> Result<bool, Error> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Ok(false);
+        }
+        Ok(self.conn.execute("UPDATE bookmarks SET title = ?2 WHERE url = ?1", params![url, title])? > 0)
+    }
+
     pub fn bookmarks(&self) -> Result<Vec<Bookmark>, Error> {
         let mut stmt = self.conn.prepare("SELECT url, title, folder FROM bookmarks ORDER BY folder, id")?;
         let rows = stmt.query_map([], |r| {
@@ -1230,6 +1239,10 @@ mod tests {
         assert!(!s.toggle_bookmark("https://a.test/", "A").unwrap());
         assert!(!s.remove_bookmark("https://a.test/").unwrap());
         s.toggle_bookmark("https://a.test/", "A").unwrap();
+        assert!(s.rename_bookmark("https://a.test/", "Renamed").unwrap());
+        assert_eq!(s.bookmarks().unwrap()[0].title, "Renamed");
+        assert!(!s.rename_bookmark("https://missing.test/", "X").unwrap());
+        assert!(!s.rename_bookmark("https://a.test/", "  ").unwrap());
         assert!(s.remove_bookmark("https://a.test/").unwrap());
         s.add_bookmark(&Bookmark { title: "Move".into(), url: "https://m.test/".into(), folder: vec!["Old".into()] }).unwrap();
         assert!(s.move_bookmark("https://m.test/", &["New".into(), "Sub".into()]).unwrap());

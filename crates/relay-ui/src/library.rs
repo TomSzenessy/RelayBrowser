@@ -29,7 +29,7 @@ impl Mode {
     pub fn hint(self) -> &'static str {
         match self {
             Mode::History => "Click a row to open it, × to delete",
-            Mode::Bookmarks => "Click to open · move sets a folder · × removes"
+            Mode::Bookmarks => "Click to open · rename/move edit · × removes"
         }
     }
 }
@@ -49,11 +49,13 @@ pub struct Library {
     pub rows: Vec<Row>,
     /// Non-`None` while the user edits a bookmark's folder.
     pub folder_input: Option<String>,
+    /// `(url, draft title)` while the user renames a bookmark.
+    pub rename_input: Option<(String, String)>,
 }
 
 impl Library {
     pub fn open(store: &Store, mode: Mode) -> Result<Self, relay_extensions::Error> {
-        let mut lib = Self { mode, query: String::new(), selected: 0, rows: vec![], folder_input: None };
+        let mut lib = Self { mode, query: String::new(), selected: 0, rows: vec![], folder_input: None, rename_input: None };
         lib.refresh(store)?;
         Ok(lib)
     }

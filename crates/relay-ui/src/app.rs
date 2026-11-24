@@ -2640,6 +2640,21 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn save_library_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(store) = &self.store else { return };
+        let Some(lib) = self.library.as_mut() else { return };
+        let Some((url, title)) = lib.rename_input.clone() else { return };
+        match store.rename_bookmark(&url, &title) {
+            Ok(true) => {
+                lib.rename_input = None;
+                let _ = lib.refresh(store);
+            }
+            Ok(false) => self.toast("Bookmark title cannot be empty or the bookmark is gone"),
+            Err(e) => self.toast(format!("Could not rename the bookmark: {e}")),
+        }
+        cx.notify();
+    }
+
     fn save_library_folder(&mut self, cx: &mut Context<Self>) {
         let Some(store) = &self.store else { return };
         let Some(lib) = self.library.as_mut() else { return };
@@ -3234,6 +3249,37 @@ impl RelayApp {
                 "end" => self.downloads_selected = len.saturating_sub(1),
                 "enter" => self.activate_selected_download(cx),
                 _ => {}
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.library.as_ref().is_some_and(|l| l.rename_input.is_some()) {
+            match k.key.as_str() {
+                "escape" => {
+                    if let Some(lib) = self.library.as_mut() {
+                        lib.rename_input = None;
+                    }
+                }
+                "enter" => self.save_library_rename(cx),
+                "backspace" => {
+                    if let Some(lib) = self.library.as_mut() {
+                        if let Some((_, title)) = lib.rename_input.as_mut() {
+                            title.pop();
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                        if let Some(lib) = self.library.as_mut() {
+                            if let Some((_, title)) = lib.rename_input.as_mut() {
+                                if title.chars().count() < 200 {
+                                    title.push_str(c);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             cx.stop_propagation();
             cx.notify();

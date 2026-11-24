@@ -52,6 +52,31 @@ impl RelayApp {
                     .when(lib.mode == Mode::Bookmarks, |d| {
                         d.child(
                             div()
+                                .id(("lib-rename", i))
+                                .px_1()
+                                .h(px(20.))
+                                .flex()
+                                .items_center()
+                                .rounded(px(4.))
+                                .text_size(px(10.))
+                                .text_color(t.muted)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover).text_color(t.text))
+                                .on_click(cx.listener(move |app, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(row) = app.library.as_ref().and_then(|l| l.rows.get(i)).cloned() {
+                                        if let Some(lib) = app.library.as_mut() {
+                                            lib.rename_input = Some((row.url, row.title));
+                                        }
+                                    }
+                                    cx.notify();
+                                }))
+                                .child("rename"),
+                        )
+                    })
+                    .when(lib.mode == Mode::Bookmarks, |d| {
+                        d.child(
+                            div()
                                 .id(("lib-move", i))
                                 .px_1()
                                 .h(px(20.))
@@ -149,7 +174,21 @@ impl RelayApp {
                     .child(SharedString::from(title))
                     .child(div().w(px(1.5)).h(px(18.)).ml_0p5().bg(t.accent)),
             );
-        let panel = if let Some(input) = &lib.folder_input {
+        let panel = if let Some((_, input)) = &lib.rename_input {
+            panel.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(38.))
+                    .px_4()
+                    .text_size(px(12.))
+                    .text_color(t.text)
+                    .child("Rename to:")
+                    .child(div().flex_1().child(SharedString::from(if input.is_empty() { "bookmark title".to_string() } else { input.clone() })))
+                    .child(div().text_color(t.muted).child("↩ saves · esc cancels")),
+            )
+        } else if let Some(input) = &lib.folder_input {
             panel.child(
                 div()
                     .flex()
