@@ -9,21 +9,22 @@ use crate::downloads::download_destination;
 use crate::sleep::{restore_scroll_script, SleptTab};
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
+use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSBitmapImageFileType,
-    NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPasteboard, NSPasteboardTypeString, NSPrintInfo,
-    NSUserInterfaceItemIdentification, NSView,
+    NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+    NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPasteboard, NSPasteboardTypeString,
+    NSPrintInfo, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_foundation::{
     NSArray, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize, NSString, NSURL,
     NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::{
-    WKContentRuleList, WKContentRuleListStore, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction,
-    WKNavigationDelegate, WKNavigationResponse, WKNavigationResponsePolicy, WKScriptMessage, WKScriptMessageHandler, WKUIDelegate,
-    WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWindowFeatures,
+    WKContentRuleList, WKContentRuleListStore, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo, WKNavigation,
+    WKNavigationAction, WKNavigationDelegate, WKNavigationResponse, WKNavigationResponsePolicy, WKScriptMessage, WKScriptMessageHandler,
+    WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebExtensionController, WKWebView,
+    WKWebViewConfiguration, WKWebsiteDataStore, WKWindowFeatures,
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::RefCell;
@@ -218,6 +219,84 @@ define_class!(
                 (self.ivars().events)(EngineEvent::OpenInNewTab { opener: self.ivars().tab, url });
             }
             None // we open a real Relay tab instead of a child window
+        }
+
+        #[unsafe(method(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:))]
+        fn run_js_alert(
+            &self,
+            web_view: &WKWebView,
+            message: &NSString,
+            _frame: &WKFrameInfo,
+            completion_handler: &block2::DynBlock<dyn Fn()>,
+        ) {
+            let mtm = MainThreadMarker::from(web_view);
+            let alert = NSAlert::new(mtm);
+            let host = unsafe { web_view.URL() }
+                .and_then(|u| u.host())
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| "This page".to_string());
+            alert.setMessageText(&NSString::from_str(&format!("{host} says")));
+            alert.setInformativeText(message);
+            alert.addButtonWithTitle(&NSString::from_str("OK"));
+            alert.runModal();
+            completion_handler.call(());
+        }
+
+        #[unsafe(method(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
+        fn run_js_confirm(
+            &self,
+            web_view: &WKWebView,
+            message: &NSString,
+            _frame: &WKFrameInfo,
+            completion_handler: &block2::DynBlock<dyn Fn(Bool)>,
+        ) {
+            let mtm = MainThreadMarker::from(web_view);
+            let alert = NSAlert::new(mtm);
+            let host = unsafe { web_view.URL() }
+                .and_then(|u| u.host())
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| "This page".to_string());
+            alert.setMessageText(&NSString::from_str(&format!("{host} says")));
+            alert.setInformativeText(message);
+            alert.addButtonWithTitle(&NSString::from_str("OK"));
+            alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+            let ok = alert.runModal() == NSAlertFirstButtonReturn;
+            completion_handler.call((Bool::new(ok),));
+        }
+
+        #[unsafe(method(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:))]
+        fn run_js_prompt(
+            &self,
+            web_view: &WKWebView,
+            prompt: &NSString,
+            default_text: Option<&NSString>,
+            _frame: &WKFrameInfo,
+            completion_handler: &block2::DynBlock<dyn Fn(*mut NSString)>,
+        ) {
+            let mtm = MainThreadMarker::from(web_view);
+            let alert = NSAlert::new(mtm);
+            let host = unsafe { web_view.URL() }
+                .and_then(|u| u.host())
+                .map(|h| h.to_string())
+                .unwrap_or_else(|| "This page".to_string());
+            alert.setMessageText(&NSString::from_str(&format!("{host} asks")));
+            alert.setInformativeText(prompt);
+            alert.addButtonWithTitle(&NSString::from_str("OK"));
+            alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+            let field = NSTextField::initWithFrame(
+                NSTextField::alloc(mtm),
+                NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(280.0, 24.0)),
+            );
+            if let Some(default_text) = default_text {
+                field.setStringValue(default_text);
+            }
+            alert.setAccessoryView(Some(&field));
+            if alert.runModal() == NSAlertFirstButtonReturn {
+                let value = field.stringValue();
+                completion_handler.call((&*value as *const NSString as *mut NSString,));
+            } else {
+                completion_handler.call((std::ptr::null_mut(),));
+            }
         }
     }
 );
@@ -560,6 +639,13 @@ impl Engine {
 
     /// Create the WKWebView for a tab and start loading `url`.
     pub fn create(&mut self, tab: TabId, url: &str) -> &Retained<WKWebView> {
+        self.create_with_privacy(tab, url, false)
+    }
+
+    /// Create the WKWebView for a tab; when `private` is true, attaches a
+    /// non-persistent `WKWebsiteDataStore` so cookies and site storage are
+    /// isolated and discarded when the tab closes.
+    pub fn create_with_privacy(&mut self, tab: TabId, url: &str, private: bool) -> &Retained<WKWebView> {
         self.clear_error(tab);
         let mtm = self.mtm;
         let handler = BridgeHandler::new(mtm, HandlerIvars { tab, hub: self.hub.clone(), events: self.events.clone(), downloads: RefCell::new(HashMap::new()) });
@@ -583,11 +669,17 @@ impl Engine {
         unsafe {
             config.setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_UA_SUFFIX)));
             config.setUserContentController(&ucc);
+            if private {
+                let ephemeral = WKWebsiteDataStore::nonPersistentDataStore(mtm);
+                config.setWebsiteDataStore(&ephemeral);
+            }
             let prefs = config.preferences();
             let yes = NSNumber::new_bool(true);
             let _: () = msg_send![&*prefs, setValue: &*yes, forKey: &*NSString::from_str("developerExtrasEnabled")];
-            if let Some(ext) = &self.extensions {
-                config.setWebExtensionController(Some(ext));
+            if !private {
+                if let Some(ext) = &self.extensions {
+                    config.setWebExtensionController(Some(ext));
+                }
             }
         }
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0));
@@ -608,6 +700,15 @@ impl Engine {
         self.uccs.borrow_mut().push(ucc.clone());
         self.tabs.insert(tab, WebTab { view, handler, ucc });
         &self.tabs[&tab].view
+    }
+
+    /// Open the native macOS Print dialog for `tab`.
+    pub fn print(&self, tab: TabId) {
+        if let Some(t) = self.tabs.get(&tab) {
+            let info = NSPrintInfo::sharedPrintInfo();
+            let op = unsafe { t.view.printOperationWithPrintInfo(&info) };
+            let _ = op.runOperation();
+        }
     }
 
     pub fn navigate(&self, tab: TabId, url: &str) {
@@ -905,7 +1006,8 @@ impl Engine {
         let s = self.slept.borrow_mut().remove(&tab)?;
         self.pending_restore.insert(tab, restore_scroll_script(&s));
         self.warming.borrow_mut().insert(tab);
-        Some(self.create(tab, &s.url))
+        let private = self.hub.lock().tab(tab).is_some_and(|t| t.private);
+        Some(self.create_with_privacy(tab, &s.url, private))
     }
 
     /// Call when a tab's `load_seq` advances: finishes a wake-up restore.

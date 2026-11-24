@@ -156,6 +156,8 @@ and displayed shortcuts cannot drift either.
 | ⌘⇧R | Reading mode |
 | ⌘⇧P | Picture in Picture |
 | ⌘⇧J | Show downloads |
+| ⌘⇧N | New private tab |
+| ⌘P | Print page |
 <!-- keymap:end -->
 
 Behaviour that is not a single action:

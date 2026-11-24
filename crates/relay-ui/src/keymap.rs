@@ -130,6 +130,8 @@ action_table! {
     ToggleReader => "reading-mode", "Reading mode", "secondary-shift-r";
     TogglePictureInPicture => "picture-in-picture", "Picture in Picture", "secondary-shift-p";
     ShowDownloads => "downloads", "Show downloads", "secondary-shift-j";
+    NewPrivateTab => "new-private-tab", "New private tab", "secondary-shift-n";
+    Print => "print", "Print page", "secondary-p";
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -286,7 +288,7 @@ mod tests {
             assert!(ids.insert(id.as_str()), "duplicate action id {}", id.as_str());
             assert!(labels.insert(id.label()), "duplicate Settings label {}", id.label());
         }
-        assert_eq!(ActionId::ALL.len(), 49);
+        assert_eq!(ActionId::ALL.len(), 51);
     }
 
     #[test]

@@ -399,6 +399,9 @@ impl RelayMcp {
             return Err(HubError::Paused);
         }
         let tab = self.hub.lock().resolve(id)?;
+        if self.hub.lock().tab(tab).is_some_and(|t| t.private) {
+            return Err(HubError::NoTab(tab));
+        }
         let (host, policy) = self.tab_policy(tab)?;
         if policy == relay_bridge::AgentPolicy::Block {
             return Err(HubError::Blocked(host));
@@ -790,8 +793,9 @@ impl RelayMcp {
     async fn list_tabs(&self) -> Result<CallToolResult, ErrorData> {
         self.ensure_running()?;
         let h = self.hub.lock();
-        let tabs: Vec<_> = h.tabs().map(|t| t.summary()).collect();
-        let out = Ok(json(&serde_json::json!({ "active_tab": h.active(), "tabs": tabs })));
+        let tabs: Vec<_> = h.tabs().filter(|t| !t.private).map(|t| t.summary()).collect();
+        let active = h.active().filter(|&id| h.tab(id).is_some_and(|t| !t.private));
+        let out = Ok(json(&serde_json::json!({ "active_tab": active, "tabs": tabs })));
         drop(h);
         self.audit("list_tabs", "", None, "ok");
         out
@@ -2052,5 +2056,29 @@ mod shell_tests {
         for tool in ["shell_settings", "shell_shortcuts", "shell_start_page", "shell_sidebar", "shell_apps", "shell_version"] {
             assert!(rows.iter().any(|r| r.tool == tool && r.outcome == "ok"), "missing audit for {tool}: {rows:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn private_tabs_are_hidden_from_mcp() {
+        let store = Store::in_memory().unwrap();
+        let (mcp, hub, _) = server(store);
+        let pub_id = hub.update(|h| {
+            let id = h.create_tab("https://public.example/", Owner::User);
+            h.set_active(id);
+            id
+        });
+        let priv_id = hub.update(|h| {
+            let id = h.create_private_tab("https://secret.example/");
+            h.set_active(id);
+            id
+        });
+        let list = serde_json::from_str::<serde_json::Value>(&result_text(&mcp.list_tabs().await.unwrap())).unwrap();
+        let tabs = list["tabs"].as_array().unwrap();
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0]["id"].as_u64(), Some(pub_id));
+        assert!(list["active_tab"].is_null(), "active private tab must not be exposed as active_tab");
+        assert!(mcp.tab(Some(priv_id)).is_err(), "explicit private tab id must be rejected");
+        assert!(mcp.tab(None).is_err(), "default active tab must reject when active tab is private");
+        assert_eq!(mcp.tab(Some(pub_id)).unwrap(), pub_id);
     }
 }

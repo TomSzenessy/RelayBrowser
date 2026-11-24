@@ -7,6 +7,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 pub enum BrowserRequest {
     Open { tab: TabId, url: String },
+    OpenPrivate { tab: TabId, url: String },
     Navigate { tab: TabId, url: String },
     GoBack(TabId),
     GoForward(TabId),
@@ -16,6 +17,7 @@ pub enum BrowserRequest {
     Eval { tab: TabId, script: String },
     RefreshCookies(TabId),
     OpenWebInspector(TabId),
+    Print(TabId),
     Screenshot { tab: TabId, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> },
     CancelDownload { tab: TabId, id: u64 },
 }
