@@ -144,6 +144,12 @@ frame. With no profile store the page keeps the welcome state.
 A brand-new profile whose configured sections are all empty shows the welcome
 card (Import from a Chromium browser, MCP setup); a profile with data in an unconfigured
 section keeps the grid and says "Nothing yet" for the shown empty section.
+`start_bg` (Settings → Appearance or `relay config set start_bg`) selects a
+blank-tab background: `default`, solid presets (`slate`, `sage`, `sand`),
+linear gradients (`dusk`, `forest`, `warmth`), or `file:/abs/path` for a local
+PNG/JPEG/WebP/GIF under 8 MB. Remote URLs and invalid/oversized files are
+refused and fall back to `default`; every preset's light and dark stops are
+checked for WCAG AA text contrast in `theme.rs`.
 
 ## History and bookmarks library
 

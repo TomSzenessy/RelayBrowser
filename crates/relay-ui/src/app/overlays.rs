@@ -2025,11 +2025,54 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let dark = t.background.l < 0.5;
+                let mut bg_row = div().flex().flex_wrap().items_center().justify_end().gap_1p5();
+                for preset in theme::StartBackground::PRESETS {
+                    let active = self.start_bg == preset;
+                    let swatch = preset.background(dark, t.page);
+                    let target = preset.clone();
+                    bg_row = bg_row.child(
+                        div()
+                            .id(SharedString::from(format!("settings-start-bg-{}", preset.to_setting())))
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .rounded(px(6.))
+                            .when(active, |d| d.bg(t.active))
+                            .text_size(px(11.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.set_start_background(target.clone(), cx);
+                            }))
+                            .child(div().size(px(12.)).rounded(px(3.)).border_1().border_color(t.border).bg(swatch))
+                            .child(preset.label()),
+                    );
+                }
+                let img_active = matches!(self.start_bg, theme::StartBackground::Image(_));
+                bg_row = bg_row.child(
+                    div()
+                        .id("settings-start-bg-choose")
+                        .px_2()
+                        .py_1()
+                        .rounded(px(6.))
+                        .bg(if img_active { t.active } else { t.well })
+                        .text_size(px(11.))
+                        .text_color(t.text)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(|app, _, _, cx| app.choose_start_wallpaper(cx)))
+                        .child(if img_active { "Change image…" } else { "Image…" }),
+                );
                 let appearance_card = div()
                     .flex()
                     .flex_col()
                     .child(row("Theme", Some("System follows macOS and syncs website prefers-color-scheme"), theme_seg.into_any_element()))
                     .child(row("Accent colour", None, accent_row.into_any_element()))
+                    .child(row("Blank-tab background", Some("Solid, gradient, or a local image file (never loaded remotely)"), bg_row.into_any_element()))
                     .child(row("Tab strip position", Some("Move tabs between Left, Top, and Right (⇧⌘S)"), strip_seg.into_any_element()))
                     .child(row("Show tab strip", Some("Hide to maximize page area; ⌘S toggles anytime"), strip_visible))
                     .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw))

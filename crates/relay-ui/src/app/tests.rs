@@ -759,3 +759,45 @@ fn group_color_rename_and_merge_are_deterministic() {
     assert_eq!(hub.lock().tab(a).unwrap().group.as_deref(), Some("New"));
     assert_eq!(hub.lock().tab(b).unwrap().group.as_deref(), Some("New"));
 }
+
+#[test]
+fn start_background_persists_validates_local_images_and_rejects_bad_inputs() {
+    let store = Store::in_memory().unwrap();
+    store.set_setting("start_bg", &theme::StartBackground::Dusk.to_setting()).unwrap();
+    let (bg, img) = load_start_background(store.setting("start_bg").unwrap().as_deref());
+    assert_eq!(bg, theme::StartBackground::Dusk);
+    assert!(img.is_none());
+
+    // Valid local 1x1 PNG loads cleanly and persists without remote fetches.
+    let dir = tempfile::tempdir().unwrap();
+    let valid_png = dir.path().join("wall.png");
+    let png_bytes: &[u8] = &[
+        0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a,
+        0, 0, 0, 13, b'I', b'H', b'D', b'R',
+        0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 0x90, 0x77, 0x53, 0xde,
+    ];
+    std::fs::write(&valid_png, png_bytes).unwrap();
+    let setting = theme::StartBackground::Image(valid_png.to_string_lossy().into_owned()).to_setting();
+    store.set_setting("start_bg", &setting).unwrap();
+    let (bg, img) = load_start_background(store.setting("start_bg").unwrap().as_deref());
+    assert_eq!(bg, theme::StartBackground::Image(valid_png.to_string_lossy().into_owned()));
+    assert!(img.is_some());
+
+    // Negative: invalid bytes, missing file, and oversized (> 8 MB) files fall back to Default.
+    let bad = dir.path().join("not-image.png");
+    std::fs::write(&bad, b"hello world not a png").unwrap();
+    assert_eq!(load_start_background(Some(&format!("file:{}", bad.display()))).0, theme::StartBackground::Default);
+
+    let missing = dir.path().join("missing.png");
+    assert_eq!(load_start_background(Some(&format!("file:{}", missing.display()))).0, theme::StartBackground::Default);
+
+    let huge = dir.path().join("huge.png");
+    let mut big = png_bytes.to_vec();
+    big.resize((MAX_WALLPAPER_BYTES as usize) + 64, 0);
+    std::fs::write(&huge, &big).unwrap();
+    assert_eq!(load_start_background(Some(&format!("file:{}", huge.display()))).0, theme::StartBackground::Default);
+
+    // Remote URLs never load.
+    assert_eq!(load_start_background(Some("https://example.test/bg.png")).0, theme::StartBackground::Default);
+    assert_eq!(load_start_background(Some("file:https://example.test/bg.png")).0, theme::StartBackground::Default);
+}

@@ -1,6 +1,6 @@
 //! Colour tokens from docs/design.md; one place so light and dark stay in step.
 
-use gpui::{rgb, rgba, Hsla, WindowAppearance};
+use gpui::{linear_color_stop, linear_gradient, rgb, rgba, Background, Hsla, WindowAppearance};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeChoice {
@@ -200,6 +200,123 @@ impl GroupColor {
             (Self::Pink, false) => 0xc2255c14,
         };
         rgba(hex).into()
+    }
+}
+
+/// Blank-tab / start-page background: default quiet page, solid/gradient
+/// presets (with light/dark variants checked for WCAG AA contrast), or a
+/// validated local image file. Remote URLs are never accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum StartBackground {
+    #[default]
+    Default,
+    Slate,
+    Sage,
+    Sand,
+    Dusk,
+    Forest,
+    Warmth,
+    Image(String),
+}
+
+impl StartBackground {
+    pub const PRESETS: [StartBackground; 7] = [
+        Self::Default,
+        Self::Slate,
+        Self::Sage,
+        Self::Sand,
+        Self::Dusk,
+        Self::Forest,
+        Self::Warmth,
+    ];
+
+    pub fn parse(raw: Option<&str>) -> Self {
+        let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+            return Self::Default;
+        };
+        match raw.to_ascii_lowercase().as_str() {
+            "default" | "none" => Self::Default,
+            "slate" => Self::Slate,
+            "sage" => Self::Sage,
+            "sand" => Self::Sand,
+            "dusk" => Self::Dusk,
+            "forest" => Self::Forest,
+            "warmth" => Self::Warmth,
+            _ => {
+                if let Some(path) = raw.strip_prefix("file:") {
+                    if Self::is_safe_local_path(path) {
+                        return Self::Image(path.to_string());
+                    }
+                }
+                Self::Default
+            }
+        }
+    }
+
+    pub fn is_safe_local_path(path: &str) -> bool {
+        let p = path.trim();
+        if p.is_empty() || p.len() > 2048 || p.chars().any(char::is_control) {
+            return false;
+        }
+        let lower = p.to_ascii_lowercase();
+        if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("data:") || lower.starts_with("javascript:") {
+            return false;
+        }
+        std::path::Path::new(p).is_absolute()
+    }
+
+    pub fn to_setting(&self) -> String {
+        match self {
+            Self::Default => "default".into(),
+            Self::Slate => "slate".into(),
+            Self::Sage => "sage".into(),
+            Self::Sand => "sand".into(),
+            Self::Dusk => "dusk".into(),
+            Self::Forest => "forest".into(),
+            Self::Warmth => "warmth".into(),
+            Self::Image(path) => format!("file:{path}"),
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Slate => "Slate",
+            Self::Sage => "Sage",
+            Self::Sand => "Sand",
+            Self::Dusk => "Dusk",
+            Self::Forest => "Forest",
+            Self::Warmth => "Warmth",
+            Self::Image(_) => "Image",
+        }
+    }
+
+    /// Start and end colours for solid/gradient presets (equal for solids).
+    pub fn stops(&self, dark: bool) -> Option<(Hsla, Hsla)> {
+        let (a, b) = match (self, dark) {
+            (Self::Slate, true) => (0x181d26, 0x181d26),
+            (Self::Slate, false) => (0xf2f5fa, 0xf2f5fa),
+            (Self::Sage, true) => (0x17201c, 0x17201c),
+            (Self::Sage, false) => (0xf1f7f3, 0xf1f7f3),
+            (Self::Sand, true) => (0x211d19, 0x211d19),
+            (Self::Sand, false) => (0xf8f4ee, 0xf8f4ee),
+            (Self::Dusk, true) => (0x171b28, 0x221c2c),
+            (Self::Dusk, false) => (0xf1f5fc, 0xf6f1fa),
+            (Self::Forest, true) => (0x15201c, 0x1a222b),
+            (Self::Forest, false) => (0xf1f8f4, 0xf1f6fa),
+            (Self::Warmth, true) => (0x231d19, 0x1b1d24),
+            (Self::Warmth, false) => (0xfaf4ec, 0xf4f2f8),
+            (Self::Default | Self::Image(_), _) => return None,
+        };
+        Some((rgb(a).into(), rgb(b).into()))
+    }
+
+    pub fn background(&self, dark: bool, fallback_page: Hsla) -> Background {
+        match self.stops(dark) {
+            Some((a, b)) if a == b => Background::from(a),
+            Some((a, b)) => linear_gradient(145.0, linear_color_stop(a, 0.0), linear_color_stop(b, 1.0)),
+            None => Background::from(fallback_page),
+        }
     }
 }
 
@@ -416,5 +533,30 @@ mod tests {
                 assert!(muted_ratio >= 4.5, "{mode} {color:?} muted/tint contrast {muted_ratio:.2}:1 < 4.5");
             }
         }
+    }
+
+    #[test]
+    fn every_start_background_preset_meets_wcag_aa() {
+        for (mode, dark, theme) in [("dark", true, Theme::dark()), ("light", false, Theme::light())] {
+            for preset in StartBackground::PRESETS {
+                assert_eq!(StartBackground::parse(Some(&preset.to_setting())), preset);
+                if let Some((start, end)) = preset.stops(dark) {
+                    for (stop_name, bg) in [("start", start), ("end", end)] {
+                        let text_ratio = contrast_ratio(theme.text, bg);
+                        let muted_ratio = contrast_ratio(theme.muted, bg);
+                        assert!(text_ratio >= 4.5, "{mode} {preset:?} {stop_name} text contrast {text_ratio:.2}:1 < 4.5");
+                        assert!(muted_ratio >= 4.5, "{mode} {preset:?} {stop_name} muted contrast {muted_ratio:.2}:1 < 4.5");
+                    }
+                }
+            }
+        }
+        // Remote URLs and relative paths are never accepted as start-page backgrounds.
+        for bad in ["https://evil.example/bg.png", "file:https://evil.example/bg.png", "file:data:image/png;base64,AA==", "file:relative.png", "neon"] {
+            assert_eq!(StartBackground::parse(Some(bad)), StartBackground::Default, "{bad}");
+        }
+        assert_eq!(
+            StartBackground::parse(Some("file:/tmp/wallpaper.png")),
+            StartBackground::Image("/tmp/wallpaper.png".into())
+        );
     }
 }

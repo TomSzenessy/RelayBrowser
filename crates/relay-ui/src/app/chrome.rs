@@ -957,26 +957,33 @@ impl RelayApp {
     /// A brand-new profile falls back to the welcome card inside the page.
     fn render_start_page(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
+        let dark = t.background.l < 0.5;
+        let has_wallpaper = self.start_bg_image.is_some();
         // No wordmark: the window is the browser, and a blank page should be
         // quiet. The search field is the only thing on it.
-        let page = div()
+        let mut foreground = div()
+            .relative()
             .flex_1()
-            .h_full()
+            .size_full()
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(96.))
+            .pt(px(80.))
             .px_6()
-            .bg(t.page)
             .overflow_hidden()
+            .when(has_wallpaper, |d| {
+                // Contrast scrim over arbitrary user photography so text and
+                // controls stay legible in both light and dark modes.
+                d.bg(gpui::rgba(if dark { 0x16171ab8 } else { 0xf6f6f7cc }))
+            })
             .child(self.start_search(cx));
-        let mut page = page;
         if let Some((title, body)) = &self.agent_widget {
-            page = page.child(
+            foreground = foreground.child(
                 div()
                     .id("agent-widget")
                     .mt_4()
-                    .w(px(560.))
+                    .w_full()
+                    .max_w(px(560.))
                     .px_4()
                     .py_3()
                     .rounded(px(10.))
@@ -990,14 +997,44 @@ impl RelayApp {
             );
         }
         let body = if self.start_page.is_empty() { self.render_welcome(cx).into_any_element() } else { self.start_grid(cx) };
-        page.child(div().id("start-body").flex_1().w_full().flex().justify_center().overflow_y_scroll().child(body)).into_any_element()
+        foreground = foreground.child(
+            div()
+                .id("start-body")
+                .flex_1()
+                .w_full()
+                .flex()
+                .items_start()
+                .justify_center()
+                .overflow_y_scroll()
+                .child(body),
+        );
+        let mut container = div()
+            .relative()
+            .flex_1()
+            .h_full()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .bg(self.start_bg.background(dark, t.page));
+        if let Some(wallpaper) = &self.start_bg_image {
+            container = container.child(
+                img(wallpaper.clone())
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .object_fit(ObjectFit::Cover),
+            );
+        }
+        container.child(foreground).into_any_element()
     }
 
     fn start_search(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         div()
             .id("start-search")
-            .w(px(560.))
+            .w_full()
+            .max_w(px(560.))
             .h(px(44.))
             .mt_5()
             .px_4()
@@ -1161,8 +1198,10 @@ impl RelayApp {
                 .child(label)
         };
         div()
-            .w(px(560.))
+            .w_full()
+            .max_w(px(560.))
             .mt_8()
+            .mb_8()
             .flex()
             .flex_col()
             .gap_3()
@@ -1175,10 +1214,29 @@ impl RelayApp {
             .child(div().flex().gap_2().child(button("import", "Import from Chrome", Command::ImportChrome, cx)).child(button("mcp", "Copy MCP setup", Command::CopyMcpSetup, cx)))
             .child(
                 div()
-                    .text_size(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .pt_1()
+                    .text_size(px(11.))
                     .text_color(t.muted)
                     .font_family("Menlo")
-                    .child(SharedString::from(format!("Agents: {}\nSocket: {}", self.mcp_setup, self.mcp_socket))),
+                    .child(
+                        div()
+                            .w_full()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(format!("Agents: {}", self.mcp_setup))),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(SharedString::from(format!("Socket: {}", self.mcp_socket))),
+                    ),
             )
     }
 

@@ -357,6 +357,14 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             "mru" | "strip" => Ok(trimmed.to_ascii_lowercase()),
             _ => bail!("invalid tab_switch_order {value:?}: expected mru or strip"),
         },
+        "start_bg" => {
+            let parsed = theme::StartBackground::parse(Some(trimmed));
+            if trimmed.eq_ignore_ascii_case("default") || trimmed.eq_ignore_ascii_case("none") || parsed != theme::StartBackground::Default {
+                Ok(parsed.to_setting())
+            } else {
+                bail!("invalid start_bg {value:?}: expected default, slate, sage, sand, dusk, forest, warmth, or file:/abs/path");
+            }
+        }
         "sync_folder" => {
             let path = trimmed;
             if !path.is_empty() && !path.starts_with('/') && !path.starts_with("~/") && path != "~" {
@@ -449,6 +457,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("last_tab_close = {}", setting("last_tab_close", "start_page"));
             println!("confirm_close_multiple = {}", setting("confirm_close_multiple", "off"));
             println!("tab_switch_order = {}", setting("tab_switch_order", "mru"));
+            println!("start_bg = {}", setting("start_bg", "default"));
             println!("bangs = {}", cfg.bangs);
             println!("start_sections = {}", cfg.start_sections);
             Ok(())
@@ -479,6 +488,9 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 }
                 "tab_switch_order" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting("tab_switch_order").ok().flatten()).unwrap_or_else(|| "mru".into()))
+                }
+                "start_bg" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting("start_bg").ok().flatten()).unwrap_or_else(|| "default".into()))
                 }
                 "sync_folder" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default())

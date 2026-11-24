@@ -94,6 +94,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   search field (opens ⌘K), and two columns of Recent / Frequent / Apps /
   Bookmarks rows. Rows are one line with a muted note; empty sections say "Nothing yet";
   only a genuinely fresh profile shows the welcome card. `start_sections` owns the order and `none` hides the page's sections.
+  Settings → Appearance (`start_bg`) chooses between Default, solid/gradient presets
+  (light/dark pairs verified WCAG AA), or a local image file (never remote; invalid/oversized files fall back to Default, and a contrast scrim keeps text legible).
 - **Page context menu:** Back, Forward, Reload, Copy Page URL, Reading
   Mode, Print, and Inspect Element, with the page's own link/image items
   preserved. The shell draws the tab menu as a floating panel when the strip

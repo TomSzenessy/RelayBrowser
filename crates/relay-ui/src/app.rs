@@ -17,7 +17,7 @@ use gpui::{
     actions, canvas, div, fill, img, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, GlobalElementId, Hsla, Image, ImageFormat,
     ease_out_quint, Animation, AnimationExt, InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, PathPromptOptions, Pixels,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, ObjectFit, PathPromptOptions, Pixels,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
@@ -372,6 +372,10 @@ pub struct RelayApp {
     theme: Theme,
     theme_choice: ThemeChoice,
     accent_choice: AccentChoice,
+    /// Blank-tab background preset or validated local wallpaper path.
+    start_bg: theme::StartBackground,
+    /// Decoded wallpaper image when `start_bg` is `StartBackground::Image`.
+    start_bg_image: Option<Arc<Image>>,
     /// `None` = inheritance has not been applied; `Some(None)` = System.
     last_web_dark: Option<Option<bool>>,
     /// Decoded tab icons by host. `None` means the last attempt failed; a new
@@ -719,6 +723,7 @@ impl RelayApp {
         let last_tab_close = LastTabClose::parse(store.as_ref().and_then(|s| s.setting("last_tab_close").ok().flatten()).as_deref());
         let confirm_close_multiple = setting_on("confirm_close_multiple");
         let tab_switch_order = TabSwitchOrder::parse(store.as_ref().and_then(|s| s.setting("tab_switch_order").ok().flatten()).as_deref());
+        let (start_bg, start_bg_image) = load_start_background(store.as_ref().and_then(|s| s.setting("start_bg").ok().flatten()).as_deref());
         let default_zoom = store
             .as_ref()
             .and_then(|s| s.setting("default_zoom").ok().flatten())
@@ -741,6 +746,8 @@ impl RelayApp {
             theme: Theme::for_choice(window.appearance(), theme_choice, accent_choice),
             theme_choice,
             accent_choice,
+            start_bg,
+            start_bg_image,
             last_web_dark: Some(web_dark),
             favicons: cached_favicons(),
             favicon_tried: HashMap::new(),
@@ -2962,6 +2969,50 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn set_start_background(&mut self, bg: theme::StartBackground, cx: &mut Context<Self>) {
+        let (resolved, img) = match &bg {
+            theme::StartBackground::Image(path) => match load_wallpaper_image(Path::new(path)) {
+                Some(image) => (bg, Some(image)),
+                None => {
+                    self.toast("Could not load that image (use a local PNG, JPEG, WebP, or GIF under 8 MB)");
+                    cx.notify();
+                    return;
+                }
+            },
+            _ => (bg, None),
+        };
+        self.start_bg = resolved;
+        self.start_bg_image = img;
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("start_bg", &self.start_bg.to_setting());
+        }
+        cx.notify();
+    }
+
+    fn choose_start_wallpaper(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose a blank-tab image".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(Result::ok).flatten().and_then(|mut paths| paths.pop());
+            if let Some(path) = picked {
+                let path_str = path.to_string_lossy().into_owned();
+                let _ = this.update(cx, |app, cx| {
+                    if !theme::StartBackground::is_safe_local_path(&path_str) {
+                        app.toast("Choose a local image file");
+                        cx.notify();
+                        return;
+                    }
+                    app.set_start_background(theme::StartBackground::Image(path_str), cx);
+                });
+            }
+        })
+        .detach();
+    }
+
     fn choose_sync_folder(&mut self, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -4284,6 +4335,11 @@ impl RelayApp {
             "last_tab_close" => self.last_tab_close = LastTabClose::parse(Some(value)),
             "confirm_close_multiple" => self.confirm_close_multiple = setting_enabled(Some(value)),
             "tab_switch_order" => self.tab_switch_order = TabSwitchOrder::parse(Some(value)),
+            "start_bg" => {
+                let (bg, img) = load_start_background(Some(value));
+                self.start_bg = bg;
+                self.start_bg_image = img;
+            }
             "default_zoom" => {
                 if let Ok(z) = value.parse::<f64>() {
                     if (0.5..=3.0).contains(&z) {
@@ -5441,6 +5497,55 @@ fn favicon_signature(bytes: &[u8], ext: &str) -> bool {
             .is_ok_and(|text| text.trim_start_matches(['\u{feff}', ' ', '\n', '\r', '\t']).to_ascii_lowercase().contains("<svg")),
         "ico" => bytes.len() >= 6 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 1 && bytes[3] == 0,
         _ => false,
+    }
+}
+
+/// Maximum local wallpaper size accepted for the blank tab (8 MB).
+pub(crate) const MAX_WALLPAPER_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Load and validate a local blank-tab wallpaper image. Rejects missing files,
+/// oversized files, unknown formats, and decompression bombs. Never fetches
+/// remote URLs.
+pub(crate) fn load_wallpaper_image(path: &Path) -> Option<Arc<Image>> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_WALLPAPER_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() as u64 > MAX_WALLPAPER_BYTES {
+        return None;
+    }
+    let (ext, fmt) = if favicon_signature(&bytes, "png") {
+        ("png", ImageFormat::Png)
+    } else if favicon_signature(&bytes, "jpg") {
+        ("jpg", ImageFormat::Jpeg)
+    } else if favicon_signature(&bytes, "webp") {
+        ("webp", ImageFormat::Webp)
+    } else if favicon_signature(&bytes, "gif") {
+        ("gif", ImageFormat::Gif)
+    } else {
+        return None;
+    };
+    let (w, h) = favicon_dimensions(&bytes, ext)?;
+    if w == 0 || h == 0 || w > 8192 || h > 8192 || u64::from(w) * u64::from(h) > 36 * 1024 * 1024 {
+        return None;
+    }
+    Some(Arc::new(Image::from_bytes(fmt, bytes)))
+}
+
+/// Resolve persisted `start_bg` setting into `(StartBackground, Option<Arc<Image>>)`.
+/// Invalid or oversized wallpaper files fall back cleanly to `StartBackground::Default`.
+pub(crate) fn load_start_background(raw: Option<&str>) -> (theme::StartBackground, Option<Arc<Image>>) {
+    let parsed = theme::StartBackground::parse(raw);
+    match &parsed {
+        theme::StartBackground::Image(path) => match load_wallpaper_image(Path::new(path)) {
+            Some(img) => (parsed, Some(img)),
+            None => (theme::StartBackground::Default, None),
+        },
+        _ => (parsed, None),
     }
 }
 
