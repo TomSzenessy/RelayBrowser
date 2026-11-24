@@ -388,6 +388,7 @@ pub struct RelayApp {
     ai_has_key: bool,
     ai_chat: Option<AiChat>,
     ai_stream: Option<std::sync::mpsc::Receiver<relay_extensions::ai::StreamEvent>>,
+    ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     last_handoff: Option<String>,
     last_sync: Instant,
     last_ext_icons: Instant,
@@ -701,6 +702,7 @@ impl RelayApp {
             ai_has_key,
             ai_chat: None,
             ai_stream: None,
+            ai_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_handoff: None,
             last_sync: Instant::now(),
             last_ext_icons: Instant::now(),
@@ -2236,6 +2238,13 @@ impl RelayApp {
         }
     }
 
+    fn set_ai_preset(&mut self, endpoint: &str, model: &str, cx: &mut Context<Self>) {
+        self.ai_endpoint = endpoint.to_string();
+        self.ai_model = model.to_string();
+        self.ai_focus = 2;
+        cx.notify();
+    }
+
     fn save_ai_settings(&mut self, cx: &mut Context<Self>) {
         let Some(endpoint) = relay_extensions::ai::normalize_endpoint(&self.ai_endpoint) else {
             self.toast("AI endpoint must be an http(s) URL");
@@ -2283,15 +2292,29 @@ impl RelayApp {
             return;
         }
         self.settings_open = false;
+        self.ai_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
         self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
         self.web.borrow().focus_shell();
         cx.notify();
     }
 
     fn close_ai_chat(&mut self) {
+        self.ai_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         self.ai_chat = None;
         self.ai_stream = None;
         self.focus_active_page();
+    }
+
+    fn stop_ai(&mut self, cx: &mut Context<Self>) {
+        self.ai_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.ai_stream = None;
+        if let Some(chat) = self.ai_chat.as_mut() {
+            chat.busy = false;
+            chat.error = Some("AI request stopped".into());
+            chat.pending = None;
+            chat.pending_at = None;
+        }
+        cx.notify();
     }
 
     fn send_ai(&mut self, cx: &mut Context<Self>) {
@@ -2353,11 +2376,13 @@ impl RelayApp {
             chat.busy = true;
         }
         cx.notify();
+        self.ai_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        let cancel = self.ai_cancel.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.ai_stream = Some(rx);
         cx.background_executor()
             .spawn(async move {
-                relay_extensions::ai::stream(&config, &key, &url, &title, &page, &prompt, &history, tx);
+                relay_extensions::ai::stream(&config, &key, &url, &title, &page, &prompt, &history, cancel, tx);
             })
             .detach();
     }

@@ -144,9 +144,10 @@ pub fn stream(
     page: &str,
     prompt: &str,
     history: &[(bool, String)],
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     tx: std::sync::mpsc::Sender<StreamEvent>,
 ) {
-    let result = stream_inner(config, key, url, title, page, prompt, history, &tx);
+    let result = stream_inner(config, key, url, title, page, prompt, history, &cancel, &tx);
     let _ = tx.send(StreamEvent::Done(result));
 }
 
@@ -158,9 +159,11 @@ fn stream_inner(
     page: &str,
     prompt: &str,
     history: &[(bool, String)],
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     tx: &std::sync::mpsc::Sender<StreamEvent>,
 ) -> Result<String, String> {
     use std::io::BufRead;
+    use std::sync::atomic::Ordering;
     let endpoint = normalize_endpoint(&config.endpoint).ok_or("AI endpoint must be an http(s) URL")?;
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(120))).build(),
@@ -181,6 +184,9 @@ fn stream_inner(
     let mut raw = String::new();
     let mut saw_data = false;
     for line in std::io::BufReader::new(reader).lines() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("AI request stopped".into());
+        }
         let line = line.map_err(|e| format!("AI stream read failed: {e}"))?;
         raw.push_str(&line);
         raw.push('\n');

@@ -1086,6 +1086,18 @@ impl RelayApp {
         if let Some(error) = &chat.error {
             messages = messages.child(div().text_size(px(11.)).text_color(t.error).child(SharedString::from(error.clone())));
         }
+        let stop = div()
+            .id("ai-stop")
+            .px_3()
+            .py_1p5()
+            .rounded(px(6.))
+            .bg(t.well)
+            .text_size(px(12.))
+            .text_color(t.text)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(|app, _, _, cx| app.stop_ai(cx)))
+            .child("Stop");
         let send = div()
             .id("ai-send")
             .px_3()
@@ -1158,6 +1170,7 @@ impl RelayApp {
                         .border_t_1()
                         .border_color(t.well)
                         .child(input)
+                        .when(chat.busy, |d| d.child(stop))
                         .child(send),
                 )
                 .child(div().px_4().pb_3().text_size(px(9.)).text_color(t.muted).child("↩ sends · esc closes · key stays in the login Keychain · page text is sent")),
@@ -2512,9 +2525,31 @@ impl RelayApp {
                 let ask_btn = btn("settings-ai-ask", "Ask about this page…".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| app.open_ai_chat(cx)))
                     .into_any_element();
+                let presets = ["OpenAI", "Ollama", "LM Studio", "OpenRouter"];
+                let preset_rows = [(("https://api.openai.com/v1", "gpt-4o-mini")), (("http://localhost:11434/v1", "llama3.2")), (("http://localhost:1234/v1", "local-model")), (("https://openrouter.ai/api/v1", "openai/gpt-4o-mini"))];
+                let mut preset_bar = div().flex().items_center().gap_1().px_4().py_2();
+                for (label, (endpoint, model)) in presets.into_iter().zip(preset_rows) {
+                    let endpoint = endpoint.to_string();
+                    let model = model.to_string();
+                    preset_bar = preset_bar.child(
+                        div()
+                            .id(SharedString::from(format!("ai-preset-{label}")))
+                            .px_2()
+                            .py_1()
+                            .rounded(px(5.))
+                            .bg(t.well)
+                            .text_size(px(10.))
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| app.set_ai_preset(&endpoint, &model, cx)))
+                            .child(SharedString::from(label)),
+                    );
+                }
                 let content = div()
                     .flex()
                     .flex_col()
+                    .child(preset_bar)
                     .child(field("settings-ai-endpoint", "Endpoint", SharedString::from(self.ai_endpoint.clone()), 0, "OpenAI-compatible base URL"))
                     .child(field("settings-ai-model", "Model", SharedString::from(self.ai_model.clone()), 1, "Model name sent to the endpoint"))
                     .child(field("settings-ai-key", "API key", SharedString::from(key_value), 2, "Saved only in the macOS Keychain; never in settings or logs"))
