@@ -2,6 +2,7 @@
 //! Chrome API shims, and the local SQLite profile store.
 
 pub mod chrome_import;
+pub mod safari;
 pub mod crx;
 pub mod login;
 pub mod manifest;

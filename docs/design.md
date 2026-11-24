@@ -67,8 +67,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   failed row Retry, and a finished row Reveal; Clear finished and the empty
   state (which says where files save) live with the panel. ↑/↓/Home/End move the
   selection in section order and ↩ runs the selected row's action.
-- **Import:** the welcome card imports Chrome, Brave, Edge, Arc, Dia, or
-  Chromium bookmarks/history from the detected local profile.
+- **Import:** the welcome card and Settings import Chrome, Brave, Edge, Arc,
+  Dia, or Chromium bookmarks/history, plus Safari bookmarks/history (Safari
+  data needs Full Disk Access).
 - **New tab:** with no active tab, a quiet page with **no wordmark**, one
   search field (opens ⌘K), and two columns of Recent / Frequent / Apps /
   Bookmarks rows. Rows are one line with a muted note; empty sections say "Nothing yet";

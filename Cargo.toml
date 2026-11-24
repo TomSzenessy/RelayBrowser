@@ -15,6 +15,7 @@ relay-extensions = { path = "crates/relay-extensions" }
 relay-mcp = { path = "crates/relay-mcp" }
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v5"] }
+plist = "1"
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"

@@ -35,6 +35,7 @@ USAGE:
                                     delete stored history/session/bookmarks and/or the agent audit log
   relay audit [--limit N]           show the lean log of agent tool calls
   relay mcp-config [CLIENT]         print the MCP config for 9 clients (claude-code, codex, opencode, cursor, zed, vscode, windsurf, claude-desktop, gemini)
+  relay import-safari [--dry-run] import Safari bookmarks + history (needs Full Disk Access)
   relay import-chrome [--dry-run] [--profile DIR]
                                     import Chrome/Chromium-family bookmarks + history into Relay's profile
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
@@ -153,6 +154,7 @@ fn main() -> anyhow::Result<()> {
         Some("audit") => audit(&args[1..]),
         Some("mcp-config") => mcp_config(&args[1..]),
         Some("import-chrome") => import_chrome(&args[1..]),
+        Some("import-safari") => import_safari(&args[1..]),
         Some("import-passwords") => import_passwords(args.get(1).map(String::as_str)),
         Some("install-extension") => install_extension(args.get(1).map(String::as_str)),
         Some("compile-rules") => compile_rules(args.get(1).map(String::as_str)),
@@ -683,6 +685,31 @@ fn import_chrome(args: &[String]) -> anyhow::Result<()> {
         println!("Install extensions with: relay install-extension <id>");
     }
     println!("Passwords: export them from chrome://password-manager/settings (Export passwords), then run: relay import-passwords <file.csv>");
+    Ok(())
+}
+
+fn import_safari(args: &[String]) -> anyhow::Result<()> {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    let bookmarks = relay_extensions::safari::default_bookmarks();
+    let history = relay_extensions::safari::default_history();
+    if bookmarks.is_none() && history.is_none() {
+        bail!("no Safari bookmarks/history found; grant Full Disk Access to Relay in System Settings → Privacy & Security");
+    }
+    let store = open_store()?;
+    let empty = std::path::Path::new("/nonexistent");
+    let counts = relay_extensions::safari::import(
+        &store,
+        bookmarks.as_deref().unwrap_or(empty),
+        history.as_deref().unwrap_or(empty),
+        dry_run,
+    )?;
+    println!(
+        "{} {} bookmarks and {} history rows{}.",
+        if dry_run { "Would import" } else { "Imported" },
+        counts.bookmarks,
+        counts.history,
+        if counts.skipped > 0 { format!(" ({} already present)", counts.skipped) } else { String::new() }
+    );
     Ok(())
 }
 

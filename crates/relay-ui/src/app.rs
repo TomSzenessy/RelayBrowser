@@ -2062,6 +2062,28 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn import_safari(&mut self, cx: &mut Context<Self>) {
+        let Some(store) = &self.store else { return };
+        let bookmarks = relay_extensions::safari::default_bookmarks();
+        let history = relay_extensions::safari::default_history();
+        if bookmarks.is_none() && history.is_none() {
+            self.toast("No Safari data found; grant Full Disk Access to Relay");
+            cx.notify();
+            return;
+        }
+        let empty = std::path::Path::new("/nonexistent");
+        match relay_extensions::safari::import(
+            store,
+            bookmarks.as_deref().unwrap_or(empty),
+            history.as_deref().unwrap_or(empty),
+            false,
+        ) {
+            Ok(c) => self.toast(format!("Imported {} Safari bookmarks · {} history rows", c.bookmarks, c.history)),
+            Err(e) => self.toast(format!("Safari import failed: {e}")),
+        }
+        cx.notify();
+    }
+
     fn open_extension_popup(&mut self, id: &str, cx: &mut Context<Self>) {
         if self.web.borrow_mut().open_extension_popup(id) {
             self.toast("Opened extension popup");

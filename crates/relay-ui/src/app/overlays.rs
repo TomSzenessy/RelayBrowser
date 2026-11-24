@@ -1383,6 +1383,9 @@ impl RelayApp {
                 if sleep_open {
                     general_card = general_card.child(sleep_menu);
                 }
+                let safari_btn = btn("settings-import-safari", "Import Safari".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.import_safari(cx)))
+                    .into_any_element();
                 let import_btn = btn("settings-import-chrome", "Import from Chrome".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.run_command(Command::ImportChrome, cx);
@@ -1390,6 +1393,7 @@ impl RelayApp {
                     }))
                     .into_any_element();
                 general_card = general_card.child(row("Browser bookmarks & history", Some("Chrome, Brave, Edge, Arc, Dia, or Chromium"), import_btn));
+                general_card = general_card.child(row("Safari bookmarks & history", Some("Needs Full Disk Access in System Settings → Privacy & Security"), safari_btn));
                 let default_btn = btn("settings-default-browser", "Make default".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         if app.web.borrow().renders_pages() {
