@@ -226,6 +226,7 @@ pub struct RelayApp {
     inspector_open: bool,
     sidebar_tab: SidebarTab,
     connect_open: bool,
+    connect_detected: Vec<(mcp_config::Client, bool)>,
     downloads_open: bool,
     downloads_selected: usize,
     download_poll_at: std::time::Instant,
@@ -391,6 +392,7 @@ impl RelayApp {
             inspector_open: false,
             sidebar_tab: SidebarTab::Inspector,
             connect_open: false,
+            connect_detected: vec![],
             downloads_open: false,
             downloads_selected: 0,
             download_poll_at: std::time::Instant::now(),
@@ -2087,6 +2089,9 @@ impl RelayApp {
         self.downloads_open = false;
         self.find = None;
         self.end_hints();
+        let mut clients: Vec<(mcp_config::Client, bool)> = mcp_config::Client::ALL.iter().map(|&c| (c, c.is_installed())).collect();
+        clients.sort_by_key(|(_, detected)| !*detected);
+        self.connect_detected = clients;
         self.connect_open = true;
         self.web.borrow().focus_shell();
         cx.notify();

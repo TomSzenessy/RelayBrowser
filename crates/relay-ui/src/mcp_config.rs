@@ -115,7 +115,7 @@ impl Client {
     /// `relay` on PATH.
     pub fn snippet(self, command: &str) -> String {
         match self {
-            Client::ClaudeCode => format!("claude mcp add relay -- {command} mcp"),
+            Client::ClaudeCode => format!("claude mcp add relay -- {} mcp", shell_quote(command)),
             Client::Codex => format!("[mcp_servers.relay]\ncommand = {command:?}\nargs = [\"mcp\"]\n"),
             Client::OpenCode => format!(
                 "{{\n  \"mcp\": {{\n    \"relay\": {{\n      \"type\": \"local\",\n      \"command\": [{command:?}, \"mcp\"],\n      \"enabled\": true\n    }}\n  }}\n}}\n"
@@ -131,6 +131,23 @@ impl Client {
             ),
         }
     }
+}
+
+fn shell_quote(s: &str) -> String {
+    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'@' | b':' | b'+' | b'-')) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else if ch != '\0' {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 fn user_home() -> Option<PathBuf> {
@@ -155,6 +172,10 @@ mod tests {
             assert!(!client.target().is_empty());
             assert_eq!(Client::parse(client.id()), Some(client));
         }
+        assert_eq!(
+            Client::ClaudeCode.snippet("/Applications/My Relay.app/Contents/MacOS/relay"),
+            "claude mcp add relay -- '/Applications/My Relay.app/Contents/MacOS/relay' mcp"
+        );
         assert!(Client::Cursor.snippet("relay").contains("mcpServers"));
         assert!(Client::Codex.snippet("relay").contains("[mcp_servers.relay]"));
         assert!(Client::Zed.snippet("relay").contains("context_servers"));

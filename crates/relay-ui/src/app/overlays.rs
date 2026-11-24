@@ -370,10 +370,8 @@ impl RelayApp {
 
     pub(super) fn render_connect(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let mut clients: Vec<(mcp_config::Client, bool)> = mcp_config::Client::ALL.iter().map(|&c| (c, c.is_installed())).collect();
-        clients.sort_by_key(|(_, detected)| !*detected);
         let mut rows = div().id("connect-list").flex().flex_col().max_h(px(420.)).overflow_y_scroll();
-        for (client, detected) in clients {
+        for &(client, detected) in &self.connect_detected {
             rows = rows.child(
                 div()
                     .id(SharedString::from(format!("connect-{}", client.id())))

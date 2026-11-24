@@ -810,7 +810,7 @@ impl RelayMcp {
             self.browser.open(tab, &a.url);
             self.after_load(tab, 0).await
         }.await);
-        self.audit("open_tab", &host, None, if result.is_ok() { "ok" } else { "error" });
+        self.audit("open_tab", &host, None, audit_outcome(&result));
         result
     }
 
@@ -834,7 +834,7 @@ impl RelayMcp {
             self.browser.navigate(tab, &a.url);
             self.after_load(tab, before).await
         }.await);
-        self.audit("navigate", &target_host, target_tab, if result.is_ok() { "ok" } else { "error" });
+        self.audit("navigate", &target_host, target_tab, audit_outcome(&result));
         result
     }
 
@@ -933,7 +933,7 @@ impl RelayMcp {
             let body = t.dom.outline(a.root_id, a.max_depth.unwrap_or(40), a.interactive_only, a.max_lines.unwrap_or(400));
             Ok(ok(format!("{} — {}\n{body}", t.title, t.url)))
         })());
-        self.audit("read_dom", &host, Some(tab), if result.is_ok() { "ok" } else { "error" });
+        self.audit("read_dom", &host, Some(tab), audit_outcome(&result));
         result
     }
 
@@ -972,7 +972,7 @@ impl RelayMcp {
                 let _ = tokio::time::timeout(remaining, rx.changed()).await;
             }
         }.await);
-        self.audit("wait_for", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("wait_for", "", a.tab_id, audit_outcome(&result));
         result
     }
 
@@ -1261,7 +1261,7 @@ impl RelayMcp {
             }
             Ok(ok(out))
         })());
-        self.audit("get_console_logs", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("get_console_logs", "", a.tab_id, audit_outcome(&result));
         result
     }
 
@@ -1299,7 +1299,7 @@ impl RelayMcp {
                 .collect();
             Ok(json(&out))
         })());
-        self.audit("get_network_requests", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("get_network_requests", "", a.tab_id, audit_outcome(&result));
         result
     }
 
@@ -1314,7 +1314,7 @@ impl RelayMcp {
             let h = self.hub.lock();
             Ok(json(&h.tab(tab).map(|t| t.cookies.clone()).unwrap_or_default()))
         }.await);
-        self.audit("get_cookies", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("get_cookies", "", a.tab_id, audit_outcome(&result));
         result
     }
 
@@ -1331,7 +1331,7 @@ impl RelayMcp {
             self.browser.close(tab);
             Ok(ok(format!("Closed tab {tab}")))
         })());
-        self.audit("close_tab", "", a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("close_tab", "", a.tab_id, audit_outcome(&result));
         result
     }
 }
