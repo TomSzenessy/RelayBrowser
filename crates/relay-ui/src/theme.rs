@@ -320,6 +320,232 @@ impl StartBackground {
     }
 }
 
+/// Curated monochrome icons for spaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpaceIcon {
+    #[default]
+    Default,
+    Work,
+    Home,
+    Code,
+    Read,
+    Star,
+    Compass,
+    Spark,
+}
+
+impl SpaceIcon {
+    pub const ALL: [SpaceIcon; 8] = [
+        Self::Default,
+        Self::Work,
+        Self::Home,
+        Self::Code,
+        Self::Read,
+        Self::Star,
+        Self::Compass,
+        Self::Spark,
+    ];
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "default" => Some(Self::Default),
+            "work" => Some(Self::Work),
+            "home" => Some(Self::Home),
+            "code" => Some(Self::Code),
+            "read" => Some(Self::Read),
+            "star" => Some(Self::Star),
+            "compass" => Some(Self::Compass),
+            "spark" => Some(Self::Spark),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Work => "work",
+            Self::Home => "home",
+            Self::Code => "code",
+            Self::Read => "read",
+            Self::Star => "star",
+            Self::Compass => "compass",
+            Self::Spark => "spark",
+        }
+    }
+
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Default => "◫",
+            Self::Work => "⌘",
+            Self::Home => "⌂",
+            Self::Code => "⌥",
+            Self::Read => "▤",
+            Self::Star => "★",
+            Self::Compass => "◎",
+            Self::Spark => "✦",
+        }
+    }
+}
+
+/// Preset two-stop gradients for tinting a space's tab strip and bookmarks bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpaceGradient {
+    Ocean,
+    Forest,
+    Sunset,
+    Plum,
+}
+
+impl SpaceGradient {
+    pub const ALL: [SpaceGradient; 4] = [Self::Ocean, Self::Forest, Self::Sunset, Self::Plum];
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "ocean" => Some(Self::Ocean),
+            "forest" => Some(Self::Forest),
+            "sunset" => Some(Self::Sunset),
+            "plum" => Some(Self::Plum),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ocean => "ocean",
+            Self::Forest => "forest",
+            Self::Sunset => "sunset",
+            Self::Plum => "plum",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ocean => "Ocean",
+            Self::Forest => "Forest",
+            Self::Sunset => "Sunset",
+            Self::Plum => "Plum",
+        }
+    }
+
+    pub fn pair(self) -> (GroupColor, GroupColor) {
+        match self {
+            Self::Ocean => (GroupColor::Blue, GroupColor::Teal),
+            Self::Forest => (GroupColor::Teal, GroupColor::Green),
+            Self::Sunset => (GroupColor::Orange, GroupColor::Pink),
+            Self::Plum => (GroupColor::Purple, GroupColor::Blue),
+        }
+    }
+}
+
+/// Space surface fill: default, single colour, preset gradient, or custom
+/// 2–3 colour gradient drawn from the AA-verified `GroupColor` set.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SpaceFill {
+    #[default]
+    None,
+    Color(GroupColor),
+    Preset(SpaceGradient),
+    Custom(Vec<GroupColor>),
+}
+
+impl SpaceFill {
+    pub fn parse(raw: &str) -> Self {
+        let s = raw.trim();
+        if s.is_empty() || s.eq_ignore_ascii_case("none") {
+            return Self::None;
+        }
+        if let Some(rest) = s.strip_prefix("color:") {
+            return GroupColor::parse(rest).map(Self::Color).unwrap_or(Self::None);
+        }
+        if let Some(rest) = s.strip_prefix("preset:") {
+            return SpaceGradient::parse(rest).map(Self::Preset).unwrap_or(Self::None);
+        }
+        if let Some(rest) = s.strip_prefix("custom:") {
+            let colors: Vec<GroupColor> = rest.split(',').filter_map(GroupColor::parse).take(3).collect();
+            if colors.len() >= 2 {
+                return Self::Custom(colors);
+            }
+        }
+        Self::None
+    }
+
+    pub fn to_setting(&self) -> String {
+        match self {
+            Self::None => "none".into(),
+            Self::Color(c) => format!("color:{}", c.as_str()),
+            Self::Preset(g) => format!("preset:{}", g.as_str()),
+            Self::Custom(list) if list.len() >= 2 => {
+                let joined = list.iter().take(3).map(|c| c.as_str()).collect::<Vec<_>>().join(",");
+                format!("custom:{joined}")
+            }
+            Self::Custom(_) => "none".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpaceLook {
+    pub fill: SpaceFill,
+    pub icon: SpaceIcon,
+}
+
+pub(crate) fn blend_tint_over(tint: Hsla, base: Hsla) -> Hsla {
+    let f = tint.to_rgb();
+    let b = base.to_rgb();
+    let a = tint.a.clamp(0.0, 1.0);
+    gpui::Rgba {
+        r: f.r * a + b.r * (1.0 - a),
+        g: f.g * a + b.g * (1.0 - a),
+        b: f.b * a + b.b * (1.0 - a),
+        a: 1.0,
+    }
+    .into()
+}
+
+impl SpaceLook {
+    pub fn is_default(&self) -> bool {
+        self.fill == SpaceFill::None && self.icon == SpaceIcon::Default
+    }
+
+    /// Resolved opaque start and end surface colours blended over `surface`.
+    pub fn surface_stops(&self, dark: bool, surface: Hsla) -> Option<(Hsla, Hsla)> {
+        match &self.fill {
+            SpaceFill::None => None,
+            SpaceFill::Color(c) => {
+                let solid = blend_tint_over(c.tint(dark), surface);
+                Some((solid, solid))
+            }
+            SpaceFill::Preset(g) => {
+                let (a, b) = g.pair();
+                Some((blend_tint_over(a.tint(dark), surface), blend_tint_over(b.tint(dark), surface)))
+            }
+            SpaceFill::Custom(list) if list.len() >= 2 => {
+                let a = list[0];
+                let b = *list.last().unwrap_or(&a);
+                Some((blend_tint_over(a.tint(dark), surface), blend_tint_over(b.tint(dark), surface)))
+            }
+            SpaceFill::Custom(_) => None,
+        }
+    }
+
+    pub fn strip_background(&self, dark: bool, surface: Hsla) -> Background {
+        match self.surface_stops(dark, surface) {
+            Some((a, b)) if a == b => Background::from(a),
+            Some((a, b)) => linear_gradient(160.0, linear_color_stop(a, 0.0), linear_color_stop(b, 1.0)),
+            None => Background::from(surface),
+        }
+    }
+
+    pub fn accent_dot(&self, dark: bool) -> Option<Hsla> {
+        match &self.fill {
+            SpaceFill::None => None,
+            SpaceFill::Color(c) => Some(c.dot(dark)),
+            SpaceFill::Preset(g) => Some(g.pair().0.dot(dark)),
+            SpaceFill::Custom(list) => list.first().map(|c| c.dot(dark)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub background: Hsla,
@@ -558,5 +784,36 @@ mod tests {
             StartBackground::parse(Some("file:/tmp/wallpaper.png")),
             StartBackground::Image("/tmp/wallpaper.png".into())
         );
+    }
+
+    #[test]
+    fn every_space_look_meets_wcag_aa_on_surface() {
+        let mut samples = vec![SpaceFill::None];
+        for c in GroupColor::ALL {
+            samples.push(SpaceFill::Color(c));
+        }
+        for g in SpaceGradient::ALL {
+            samples.push(SpaceFill::Preset(g));
+        }
+        samples.push(SpaceFill::Custom(vec![GroupColor::Blue, GroupColor::Teal, GroupColor::Pink]));
+
+        for (mode, dark, theme) in [("dark", true, Theme::dark()), ("light", false, Theme::light())] {
+            for fill in &samples {
+                assert_eq!(SpaceFill::parse(&fill.to_setting()), *fill);
+                let look = SpaceLook { fill: fill.clone(), icon: SpaceIcon::Default };
+                if let Some((start, end)) = look.surface_stops(dark, theme.surface) {
+                    for (stop, bg) in [("start", start), ("end", end)] {
+                        let text_ratio = contrast_ratio(theme.text, bg);
+                        let muted_ratio = contrast_ratio(theme.muted, bg);
+                        assert!(text_ratio >= 4.5, "{mode} {fill:?} {stop} text {text_ratio:.2}:1 < 4.5");
+                        assert!(muted_ratio >= 4.5, "{mode} {fill:?} {stop} muted {muted_ratio:.2}:1 < 4.5");
+                    }
+                }
+            }
+        }
+        // Invalid/deleted gradient or icon falls back cleanly to default.
+        assert_eq!(SpaceFill::parse("preset:neon"), SpaceFill::None);
+        assert_eq!(SpaceFill::parse("custom:onlyone"), SpaceFill::None);
+        assert_eq!(SpaceIcon::parse("deleted-icon"), None);
     }
 }

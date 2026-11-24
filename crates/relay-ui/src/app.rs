@@ -176,10 +176,11 @@ struct GroupPrompt {
     color: Option<theme::GroupColor>,
 }
 
-/// The small modal that names or picks a space.
+/// The small modal that names, picks, or styles a space.
 struct SpacePrompt {
     value: String,
     confirm_delete: bool,
+    look: theme::SpaceLook,
 }
 
 /// A minimal chat with the configured OpenAI-compatible endpoint.
@@ -463,6 +464,8 @@ pub struct RelayApp {
     collapsed_groups: HashSet<String>,
     /// User-chosen colours per group name; persisted as `group_colors` JSON.
     group_colors: std::collections::BTreeMap<String, theme::GroupColor>,
+    /// User-chosen colours/gradients/icons per space; persisted as `space_looks` JSON.
+    space_looks: std::collections::BTreeMap<String, theme::SpaceLook>,
     /// Remembered camera/mic decisions: `(host, kind)` → allowed.
     media_permissions: HashMap<(String, i64), bool>,
     /// Displayed download folder and whether each file asks first.
@@ -759,6 +762,7 @@ impl RelayApp {
             .map(|raw| collapsed_group_names(Some(&raw)))
             .unwrap_or_default();
         let group_colors = parse_group_colors(store.as_ref().and_then(|s| s.setting("group_colors").ok().flatten()).as_deref());
+        let space_looks = parse_space_looks(store.as_ref().and_then(|s| s.setting("space_looks").ok().flatten()).as_deref());
         let media_permissions = store
             .as_ref()
             .and_then(|s| s.setting("media_permissions").ok().flatten())
@@ -825,6 +829,7 @@ impl RelayApp {
             space_prompt: None,
             collapsed_groups,
             group_colors,
+            space_looks,
             media_permissions,
             downloads_dir: downloads_dir.to_string_lossy().into_owned(),
             downloads_ask,
@@ -2440,7 +2445,9 @@ impl RelayApp {
         self.palette = None;
         self.tab_menu = None;
         self.group_prompt = None;
-        self.space_prompt = Some(SpacePrompt { value: self.hub.lock().current_space().to_string(), confirm_delete: false });
+        let current = self.hub.lock().current_space().to_string();
+        let look = self.space_looks.get(&current).cloned().unwrap_or_default();
+        self.space_prompt = Some(SpacePrompt { value: current, confirm_delete: false, look });
         self.web.borrow().focus_shell();
         cx.notify();
     }
@@ -2849,9 +2856,26 @@ impl RelayApp {
         self.focus_active_page();
     }
 
+    fn persist_space_looks(&self) {
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("space_looks", &serialize_space_looks(&self.space_looks));
+        }
+    }
+
+    pub(super) fn current_space_look(&self) -> theme::SpaceLook {
+        let current = self.hub.lock().current_space().to_string();
+        self.space_looks.get(&current).cloned().unwrap_or_default()
+    }
+
     fn save_space_prompt(&mut self, cx: &mut Context<Self>) {
         let Some(prompt) = self.space_prompt.take() else { return };
         let name = Hub::normalize_space_name(&prompt.value).unwrap_or_default();
+        if prompt.look.is_default() {
+            self.space_looks.remove(&name);
+        } else {
+            self.space_looks.insert(name.clone(), prompt.look);
+        }
+        self.persist_space_looks();
         self.switch_space(name, cx);
     }
 
@@ -2868,7 +2892,13 @@ impl RelayApp {
             cx.notify();
             return;
         }
+        let chosen_look = self.space_prompt.as_ref().map(|p| p.look.clone());
         let moved = self.hub.update(|h| h.rename_space(&old, &new));
+        let old_look = self.space_looks.remove(&old);
+        if let Some(look) = chosen_look.filter(|l| !l.is_default()).or(old_look) {
+            self.space_looks.entry(new.clone()).or_insert(look);
+        }
+        self.persist_space_looks();
         self.space_prompt = None;
         self.persist_active_space();
         let first = self.hub.lock().first_tab_in_space(&new);
@@ -2886,6 +2916,8 @@ impl RelayApp {
             cx.notify();
             return;
         }
+        self.space_looks.remove(&name);
+        self.persist_space_looks();
         let ids = self.hub.update(|h| h.take_space_tabs(&name));
         for tab in &ids {
             self.web.borrow_mut().apply(BrowserRequest::Close(*tab));
@@ -5248,6 +5280,37 @@ pub(crate) fn parse_group_colors(raw: Option<&str>) -> std::collections::BTreeMa
 
 pub(crate) fn serialize_group_colors(colors: &std::collections::BTreeMap<String, theme::GroupColor>) -> String {
     let raw: std::collections::BTreeMap<&str, &str> = colors.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    serde_json::to_string(&raw).unwrap_or_else(|_| "{}".into())
+}
+
+/// Parse persisted `space_looks` JSON (`{"Work": {"fill": "preset:ocean", "icon": "work"}}`).
+/// Invalid or deleted fills/icons fall back to defaults without losing the space.
+pub(crate) fn parse_space_looks(raw: Option<&str>) -> std::collections::BTreeMap<String, theme::SpaceLook> {
+    let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
+        return std::collections::BTreeMap::new();
+    };
+    let Ok(map) = serde_json::from_str::<std::collections::BTreeMap<String, serde_json::Value>>(raw) else {
+        return std::collections::BTreeMap::new();
+    };
+    let mut out = std::collections::BTreeMap::new();
+    for (name, val) in map {
+        let norm = Hub::normalize_space_name(&name).unwrap_or_default();
+        let fill = val.get("fill").and_then(serde_json::Value::as_str).map(theme::SpaceFill::parse).unwrap_or_default();
+        let icon = val.get("icon").and_then(serde_json::Value::as_str).and_then(theme::SpaceIcon::parse).unwrap_or_default();
+        let look = theme::SpaceLook { fill, icon };
+        if !look.is_default() {
+            out.insert(norm, look);
+        }
+    }
+    out
+}
+
+pub(crate) fn serialize_space_looks(looks: &std::collections::BTreeMap<String, theme::SpaceLook>) -> String {
+    let raw: std::collections::BTreeMap<&str, serde_json::Value> = looks
+        .iter()
+        .filter(|(_, v)| !v.is_default())
+        .map(|(k, v)| (k.as_str(), serde_json::json!({ "fill": v.fill.to_setting(), "icon": v.icon.as_str() })))
+        .collect();
     serde_json::to_string(&raw).unwrap_or_else(|_| "{}".into())
 }
 

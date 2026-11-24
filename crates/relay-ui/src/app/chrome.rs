@@ -98,11 +98,14 @@ impl RelayApp {
     /// Current-space pill; opens the space prompt.
     fn space_chip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
+        let dark = t.background.l < 0.5;
+        let look = self.current_space_look();
         let (name, count) = {
             let h = self.hub.lock();
             let name = h.current_space().to_string();
             (if name.is_empty() { "Default".to_string() } else { name }, h.space_tab_ids().len())
         };
+        let dot = look.accent_dot(dark);
         div()
             .id("space-chip")
             .h(px(22.))
@@ -113,12 +116,15 @@ impl RelayApp {
             .rounded(px(5.))
             .bg(t.well)
             .text_size(px(10.))
-            .text_color(t.muted)
+            .text_color(t.text)
             .cursor_pointer()
-            .hover(|s| s.bg(t.hover).text_color(t.text))
+            .hover(|s| s.bg(t.hover))
             .on_click(cx.listener(|app, _, _, cx| app.open_space_prompt(cx)))
-            .child("◫")
-            .when(!(self.tab_icons_only && self.strip.placement.is_vertical()), |d| d.child(SharedString::from(name)).child(div().text_color(t.muted).child(SharedString::from(count.to_string()))))
+            .when_some(dot, |d, c| d.child(div().size(px(6.)).rounded_full().bg(c)))
+            .child(look.icon.glyph())
+            .when(!(self.tab_icons_only && self.strip.placement.is_vertical()), |d| {
+                d.child(SharedString::from(name)).child(div().text_color(t.muted).child(SharedString::from(count.to_string())))
+            })
             .into_any_element()
     }
 
@@ -169,6 +175,8 @@ impl RelayApp {
         }
         let vertical = strip.placement.is_vertical();
         let icons_only = vertical && self.tab_icons_only;
+        let dark = t.background.l < 0.5;
+        let strip_bg = self.current_space_look().strip_background(dark, t.surface);
         let mut bar = div().flex();
         if vertical {
             let is_left = strip.placement == tabstrip::Placement::Left;
@@ -180,7 +188,7 @@ impl RelayApp {
                 .pt(if is_left { px(34.) } else { px(10.) })
                 .w(px(if icons_only { 54. } else { strip.width() }))
                 .h_full()
-                .bg(t.surface);
+                .bg(strip_bg);
             if icons_only {
                 bar = bar.child(
                     div()
@@ -302,7 +310,7 @@ impl RelayApp {
                 .pr_2()
                 .h(px(strip.height()))
                 .w_full()
-                .bg(t.surface)
+                .bg(strip_bg)
                 .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
                 .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
                 .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
@@ -923,6 +931,8 @@ impl RelayApp {
     /// tab strip. Off by default; Settings → Tabs turns it on.
     pub(super) fn render_bookmarks_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
+        let dark = t.background.l < 0.5;
+        let bar_bg = self.current_space_look().strip_background(dark, t.surface);
         let mut bar = div()
             .id("bookmarks-bar")
             .h(px(24.))
@@ -931,7 +941,7 @@ impl RelayApp {
             .items_center()
             .gap_1()
             .px_2()
-            .bg(t.surface)
+            .bg(bar_bg)
             .overflow_hidden();
         if self.bookmarks_bar.is_empty() {
             bar = bar.child(div().text_size(px(11.)).text_color(t.muted).child("No bookmarks yet · ⌘D adds one"));

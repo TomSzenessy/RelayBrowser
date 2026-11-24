@@ -821,3 +821,36 @@ fn status_bar_position_defaults_hidden_cycles_and_honors_legacy_setting() {
         StatusBarPosition::Top
     );
 }
+
+#[test]
+fn space_looks_persist_restore_and_fall_back_on_invalid_entries() {
+    let store = Store::in_memory().unwrap();
+    let mut looks = std::collections::BTreeMap::new();
+    looks.insert(
+        "Work".to_string(),
+        theme::SpaceLook { fill: theme::SpaceFill::Preset(theme::SpaceGradient::Ocean), icon: theme::SpaceIcon::Work },
+    );
+    looks.insert(
+        "Play".to_string(),
+        theme::SpaceLook {
+            fill: theme::SpaceFill::Custom(vec![theme::GroupColor::Orange, theme::GroupColor::Pink, theme::GroupColor::Purple]),
+            icon: theme::SpaceIcon::Spark,
+        },
+    );
+    store.set_setting("space_looks", &serialize_space_looks(&looks)).unwrap();
+
+    let restored = parse_space_looks(store.setting("space_looks").unwrap().as_deref());
+    assert_eq!(restored.get("Work"), looks.get("Work"));
+    assert_eq!(restored.get("Play"), looks.get("Play"));
+
+    // Negative: invalid/deleted fill or icon falls back cleanly without losing valid entries.
+    let corrupted = parse_space_looks(Some(
+        r#"{"Work":{"fill":"preset:deleted","icon":"missing"},"Focus":{"fill":"color:teal","icon":"missing"}}"#,
+    ));
+    assert!(!corrupted.contains_key("Work"));
+    assert_eq!(
+        corrupted.get("Focus"),
+        Some(&theme::SpaceLook { fill: theme::SpaceFill::Color(theme::GroupColor::Teal), icon: theme::SpaceIcon::Default })
+    );
+    assert!(parse_space_looks(Some("not-json")).is_empty());
+}

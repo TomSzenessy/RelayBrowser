@@ -30,6 +30,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   `last_tab_close = quit`; `confirm_close_multiple = on` asks before quitting
   or closing several tabs at once (Esc or Cancel keeps every tab open). Pinned
   tabs always sleep on ⌘W until explicitly unpinned (`⌘⌥P`).
+- **Spaces:** the space chip in the tab strip switches, creates, renames, or
+  deletes named tab spaces, and lets each space carry an optional icon plus a
+  strip/bookmarks-bar tint (None, 6 AA-checked colours, 4 preset gradients, or
+  a custom 2–3 colour gradient, persisted in `space_looks`).
 - **Tab strip:** a vertical list of title rows with status dots, an optional
   54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
   group: a subtly tinted heading with a colour dot, name, count, and collapse chevron; the

@@ -883,10 +883,220 @@ impl RelayApp {
                 }
             }))
             .child("Rename current");
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(120.)).bg(t.scrim).child(
+        let dark = t.background.l < 0.5;
+        let mut icon_row = div().flex().flex_wrap().items_center().gap_1();
+        for icon in theme::SpaceIcon::ALL {
+            let active = prompt.look.icon == icon;
+            icon_row = icon_row.child(
+                div()
+                    .id(SharedString::from(format!("space-icon-{}", icon.as_str())))
+                    .w(px(28.))
+                    .h(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.))
+                    .bg(if active { t.active } else { t.well })
+                    .text_size(px(12.))
+                    .text_color(if active { t.text } else { t.muted })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        if let Some(p) = app.space_prompt.as_mut() {
+                            p.look.icon = icon;
+                        }
+                        cx.notify();
+                    }))
+                    .child(icon.glyph()),
+            );
+        }
+        let mut fill_row = div().flex().flex_wrap().items_center().gap_1p5().child(
+            div()
+                .id("space-fill-none")
+                .px_2()
+                .py_1()
+                .rounded(px(6.))
+                .bg(if prompt.look.fill == theme::SpaceFill::None { t.active } else { t.well })
+                .text_size(px(11.))
+                .text_color(if prompt.look.fill == theme::SpaceFill::None { t.text } else { t.muted })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .on_click(cx.listener(|app, _, _, cx| {
+                    if let Some(p) = app.space_prompt.as_mut() {
+                        p.look.fill = theme::SpaceFill::None;
+                    }
+                    cx.notify();
+                }))
+                .child("None"),
+        );
+        for color in theme::GroupColor::ALL {
+            let active = prompt.look.fill == theme::SpaceFill::Color(color);
+            fill_row = fill_row.child(
+                div()
+                    .id(SharedString::from(format!("space-color-{}", color.as_str())))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(6.))
+                    .bg(if active { color.tint(dark) } else { t.well })
+                    .when(active, |d| d.border_1().border_color(color.dot(dark)))
+                    .text_size(px(11.))
+                    .text_color(if active { t.text } else { t.muted })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        if let Some(p) = app.space_prompt.as_mut() {
+                            p.look.fill = theme::SpaceFill::Color(color);
+                        }
+                        cx.notify();
+                    }))
+                    .child(div().size(px(8.)).rounded_full().bg(color.dot(dark)))
+                    .child(color.label()),
+            );
+        }
+        let mut grad_row = div().flex().flex_wrap().items_center().gap_1p5();
+        for grad in theme::SpaceGradient::ALL {
+            let active = prompt.look.fill == theme::SpaceFill::Preset(grad);
+            let look = theme::SpaceLook { fill: theme::SpaceFill::Preset(grad), icon: theme::SpaceIcon::Default };
+            grad_row = grad_row.child(
+                div()
+                    .id(SharedString::from(format!("space-grad-{}", grad.as_str())))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(6.))
+                    .bg(if active { t.active } else { t.well })
+                    .text_size(px(11.))
+                    .text_color(if active { t.text } else { t.muted })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        if let Some(p) = app.space_prompt.as_mut() {
+                            p.look.fill = theme::SpaceFill::Preset(grad);
+                        }
+                        cx.notify();
+                    }))
+                    .child(div().size(px(12.)).rounded(px(3.)).border_1().border_color(t.border).bg(look.strip_background(dark, t.surface)))
+                    .child(grad.label()),
+            );
+        }
+        let custom_active = matches!(prompt.look.fill, theme::SpaceFill::Custom(_));
+        let custom_stops = match &prompt.look.fill {
+            theme::SpaceFill::Custom(v) => v.clone(),
+            _ => vec![theme::GroupColor::Blue, theme::GroupColor::Teal],
+        };
+        grad_row = grad_row.child(
+            div()
+                .id("space-grad-custom")
+                .px_2()
+                .py_1()
+                .rounded(px(6.))
+                .bg(if custom_active { t.active } else { t.well })
+                .text_size(px(11.))
+                .text_color(if custom_active { t.text } else { t.muted })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    if let Some(p) = app.space_prompt.as_mut() {
+                        p.look.fill = theme::SpaceFill::Custom(custom_stops.clone());
+                    }
+                    cx.notify();
+                }))
+                .child("Custom 2–3"),
+        );
+        let custom_editor = if let theme::SpaceFill::Custom(stops) = &prompt.look.fill {
+            let mut row = div().flex().items_center().gap_1p5();
+            for (idx, color) in stops.iter().enumerate() {
+                let next = theme::GroupColor::ALL[(theme::GroupColor::ALL.iter().position(|c| c == color).unwrap_or(0) + 1) % theme::GroupColor::ALL.len()];
+                row = row.child(
+                    div()
+                        .id(SharedString::from(format!("space-custom-stop-{idx}")))
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(5.))
+                        .bg(t.well)
+                        .text_size(px(10.))
+                        .text_color(t.text)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            if let Some(p) = app.space_prompt.as_mut() {
+                                if let theme::SpaceFill::Custom(list) = &mut p.look.fill {
+                                    if let Some(slot) = list.get_mut(idx) {
+                                        *slot = next;
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        }))
+                        .child(div().size(px(7.)).rounded_full().bg(color.dot(dark)))
+                        .child(SharedString::from(format!("Stop {}: {}", idx + 1, color.label()))),
+                );
+            }
+            if stops.len() < 3 {
+                row = row.child(
+                    div()
+                        .id("space-custom-add")
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(5.))
+                        .bg(t.well)
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            if let Some(p) = app.space_prompt.as_mut() {
+                                if let theme::SpaceFill::Custom(list) = &mut p.look.fill {
+                                    if list.len() < 3 {
+                                        list.push(theme::GroupColor::Pink);
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        }))
+                        .child("+ 3rd"),
+                );
+            } else {
+                row = row.child(
+                    div()
+                        .id("space-custom-rem")
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(5.))
+                        .bg(t.well)
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            if let Some(p) = app.space_prompt.as_mut() {
+                                if let theme::SpaceFill::Custom(list) = &mut p.look.fill {
+                                    if list.len() > 2 {
+                                        list.pop();
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        }))
+                        .child("2 stops"),
+                );
+            }
+            Some(row)
+        } else {
+            None
+        };
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
             div()
                 .id("space-prompt")
-                .w(px(380.))
+                .w(px(440.))
                 .flex()
                 .flex_col()
                 .gap_3()
@@ -899,7 +1109,7 @@ impl RelayApp {
                     cx.notify();
                 }))
                 .child(div().text_size(px(15.)).text_color(t.text).child("Spaces"))
-                .child(div().text_size(px(11.)).text_color(t.muted).child("Each space keeps its own tabs and pins. Empty means Default."))
+                .child(div().text_size(px(11.)).text_color(t.muted).child("Each space keeps its own tabs, pins, colour/gradient tint, and icon. Empty means Default."))
                 .child(
                     div()
                         .h(px(34.))
@@ -913,6 +1123,12 @@ impl RelayApp {
                         .child(SharedString::from(text))
                         .child(div().ml_0p5().text_color(t.accent).child("▏")),
                 )
+                .child(div().text_size(px(10.)).text_color(t.muted).child("ICON"))
+                .child(icon_row)
+                .child(div().text_size(px(10.)).text_color(t.muted).child("STRIP & BOOKMARKS TINT"))
+                .child(fill_row)
+                .child(grad_row)
+                .when_some(custom_editor, |d, row| d.child(row))
                 .when(!names.is_empty(), |d| d.child(div().text_size(px(10.)).text_color(t.muted).child("EXISTING SPACES")).child(chips))
                 .child(
                     div()

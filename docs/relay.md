@@ -543,6 +543,12 @@ sidebar (`✦ Agent` / `Inspector`) docks live agent status, per-site policy,
 agent-owned tabs, recent MCP audit activity, shell-write client grants, and the
 side-by-side AI page assistant directly beside the live `WKWebView`.
 
+Spaces persist optional styling in `space_looks` JSON (`fill`: `none`,
+`color:<name>`, `preset:<name>`, or `custom:<c1,c2[,c3]>`; `icon`: curated
+glyph name). The active space tints the tab strip and bookmarks bar; every
+swatch and gradient endpoint is verified WCAG AA against `text` and `muted` in
+`theme.rs`, and unknown values fall back to default without losing the space.
+
 ## Session restore
 
 With `restore_session` on (the default; `relay config set restore_session off`),
