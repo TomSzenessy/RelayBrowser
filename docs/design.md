@@ -22,8 +22,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
         ⌘K palette floats centred over everything (560 pt wide)
 ```
 
-- **Tab strip:** a vertical list of title rows with status dots, or the same
-  rows in a horizontal strip across the top (`⇧⌘S`). Tabs can carry one named
+- **Tab strip:** a vertical list of title rows with status dots, an optional
+  54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
   group: a heading with a colour dot, name, count, and collapse chevron; the
   tab menu moves a tab in or out, and ⌥⌘[ / ⌥⌘] fold or unfold every group. The active tab and the
   row under the pointer show `×` (a middle click closes too). The user's tabs

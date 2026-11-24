@@ -100,8 +100,7 @@ impl RelayApp {
             .hover(|s| s.bg(t.hover).text_color(t.text))
             .on_click(cx.listener(|app, _, _, cx| app.open_space_prompt(cx)))
             .child("◫")
-            .child(SharedString::from(name))
-            .child(div().text_color(t.muted).child(SharedString::from(count.to_string())))
+            .when(!(self.tab_icons_only && self.strip.placement.is_vertical()), |d| d.child(SharedString::from(name)).child(div().text_color(t.muted).child(SharedString::from(count.to_string()))))
             .into_any_element()
     }
 
@@ -151,6 +150,7 @@ impl RelayApp {
             }
         }
         let vertical = strip.placement.is_vertical();
+        let icons_only = vertical && self.tab_icons_only;
         let mut bar = div().flex();
         if vertical {
             let is_left = strip.placement == tabstrip::Placement::Left;
@@ -160,9 +160,22 @@ impl RelayApp {
                 .px_2()
                 .pb_2()
                 .pt(if is_left { px(34.) } else { px(10.) })
-                .w(px(strip.width()))
+                .w(px(if icons_only { 54. } else { strip.width() }))
                 .h_full()
                 .bg(t.surface);
+            if icons_only {
+                bar = bar.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap_0p5()
+                        .pb_1()
+                        .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx))
+                        .child(self.fold_button(if is_left { "«" } else { "»" }, cx)),
+                );
+                bar = bar.child(self.space_chip(cx));
+            } else {
             // Compact navigation + bookmark + fold header row.
             bar = bar.child(
                 div()
@@ -195,6 +208,7 @@ impl RelayApp {
                     ),
             );
             bar = bar.child(self.space_chip(cx));
+            }
             // Arc/Search-style Favorites grid for pinned tabs.
             if !pinned.is_empty() {
                 let mut grid = div().flex().flex_wrap().gap_1p5().pb_1();
@@ -240,10 +254,16 @@ impl RelayApp {
                 list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
             }
             for (name, rows) in &groups {
-                list = list.child(self.group_header(name, rows.len(), true, cx));
-                if !self.collapsed_groups.contains(name) {
+                if icons_only {
                     for tab in rows {
                         list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
+                    }
+                } else {
+                    list = list.child(self.group_header(name, rows.len(), true, cx));
+                    if !self.collapsed_groups.contains(name) {
+                        for tab in rows {
+                            list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
+                        }
                     }
                 }
             }
@@ -480,10 +500,12 @@ impl RelayApp {
         let agent = tab.owner == Owner::Agent;
         let title: SharedString = if tab.title.is_empty() { palette::short_url(&tab.url).into() } else { tab.title.clone().into() };
         let show_close = is_active || self.hovered_tab == Some(id) || self.always_show_close;
+        let icons_only = vertical && self.tab_icons_only;
         let mut row = div()
             .id(("tab", id as usize))
             .flex()
             .items_center()
+            .when(icons_only, |d| d.justify_center().px_0())
             .gap_1p5()
             .h(px(if self.compact_tabs { 24. } else { 28. }))
             .px_2()
@@ -526,23 +548,25 @@ impl RelayApp {
                     .child(SharedString::from(n.to_string())),
             );
         } else if self.tab_glyphs {
-            row = row.child(self.site_icon(&tab.url, &tab.title, 15.));
+            row = row.child(self.site_icon(&tab.url, &tab.title, if icons_only { 17. } else { 15. }));
         } else {
-            row = row.child(monogram_icon(&tab.url, &tab.title, 15.));
+            row = row.child(monogram_icon(&tab.url, &tab.title, if icons_only { 17. } else { 15. }));
         }
-        let title_el = if vertical {
-            div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
-        } else {
-            div().max_w(px(160.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
-        };
-        row = row.child(title_el);
+        if !icons_only {
+            let title_el = if vertical {
+                div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
+            } else {
+                div().max_w(px(160.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
+            };
+            row = row.child(title_el);
+        }
         if agent {
             row = row.bg(t.agent_bg);
         }
         if is_active {
             row = row.bg(t.active);
         }
-        if tab.private {
+        if !icons_only && tab.private {
             row = row.child(
                 div()
                     .px_1()
@@ -553,17 +577,22 @@ impl RelayApp {
                     .child("Private"),
             );
         }
-        if tab.challenge.is_some() {
-            row = row.child(div().text_color(t.warn).child("⚠"));
+        if !icons_only {
+            if tab.challenge.is_some() {
+                row = row.child(div().text_color(t.warn).child("⚠"));
+            }
+            if tab.playing_audio {
+                row = row.child(div().text_color(t.accent).text_size(px(11.)).child("♪"));
+            }
+            if tab.pinned && !vertical {
+                row = row.child(div().text_color(t.muted).text_size(px(10.)).child("•"));
+            }
+            if tab.sleeping {
+                row = row.child(div().text_color(t.muted).text_size(px(10.)).child("zz"));
+            }
         }
-        if tab.playing_audio {
-            row = row.child(div().text_color(t.accent).text_size(px(11.)).child("♪"));
-        }
-        if tab.pinned && !vertical {
-            row = row.child(div().text_color(t.muted).text_size(px(10.)).child("•"));
-        }
-        if tab.sleeping {
-            row = row.child(div().text_color(t.muted).text_size(px(10.)).child("zz"));
+        if icons_only {
+            return row.into_any_element();
         }
         let row = row.child(
             div()
@@ -610,7 +639,9 @@ impl RelayApp {
                 app.open_palette(None, true);
                 cx.notify();
             }));
-        if vertical {
+        if vertical && self.tab_icons_only {
+            button.w(px(24.)).h(px(24.)).justify_center().child("+").into_any_element()
+        } else if vertical {
             button.px_2().h(px(28.)).justify_between().child("+ New tab").child(div().text_size(px(10.)).child("⌘T")).into_any_element()
         } else {
             button.w(px(24.)).h(px(24.)).justify_center().child("+").into_any_element()

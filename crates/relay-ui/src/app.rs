@@ -344,6 +344,8 @@ pub struct RelayApp {
     show_bookmarks_bar: bool,
     /// Always show a one-line address bar above the page.
     show_address_bar: bool,
+    /// Vertical strip shows only site icons in a narrow rail.
+    tab_icons_only: bool,
     /// Bookmarks bar shows only site icons.
     bookmarks_icons_only: bool,
     /// Bookmarks bar appears only on the new-tab page.
@@ -541,6 +543,7 @@ impl RelayApp {
         let setting_on = |key: &str| setting_opt_in(store.as_ref().and_then(|s| s.setting(key).ok().flatten()).as_deref());
         let show_bookmarks_bar = setting_on("bookmarks_bar");
         let show_address_bar = setting_on("address_bar");
+        let tab_icons_only = setting_on("tab_icons_only");
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
         let bookmarks_new_tab_only = setting_on("bookmarks_new_tab_only");
         let collapsed_groups = store
@@ -622,6 +625,7 @@ impl RelayApp {
             compact_tabs,
             show_bookmarks_bar,
             show_address_bar,
+            tab_icons_only,
             bookmarks_icons_only,
             bookmarks_new_tab_only,
             always_show_close,
@@ -3108,6 +3112,7 @@ impl RelayApp {
             "compact_tabs" => self.compact_tabs = setting_enabled(Some(value)),
             "bookmarks_bar" => self.show_bookmarks_bar = setting_enabled(Some(value)),
             "address_bar" => self.show_address_bar = setting_enabled(Some(value)),
+            "tab_icons_only" => self.tab_icons_only = setting_enabled(Some(value)),
             "bookmarks_icons_only" => self.bookmarks_icons_only = setting_enabled(Some(value)),
             "bookmarks_new_tab_only" => self.bookmarks_new_tab_only = setting_enabled(Some(value)),
             "always_show_close" => self.always_show_close = setting_enabled(Some(value)),

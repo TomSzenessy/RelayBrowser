@@ -1386,6 +1386,15 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let icons_only_sw = switch("settings-tab-icons-only", self.tab_icons_only, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.tab_icons_only = !app.tab_icons_only;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("tab_icons_only", if app.tab_icons_only { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let compact_sw = switch("settings-compact-tabs", self.compact_tabs, false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.compact_tabs = !app.compact_tabs;
@@ -1401,6 +1410,7 @@ impl RelayApp {
                     .child(row("Restore tabs at launch", Some("Reopen last session's pages asleep, so the RAM is not spent until you visit them"), restore_sw))
                     .child(row("Site icons in tabs", Some("Off shows a coloured letter badge instead of each site's favicon"), glyphs_sw))
                     .child(row("Compact tab rows", Some("Shorter rows for more tabs in the same column"), compact_sw))
+                    .child(row("Icons-only vertical strip", Some("A narrow rail of site icons; middle-click or right-click to close/manage"), icons_only_sw))
                     .child(row("Show the bookmarks bar", Some("A row of saved pages under the tab strip"), bookmarks_sw))
                     .child(row("Bookmarks bar: icons only", Some("Titles are hidden to keep the row short"), bm_icons_sw))
                     .child(row("Bookmarks bar only on new tabs", Some("Hidden while a page is open"), bm_new_sw))

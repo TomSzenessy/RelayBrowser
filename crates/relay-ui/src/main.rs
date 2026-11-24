@@ -273,7 +273,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
         }
         "blocking" | "mcp" | "restore_session" | "tabs_folded" | "bottom_bar" | "autofill_logins" | "login_offers" | "login_fill"
-        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
+        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "tab_icons_only" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
         | "downloads_ask" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
@@ -320,7 +320,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
     }
 }
 
@@ -351,6 +351,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("cookie_banners = {}", setting("cookie_banners", "on"));
             println!("bookmarks_bar = {}", setting("bookmarks_bar", "off"));
             println!("address_bar = {}", setting("address_bar", "off"));
+            println!("tab_icons_only = {}", setting("tab_icons_only", "off"));
             println!("bookmarks_icons_only = {}", setting("bookmarks_icons_only", "off"));
             println!("bookmarks_new_tab_only = {}", setting("bookmarks_new_tab_only", "off"));
             println!("downloads_ask = {}", setting("downloads_ask", "off"));
@@ -375,7 +376,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
                 "tabs_position" => println!("{}", store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).unwrap_or_else(|| "left".into())),
                 "bottom_bar" => println!("{}", store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "on".into())),
-                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
+                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "tab_icons_only" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
         | "downloads_ask" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
                 }
@@ -388,7 +389,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 }
                 "bangs" => println!("{}", cfg.bangs),
                 "start_sections" => println!("{}", cfg.start_sections),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
             }
             Ok(())
         }
