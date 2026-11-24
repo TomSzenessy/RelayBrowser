@@ -2043,6 +2043,7 @@ impl RelayApp {
                             .unwrap_or_default();
                         let rm_id = id.clone();
                         let en_id = id.clone();
+                        let opt_id = id.clone();
                         let en_sw = switch_dyn(SharedString::from(format!("ext-en-{id}")), enabled, false)
                             .on_click(cx.listener(move |app, _, _, cx| {
                                 if let Some(store) = &app.store {
@@ -2076,6 +2077,18 @@ impl RelayApp {
                                         }),
                                 )
                                 .child(div().flex().items_center().gap_3().child(en_sw).child(
+                                    div()
+                                        .id(SharedString::from(format!("ext-opt-{id}")))
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded(px(5.))
+                                        .text_size(px(11.))
+                                        .text_color(t.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                                        .on_click(cx.listener(move |app, _, _, cx| app.open_extension_options(&opt_id, cx)))
+                                        .child("Options"),
+                                ).child(
                                     div()
                                         .id(SharedString::from(format!("ext-rm-{id}")))
                                         .px_2p5()

@@ -66,6 +66,17 @@ fn grant_requested(ext: &WKWebExtension) -> Retained<NSDictionary<WKWebExtension
     NSDictionary::from_retained_objects(&key_refs, &values)
 }
 
+/// The extension's options-page URL, if it declares one. The shell opens it
+/// in a normal tab with the extension controller attached.
+pub fn extension_options_url(controller: &Retained<WKWebExtensionController>, uid: &str) -> Option<String> {
+    for ctx in unsafe { controller.extensionContexts() }.iter() {
+        if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
+            return unsafe { ctx.optionsPageURL() }.map(|u| unsafe { u.absoluteString() }.to_string());
+        }
+    }
+    None
+}
+
 /// Result of a Keychain import; never contains secrets.
 #[derive(Debug, Default, PartialEq)]
 pub struct KeychainImport {

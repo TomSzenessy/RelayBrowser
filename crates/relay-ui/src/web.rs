@@ -334,6 +334,11 @@ mod imp {
             self.engine.set_downloads(dir, ask);
         }
 
+        /// The options-page URL for an installed extension, if it has one.
+        pub fn extension_options_url(&self, id: &str) -> Option<String> {
+            self.engine.extension_controller().and_then(|c| relay_extensions::mac::extension_options_url(c, id))
+        }
+
         /// Toggle the native always-on-top video panel for a tab.
         pub fn toggle_float_panel(&mut self, tab: TabId) {
             self.engine.toggle_float_panel(tab);
@@ -430,6 +435,7 @@ mod imp {
         pub fn clear_media_permissions(&mut self) {}
         pub fn set_downloads(&mut self, _dir: std::path::PathBuf, _ask: bool) {}
         pub fn toggle_float_panel(&mut self, _tab: TabId) {}
+        pub fn extension_options_url(&self, _id: &str) -> Option<String> { None }
         pub fn poll_float_panel(&mut self) {}
         pub fn export_pdf(&self, _tab: TabId) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {

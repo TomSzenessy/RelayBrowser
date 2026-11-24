@@ -2032,6 +2032,16 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn open_extension_options(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(url) = self.web.borrow().extension_options_url(id) else {
+            self.toast("This extension has no options page");
+            cx.notify();
+            return;
+        };
+        self.open_url(url, true);
+        cx.notify();
+    }
+
     fn open_profile_prompt(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.profile_prompt = Some(ProfilePrompt { value: String::new() });
