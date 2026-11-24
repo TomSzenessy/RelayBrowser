@@ -833,7 +833,7 @@ fn space_looks_persist_restore_and_fall_back_on_invalid_entries() {
     looks.insert(
         "Play".to_string(),
         theme::SpaceLook {
-            fill: theme::SpaceFill::Custom(vec![theme::GroupColor::Orange, theme::GroupColor::Pink, theme::GroupColor::Purple]),
+            fill: theme::SpaceFill::Custom(theme::GroupColor::Orange, theme::GroupColor::Purple),
             icon: theme::SpaceIcon::Spark,
         },
     );
@@ -853,4 +853,53 @@ fn space_looks_persist_restore_and_fall_back_on_invalid_entries() {
         Some(&theme::SpaceLook { fill: theme::SpaceFill::Color(theme::GroupColor::Teal), icon: theme::SpaceIcon::Default })
     );
     assert!(parse_space_looks(Some("not-json")).is_empty());
+}
+
+#[test]
+fn bmp_dib_ico_decodes_to_valid_png_and_ssrf_favicon_urls_are_blocked() {
+    // Build a valid 2x2 32-bit BGRA BMP-DIB ICO container (no embedded PNG).
+    let mut dib = Vec::new();
+    dib.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER size
+    dib.extend_from_slice(&2i32.to_le_bytes());  // width = 2
+    dib.extend_from_slice(&4i32.to_le_bytes());  // height = 2 * 2 (XOR + AND)
+    dib.extend_from_slice(&1u16.to_le_bytes());  // planes
+    dib.extend_from_slice(&32u16.to_le_bytes()); // bpp = 32
+    dib.extend_from_slice(&0u32.to_le_bytes());  // BI_RGB
+    dib.extend_from_slice(&0u32.to_le_bytes());  // image size
+    dib.extend_from_slice(&0i32.to_le_bytes());
+    dib.extend_from_slice(&0i32.to_le_bytes());
+    dib.extend_from_slice(&0u32.to_le_bytes());
+    dib.extend_from_slice(&0u32.to_le_bytes());
+    // 2x2 BGRA pixels (16 bytes)
+    for _ in 0..4 {
+        dib.extend_from_slice(&[0xff, 0x80, 0x20, 0xff]);
+    }
+    // 2x2 AND mask: 4-byte aligned per row -> 8 bytes
+    dib.extend_from_slice(&[0u8; 8]);
+
+    let mut ico = Vec::new();
+    ico.extend_from_slice(&[0, 0, 1, 0, 1, 0]); // ICO header, 1 entry
+    let offset = 6 + 16u32;
+    ico.extend_from_slice(&[2, 2, 0, 0, 1, 0, 32, 0]);
+    ico.extend_from_slice(&(dib.len() as u32).to_le_bytes());
+    ico.extend_from_slice(&offset.to_le_bytes());
+    ico.extend_from_slice(&dib);
+
+    let (png, ext) = favicon_bytes_to_payload(ico).expect("BMP-DIB ICO should decode to PNG");
+    assert_eq!(ext, "png");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(favicon_dimensions(&png, "png"), Some((2, 2)));
+
+    // Truncated / non-image payloads fail closed.
+    assert!(favicon_bytes_to_payload(vec![0, 0, 1, 0, 1, 0]).is_none());
+    assert!(favicon_bytes_to_payload(b"<html>not an icon</html>".to_vec()).is_none());
+
+    // SSRF guard: public CDN icons are allowed; local/private IPs are blocked unless same-host.
+    assert!(favicon_url_allowed("github.com", "https://github.githubassets.com/favicons/favicon.svg"));
+    assert!(favicon_url_allowed("localhost", "http://localhost:3000/favicon.ico"));
+    assert!(!favicon_url_allowed("example.com", "http://127.0.0.1/favicon.ico"));
+    assert!(!favicon_url_allowed("example.com", "http://169.254.169.254/latest/meta-data/"));
+    assert!(!favicon_url_allowed("example.com", "http://192.168.1.1/icon.png"));
+    assert!(!favicon_url_allowed("example.com", "http://localhost/icon.png"));
+    assert!(!favicon_url_allowed("example.com", "file:///etc/passwd"));
 }

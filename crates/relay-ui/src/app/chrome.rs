@@ -175,8 +175,6 @@ impl RelayApp {
         }
         let vertical = strip.placement.is_vertical();
         let icons_only = vertical && self.tab_icons_only;
-        let dark = t.background.l < 0.5;
-        let strip_bg = self.current_space_look().strip_background(dark, t.surface);
         let mut bar = div().flex();
         if vertical {
             let is_left = strip.placement == tabstrip::Placement::Left;
@@ -185,10 +183,9 @@ impl RelayApp {
                 .gap_1()
                 .px_2()
                 .pb_2()
-                .pt(if is_left { px(34.) } else { px(10.) })
+                .pt(if is_left { px(34.) } else { px(8.) })
                 .w(px(if icons_only { 54. } else { strip.width() }))
-                .h_full()
-                .bg(strip_bg);
+                .h_full();
             if icons_only {
                 bar = bar.child(
                     div()
@@ -230,7 +227,7 @@ impl RelayApp {
                                 Command::ToggleBookmark,
                                 cx,
                             ))
-                            .child(self.agent_sidebar_button(cx))
+                            .when(!self.inspector_open, |d| d.child(self.agent_sidebar_button(cx)))
                             .child(self.fold_button(if is_left { "«" } else { "»" }, cx)),
                     ),
             );
@@ -310,7 +307,6 @@ impl RelayApp {
                 .pr_2()
                 .h(px(strip.height()))
                 .w_full()
-                .bg(strip_bg)
                 .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
                 .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
                 .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
@@ -344,7 +340,7 @@ impl RelayApp {
                     Command::ToggleBookmark,
                     cx,
                 ))
-                .child(self.agent_sidebar_button(cx))
+                .when(!self.inspector_open, |d| d.child(self.agent_sidebar_button(cx)))
                 .child(self.fold_button("⌃", cx))
                 .into_any_element()
         }
@@ -395,7 +391,7 @@ impl RelayApp {
                         .bg(t.accent)
                         .text_size(px(9.))
                         .line_height(px(11.))
-                        .text_color(gpui::rgb(0xffffff))
+                        .text_color(t.on_accent)
                         .child(SharedString::from(n.to_string())),
                 )
             })
@@ -580,7 +576,7 @@ impl RelayApp {
                     .items_center()
                     .justify_center()
                     .text_size(px(10.))
-                    .text_color(gpui::rgb(0xffffff))
+                    .text_color(t.on_accent)
                     .child(SharedString::from(n.to_string())),
             );
         } else if self.tab_glyphs {
@@ -837,14 +833,14 @@ impl RelayApp {
         let target = url.clone();
         div()
             .id("address-bar")
-            .h(px(26.))
+            .h(px(30.))
             .w_full()
             .flex()
             .items_center()
             .gap_2()
-            .px_2()
+            .px_3()
             .bg(t.surface)
-            .text_size(px(11.))
+            .text_size(px(12.))
             .cursor_pointer()
             .on_click(cx.listener(move |app, _, _, cx| {
                 if target.is_empty() {
@@ -857,6 +853,7 @@ impl RelayApp {
                 }
                 cx.notify();
             }))
+            .when(!url.is_empty(), |d| d.child(self.site_icon(&url, &host, 14.)))
             .child(div().text_size(px(10.)).text_color(if secure { t.accent } else { t.warn }).child(if secure { "🔒" } else { "⚠" }))
             .child(div().text_color(t.text).child(SharedString::from(host)))
             .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(t.muted).child(SharedString::from(path)))
@@ -906,7 +903,7 @@ impl RelayApp {
                     })
                     .when_some(badge, |d, b| {
                         let (bg, fg) = if b.unread {
-                            (t.accent, gpui::Hsla::from(gpui::rgb(0xffffff)))
+                            (t.accent, t.on_accent)
                         } else {
                             (t.raised, t.text)
                         };
@@ -1009,7 +1006,7 @@ impl RelayApp {
         let mut row = div().flex_1().h_full().flex();
         row = row.child(self.render_pane(active, cx));
         if let Some(s) = self.split.filter(|s| *s != active && self.hub.lock().tab(*s).is_some()) {
-            row = row.child(div().w(px(1.)).h_full().bg(t.border)).child(self.render_pane(s, cx));
+            row = row.child(div().w(px(6.)).h_full().bg(t.background)).child(self.render_pane(s, cx));
         }
         row.into_any_element()
     }
@@ -1169,7 +1166,16 @@ impl RelayApp {
                         .child("Manage"),
                 )
             });
-        let mut col = div().flex().flex_col().gap_1().min_w_0().overflow_hidden().child(header);
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_3()
+            .rounded(px(12.))
+            .bg(t.surface.opacity(0.75))
+            .min_w_0()
+            .overflow_hidden()
+            .child(header);
         if items.is_empty() {
             col = col.child(div().px_2().py_1().text_size(px(12.)).text_color(t.muted).child("Nothing yet"));
         }
@@ -1247,9 +1253,10 @@ impl RelayApp {
                 .id(id)
                 .px_3()
                 .py_1p5()
-                .rounded(px(7.))
-                .bg(t.background)
-                .text_size(px(13.))
+                .rounded(px(8.))
+                .bg(t.well)
+                .text_size(px(12.))
+                .text_color(t.text)
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
                 .on_click(cx.listener(move |app, _, _, cx| {
@@ -1258,6 +1265,18 @@ impl RelayApp {
                 }))
                 .child(label)
         };
+        let safari_btn = div()
+            .id("welcome-import-safari")
+            .px_3()
+            .py_1p5()
+            .rounded(px(8.))
+            .bg(t.well)
+            .text_size(px(12.))
+            .text_color(t.text)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(|app, _, _, cx| app.import_safari_export_file(cx)))
+            .child("Import Safari…");
         div()
             .w_full()
             .max_w(px(560.))
@@ -1266,38 +1285,29 @@ impl RelayApp {
             .flex()
             .flex_col()
             .gap_3()
-            .p_6()
+            .p_5()
             .rounded(px(14.))
-            .bg(t.raised)
-            .shadow_lg()
-            .child(div().text_size(px(15.)).text_color(t.text).child("A browser that agents can read"))
-            .child(div().text_size(px(13.)).text_color(t.muted).child("Import your Chrome, Brave, Edge, Arc, or Dia bookmarks and history, or connect Claude Code, Codex, OpenCode, or Zed to the live page."))
-            .child(div().flex().gap_2().child(button("import", "Import from Chrome", Command::ImportChrome, cx)).child(button("mcp", "Copy MCP setup", Command::CopyMcpSetup, cx)))
+            .bg(t.surface)
+            .shadow_md()
+            .child(div().text_size(px(15.)).text_color(t.text).child("Get started"))
+            .child(div().text_size(px(13.)).text_color(t.muted).child(
+                "Import bookmarks and history from another browser, or connect an AI agent to the live page.",
+            ))
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_1()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(button("import", "Import Chrome / Arc", Command::ImportChrome, cx))
+                    .child(safari_btn)
+                    .child(button("mcp", "Copy MCP setup", Command::CopyMcpSetup, cx)),
+            )
+            .child(
+                div()
                     .pt_1()
                     .text_size(px(11.))
                     .text_color(t.muted)
-                    .font_family("Menlo")
-                    .child(
-                        div()
-                            .w_full()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(SharedString::from(format!("Agents: {}", self.mcp_setup))),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(SharedString::from(format!("Socket: {}", self.mcp_socket))),
-                    ),
+                    .child("⌘K search or open URL · ⌘T new tab · ⌘, settings"),
             )
     }
 
@@ -1548,44 +1558,47 @@ impl RelayApp {
         )
     }
 
-    pub(super) fn render_status(&self, at_top: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_status(&self, _at_top: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let (url, hover, total, asleep, agents) = {
+        let (url, title, hover, asleep, agents) = {
             let h = self.hub.lock();
             let active = h.active().and_then(|a| h.tab(a));
             let url = active.map(|x| x.url.clone()).unwrap_or_default();
+            let title = active.map(|x| x.title.clone()).unwrap_or_default();
             let hover = active.and_then(|x| x.hover_url.clone());
-            (url, hover, h.tabs().count(), h.tabs().filter(|x| x.sleeping).count(), h.tabs().filter(|x| x.owner == Owner::Agent).count())
+            (
+                url,
+                title,
+                hover,
+                h.tabs().filter(|x| x.sleeping).count(),
+                h.tabs().filter(|x| x.owner == Owner::Agent).count(),
+            )
         };
         let site_host = crate::clean_url::host_of(&url);
         let status_text = match (&self.hints, &self.toast) {
             // Native web views cover GPUI overlays, so hint status lives here.
             (Some(h), _) => format!("Link hints: type a label{} · Esc cancels", if h.typed.is_empty() { String::new() } else { format!(" ({})", h.typed.to_uppercase()) }),
             (None, Some((m, _))) => m.clone(),
-            (None, None) => hover.map(|h| format!("→ {h}")).unwrap_or(url),
+            (None, None) => hover.map(|h| format!("→ {h}")).unwrap_or_else(|| url.clone()),
         };
-        let mut right = if total == 1 { "1 tab".to_string() } else { format!("{total} tabs") };
+        let mut meta_parts: Vec<String> = Vec::new();
         if asleep > 0 {
-            right.push_str(&format!(" · {asleep} asleep"));
+            meta_parts.push(format!("{asleep} asleep"));
         }
         if agents > 0 {
-            right.push_str(&format!(" · {agents} agent"));
+            meta_parts.push(format!("{agents} agent"));
         }
-        let agent_open = self.inspector_open && self.sidebar_tab == SidebarTab::Agent;
-        let paused = self.hub.agents_paused();
-        let clear_traffic_lights = at_top && (self.strip.folded || self.strip.placement == tabstrip::Placement::Right);
+        let meta = meta_parts.join(" · ");
+        let show_icon = self.hints.is_none() && self.toast.is_none() && !url.is_empty();
         div()
-            .h(px(22.))
+            .h(px(24.))
             .flex()
             .items_center()
-            .pl(if clear_traffic_lights { px(78.) } else { px(12.) })
-            .pr_3()
+            .px_3()
             .gap_2()
             .text_size(px(11.))
             .text_color(t.muted)
-            .bg(t.background)
-            .when(at_top, |d| d.border_b_1().border_color(t.border))
-            .when(!at_top, |d| d.border_t_1().border_color(t.border))
+            .bg(t.surface)
             .when(self.strip.folded, |d| {
                 d.child(
                     div()
@@ -1603,6 +1616,7 @@ impl RelayApp {
                         .child("» Tabs"),
                 )
             })
+            .when(show_icon, |d| d.child(self.site_icon(&url, &title, 13.)))
             .child(
                 div()
                     .id("status-site")
@@ -1620,20 +1634,9 @@ impl RelayApp {
                     }))
                     .child(SharedString::from(status_text)),
             )
-            .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(right)))
-            .child(
-                div()
-                    .id("status-agent-toggle")
-                    .px_1p5()
-                    .rounded(px(4.))
-                    .when(agent_open, |d| d.bg(t.agent_bg).text_color(t.agent))
-                    .when(!agent_open, |d| d.text_color(if paused { t.warn } else if self.mcp_enabled { t.muted } else { t.muted }))
-                    .text_size(px(10.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover).text_color(t.text))
-                    .on_click(cx.listener(|app, _, _, cx| app.toggle_agent_sidebar(cx)))
-                    .child(if paused { "✦ Paused" } else { "✦ Agent" }),
-            )
+            .when(!meta.is_empty(), |d| {
+                d.child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(meta)))
+            })
     }
 }
 

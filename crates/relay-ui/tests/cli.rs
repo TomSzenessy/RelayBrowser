@@ -318,3 +318,22 @@ fn mcp_config_prints_each_client_and_rejects_unknown() {
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown client"));
 }
+
+#[test]
+fn status_bar_position_and_legacy_bottom_bar_stay_in_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    // Default is hidden / off.
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "status_bar_position"]).stdout).trim(), "hidden");
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "bottom_bar"]).stdout).trim(), "off");
+
+    // Setting status_bar_position updates bottom_bar cleanly.
+    assert!(relay(dir.path(), &["config", "set", "status_bar_position", "top"]).status.success());
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "status_bar_position"]).stdout).trim(), "top");
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "bottom_bar"]).stdout).trim(), "on");
+
+    // Setting legacy bottom_bar overrides status_bar_position even after it was set.
+    assert!(relay(dir.path(), &["config", "set", "bottom_bar", "off"]).status.success());
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "status_bar_position"]).stdout).trim(), "hidden");
+    assert!(relay(dir.path(), &["config", "set", "bottom_bar", "on"]).status.success());
+    assert_eq!(String::from_utf8_lossy(&relay(dir.path(), &["config", "get", "status_bar_position"]).stdout).trim(), "bottom");
+}

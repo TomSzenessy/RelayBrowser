@@ -10,18 +10,24 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 ## Layout
 
 ```
-┌──────────┬────────────────────────────────────────┬──────────────┐
-│ TABS  «  │                                        │ Inspector    │
-│ ● docs  ×│          WKWebView (active tab)        │ (⌘⌥I, 380pt) │
-│ ○ gh    ×│                                        │ Elements     │
-│ ── Agent │      split: ⌘\ adds a second pane      │ Network      │
-│ ◆ shop  ×│                                        │ Console      │
-├──────────┴────────────────────────────────────────┴──────────────┤
-│ status: url · blocked count · agent connected                    │
+┌──────────────────────────────────────────────────────────────────┐
+│  TABS  «   ╭────────────────────────────────────╮   Agent|Insp   │
+│  ● docs  × │      WKWebView (rounded card)      │   Status card  │
+│  ○ gh    × │                                    │   AI assistant │
+│  ── Agent  │  split: ⌘\ adds a second card pane │   MCP drawer   │
+│  ◆ shop  × │                                    │                │
+│            ╰────────────────────────────────────╯                │
 └──────────────────────────────────────────────────────────────────┘
         ⌘K palette floats centred over everything (560 pt wide)
 ```
 
+- **Layered shell & browser card:** the left tab strip and right Agent/Inspector
+  sidebar sit directly on a single unified shell canvas (tinted by the active
+  Space when styled) with no intersecting 1 px dividing borders. The center
+  browser viewport floats inside as an elevated, responsive rounded card (12 pt
+  radius with soft hairline definition and shadow; on macOS, embedded
+  `WKWebView` layers clip to continuous 10 pt squircle corners matching the
+  card, and split panes separate via a clean 6 pt shell gap).
 - **Tab switching and closing:** Ctrl+Tab / Ctrl+Shift+Tab walk the current
   space in most-recently-used order by default, or in strip order when
   `tab_switch_order = strip` in Settings → Tabs; ⌘⌥T opens the visual switcher
@@ -32,9 +38,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   tabs always sleep on ⌘W until explicitly unpinned (`⌘⌥P`).
 - **Spaces:** the space chip in the tab strip switches, creates, renames, or
   deletes named tab spaces, and lets each space carry an optional icon plus a
-  strip/bookmarks-bar tint (None, 6 AA-checked colours, 4 preset gradients, or
-  a custom 2–3 colour gradient, persisted in `space_looks`).
-- **Tab strip:** a vertical list of title rows with status dots, an optional
+  shell/bookmarks-bar tint (None, 6 AA-checked colours, 4 preset gradients, or
+  a custom 2-colour gradient, persisted in `space_looks`).
+- **Tab strip:** a vertical list of title rows with site favicons, an optional
   54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
   group: a subtly tinted heading with a colour dot, name, count, and collapse chevron; the
   tab menu moves a tab in or out and lets the user choose a curated WCAG AA group colour
@@ -46,21 +52,24 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   the strip to a thin, clickable rail (14 pt at the side, 10 pt at the top)
   that brings it back; the edge and folded state persist in `tabs_position`
   and `tabs_folded`.
-- **AI & Agent sidebar:** the 360 px right sidebar has **✦ Agent** and **Inspector**
-  tabs, toggled via the `✦` button in the tab strip, `⌘⇧A`, or `⌘⌥I`. **Agent**
-  integrates live MCP status (Pause/Resume, per-site access pill), clickable
-  agent-owned tabs, an inline side-by-side AI Page Assistant (OpenAI-compatible
+- **AI & Agent sidebar:** the 340 px right sidebar has a pill-segmented
+  **Agent | Inspector** switcher and a `×` close button, toggled via the single
+  quiet `✦` icon in the tab strip (shown only when the sidebar is closed so
+  "Agent" is never duplicated), `⌘⇧A`, or `⌘⌥I`. **Agent** integrates live MCP
+  status (Pause/Resume, active site icon + access pill), clickable agent-owned
+  tabs (only when open), an inline side-by-side AI Page Assistant (OpenAI-compatible
   endpoint/model with login Keychain API key, streaming/Stop, ten-turn history,
   New/Copy/Summarize, and a **Send visible page text** opt-out), and a
-  collapsible **MCP & recent activity** drawer (recent audit calls, per-client
-  shell-write Grant/Revoke, copyable setup command, untrusted-page reminder) so
-  you can browse and collaborate with agents side-by-side without hiding the
-  page. **Inspector** keeps the monospace Elements/Network/Console/Cookies panels.
+  collapsible **MCP & activity** widget card so you can browse and collaborate
+  with agents side-by-side without hiding the page. **Inspector** keeps the
+  monospace Elements/Network/Console/Cookies panels inside a matching rounded card.
+  The sidebar works horizontally at every tab-strip placement (Left, Top, Right).
 - **Status bar placement:** `status_bar_position` (Settings → Appearance or
-  `⌘⌥B`) places the compact 22 pt status bar at **Top**, **Bottom**, or
-  **Hidden** (default, so pages get full height; when hidden, a temporary bar
-  appears only while a toast or link-hints prompt is active). Top placement
-  clears macOS traffic lights automatically when the left edge is open.
+  `⌘⌥B`) places the compact 24 pt status bar cleanly inside the browser card's
+  **Top** or **Bottom** edge, or **Hidden** (default, so pages get full height;
+  when hidden, a temporary bar appears only while a toast or link-hints prompt
+  is active). It shows only the active site icon + URL / hover target / toast
+  and non-zero asleep/agent counts — never duplicating the tab count or Agent toggle.
 - **Motion:** palette, Settings, and Library fade in over 140 ms with
   ease-out-quint; no other transitions are animated yet.
 - **Palette:** also exposes duplicate, mute, and sleep tab commands.
@@ -71,19 +80,16 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   shaped line.
 - **Inspector:** a tab strip of four panels over monospace rows. Hovering an
   Elements row highlights the node in the page.
-- **Sidebar:** a 380 px right sidebar with **Agent** and **Inspector** tabs and
-  a × collapse button. Agent shows MCP state/socket, Stop/Resume, per-site
-  access, per-client shell-write Grant/Revoke, the copyable setup command, and
-  the untrusted-page reminder; Inspector keeps the
-  Elements/Network/Console/Cookies panels. The sidebar
-  works at every tab-strip placement.
-- **Agent stop:** while an agent is paused, a tinted line above the status bar
-  says page automation is stopped and offers Resume. The state lives in the
+- **Agent stop:** while an agent is paused, a tinted banner inside the browser
+  card says page automation is stopped and offers Resume. The state lives in the
   shared hub, so every MCP tool fails fast before touching a page.
-- **Tab icon:** a 14 px favicon, decoded from the page's own icon link
-  (PNG/JPEG/WebP/GIF under 256 KB); a dot is the fallback while loading,
-  after a refusal, and for sites without an icon. Active tabs keep the accent
-  ring/background.
+- **Site favicons:** decoded from the page's icon links or `/favicon.ico`
+  (PNG, JPEG, WebP, GIF, SVG, and both PNG-compressed and classic BMP-DIB `.ico`
+  under 256 KB, with a cookie-free SSRF-guarded native fallback for cross-origin
+  CDN favicons blocked by CORS), cached privately (0600) per host and shown in
+  tabs, pinned favorites, bookmarks bar, address bar, status bar, start page,
+  tab switcher, and agent tabs; a WCAG-AA letter monogram is the fallback when
+  a site has no icon. Active tabs keep the accent highlight.
 - **Library:** a modal over the page for History (`⌘Y`) or Bookmarks
   (`⇧⌘B`): one query line, wrapped selection, row click opens, × deletes, and
   Bookmarks rows have rename and move prompts; Settings can export/import the
@@ -177,27 +183,29 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 | border | `#34363b` | `#e2e2e6` |
 | text | `#e6e6e9` | `#1c1c1f` |
 | muted text | `#9a9ca3` | `#6b6d75` |
-| accent (focus, active tab) | `#5b8cff` | `#2f6bff` |
+| accent (focus, active tab) | `#5b8cff` | `#245fe8` |
 | agent tint | `#b07cff` at 18% | `#7a3cff` at 12% |
 | error | `#ff6b6b` | `#c92f2f` |
 | warn | `#ffb84d` | `#8a5300` |
 
 Appearance is System (follow macOS), Light, or Dark; the accent is Blue
 (default), Purple, Green, or Orange. `theme::Theme::for_choice` applies the
-accent's light/dark pair, and every accent is checked at 3:1 against the
-surface. Settings → Appearance changes it live and stores `theme`/`accent`. The
+accent's light/dark pair, checks every accent at ≥ 3:1 against `surface`, and
+pairs every accent fill with WCAG AA `on_accent` foreground text (≥ 4.5:1).
+Settings → Appearance changes it live and stores `theme`/`accent`. The
 Settings rail has eleven pages: General, Appearance, Tabs, Browsing, Passwords,
-Privacy, Extensions, Agents, Shortcuts, and About. Every row is a surface on
+Privacy, Extensions, Agents & MCP, Shortcuts, AI, and About. Every row is a surface on
 the background, not a boxed cell; only the groups' spacing separates them.
 Tabs also offers site-icon/letter badges, compact rows, a bookmarks bar, and
 always-visible close buttons.
 
 Type: system UI font at 13 pt for chrome and 12 pt monospace for the Inspector.
-Corner radius is 6 pt and spacing uses a 4 pt grid. Motion is 150 ms, and is
-none under Reduce Motion. Surfaces carry the hierarchy: `background`,
-`surface`, `raised` (overlays and cards), and `well` (inputs), with shadows
-for elevation. A 1 px outline is not the default separator; only the tab-strip
-edge, split divider, and status edge keep a hairline.
+Corner radii follow a layered scale (12 pt browser card, 10 pt widget cards and
+`WKWebView` continuous corners, 6–8 pt controls) on a 4 pt grid. Motion is 150 ms,
+and is none under Reduce Motion. Visual layers carry the hierarchy: unified
+shell canvas (`background` / active Space tint) behind the sidebars, elevated
+rounded browser card (`page`), widget cards (`surface` / `raised`), and recessed
+controls (`well`), separated through shading and rounded corners rather than 1 px borders.
 
 ## Keyboard map
 
@@ -267,7 +275,7 @@ and displayed shortcuts cannot drift either.
 | ⌘⇧J | Show downloads |
 | ⌘⇧N | New private tab |
 | ⌘P | Print page |
-| ⌘⌥B | Show / hide bottom bar |
+| ⌘⌥B | Cycle status bar (Top / Bottom / Hidden) |
 | ⌘⌥[ | Fold all tab groups |
 | ⌘⌥] | Unfold all tab groups |
 | ⌘⇧E | Switch space… |

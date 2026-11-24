@@ -78,7 +78,7 @@ pub(super) fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
                 item("Unfold All Tab Groups", UnfoldAllGroups),
                 item("Spaces…", Spaces),
                 sep(),
-                item("Show / Hide Bottom Bar", ToggleBottomBar),
+                item("Cycle Status Bar", ToggleBottomBar),
                 sep(),
                 item("Reading Mode", ToggleReader),
                 item("Picture in Picture", TogglePictureInPicture),

@@ -138,7 +138,7 @@ action_table! {
     ShowDownloads => "downloads", "Show downloads", "secondary-shift-j";
     NewPrivateTab => "new-private-tab", "New private tab", "secondary-shift-n";
     Print => "print", "Print page", "secondary-p";
-    ToggleBottomBar => "bottom-bar", "Show / hide bottom bar", "secondary-alt-b";
+    ToggleBottomBar => "bottom-bar", "Cycle status bar (Top / Bottom / Hidden)", "secondary-alt-b";
     FoldAllGroups => "fold-groups", "Fold all tab groups", "secondary-alt-[";
     UnfoldAllGroups => "unfold-groups", "Unfold all tab groups", "secondary-alt-]";
     Spaces => "spaces", "Switch space…", "secondary-shift-e";

@@ -481,8 +481,29 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "mcp" => println!("{}", if cfg.mcp { "on" } else { "off" }),
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
                 "tabs_position" => println!("{}", store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).unwrap_or_else(|| "left".into())),
-                "status_bar_position" => println!("{}", store.as_ref().and_then(|s| s.setting("status_bar_position").ok().flatten()).unwrap_or_else(|| "hidden".into())),
-                "bottom_bar" => println!("{}", store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "off".into())),
+                "status_bar_position" => {
+                    let pos = store
+                        .as_ref()
+                        .and_then(|s| s.setting("status_bar_position").ok().flatten())
+                        .unwrap_or_else(|| {
+                            let legacy = store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten());
+                            if legacy.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("on") || v == "1" || v.eq_ignore_ascii_case("true")) {
+                                "bottom".into()
+                            } else {
+                                "hidden".into()
+                            }
+                        });
+                    println!("{pos}");
+                }
+                "bottom_bar" => {
+                    let pos = store.as_ref().and_then(|s| s.setting("status_bar_position").ok().flatten());
+                    let val = match pos.as_deref() {
+                        Some("hidden") => "off".into(),
+                        Some("top") | Some("bottom") => "on".into(),
+                        _ => store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "off".into()),
+                    };
+                    println!("{val}");
+                }
                 "login_fill" | "login_save" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "extension_toolbar" | "ai_page_context" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
                 }
@@ -519,7 +540,13 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             }
             let (key, value) = (args[1].as_str(), args[2].as_str());
             let canonical = validate_config_value(key, value)?;
-            open_store()?.set_setting(key, &canonical)?;
+            let store = open_store()?;
+            store.set_setting(key, &canonical)?;
+            if key == "bottom_bar" {
+                store.set_setting("status_bar_position", if canonical == "on" { "bottom" } else { "hidden" })?;
+            } else if key == "status_bar_position" {
+                store.set_setting("bottom_bar", if canonical == "hidden" { "off" } else { "on" })?;
+            }
             println!("Set {key} = {canonical}");
             Ok(())
         }

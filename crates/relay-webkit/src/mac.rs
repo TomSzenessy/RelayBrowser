@@ -1183,6 +1183,11 @@ pub struct Engine {
     handoff: Option<Retained<NSUserActivity>>,
     downloads_dir: Rc<RefCell<std::path::PathBuf>>,
     downloads_ask: Rc<Cell<bool>>,
+    /// Continuous corner radius clipped on embedded tab web views so live pages
+    /// sit cleanly inside the rounded browser viewport card (0 for chromeless app mode).
+    corner_radius: f64,
+    round_top_corners: bool,
+    round_bottom_corners: bool,
 }
 
 impl Engine {
@@ -1219,6 +1224,27 @@ impl Engine {
             handoff: None,
             downloads_dir: Rc::new(RefCell::new(default_download_folder())),
             downloads_ask: Rc::new(Cell::new(false)),
+            corner_radius: 10.0,
+            round_top_corners: true,
+            round_bottom_corners: true,
+        }
+    }
+
+    /// Clip live tab `WKWebView`s to a continuous rounded corner radius matching
+    /// only the edges of the viewport that touch the outer rounded browser card.
+    pub fn set_corner_style(&mut self, radius: f64, round_top: bool, round_bottom: bool) {
+        let radius = radius.max(0.0);
+        if (self.corner_radius - radius).abs() < 0.01
+            && self.round_top_corners == round_top
+            && self.round_bottom_corners == round_bottom
+        {
+            return;
+        }
+        self.corner_radius = radius;
+        self.round_top_corners = round_top;
+        self.round_bottom_corners = round_bottom;
+        for t in self.tabs.values() {
+            apply_corner_style(&t.view, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
         }
     }
 
@@ -1590,6 +1616,7 @@ impl Engine {
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0));
         let view = RelayWebView::new(mtm, frame, &config, last_interaction);
         apply_appearance(&view, self.appearance);
+        apply_corner_style(&view, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
         unsafe {
             view.setInspectable(true); // Develop menu / Web Inspector fallback
             view.setAllowsBackForwardNavigationGestures(true);
@@ -1815,6 +1842,7 @@ impl Engine {
                     let attached = unsafe { t.view.superview() }.is_some_and(|s| &*s == parent);
                     if !attached {
                         parent.addSubview(&t.view);
+                        apply_corner_style(&t.view, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
                     }
                     t.view.setFrame(frame);
                     t.view.setHidden(false);
@@ -2084,6 +2112,33 @@ fn apply_appearance(view: &WKWebView, dark: Option<bool>) {
         None => None,
     };
     view.setAppearance(appearance.as_deref());
+}
+
+fn apply_corner_style(view: &WKWebView, radius: f64, round_top: bool, round_bottom: bool) {
+    let radius = radius.max(0.0);
+    view.setWantsLayer(true);
+    unsafe {
+        let layer: *mut AnyObject = msg_send![view, layer];
+        if !layer.is_null() {
+            let flipped: bool = msg_send![layer, isGeometryFlipped];
+            // CACornerMask: MinXMinY=1, MaxXMinY=2, MinXMaxY=4, MaxXMaxY=8.
+            let top_mask: usize = if flipped { 1 | 2 } else { 4 | 8 };
+            let bottom_mask: usize = if flipped { 4 | 8 } else { 1 | 2 };
+            let mut mask: usize = 0;
+            if round_top {
+                mask |= top_mask;
+            }
+            if round_bottom {
+                mask |= bottom_mask;
+            }
+            let effective = if mask == 0 { 0.0 } else { radius };
+            let _: () = msg_send![layer, setCornerRadius: effective];
+            let _: () = msg_send![layer, setMaskedCorners: mask];
+            let _: () = msg_send![layer, setMasksToBounds: effective > 0.0];
+            let curve = NSString::from_str("continuous");
+            let _: () = msg_send![layer, setCornerCurve: &*curve];
+        }
+    }
 }
 
 fn teardown(t: &WebTab) {

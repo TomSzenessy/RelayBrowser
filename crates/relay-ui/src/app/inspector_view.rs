@@ -6,17 +6,10 @@ impl RelayApp {
     pub(super) fn render_inspector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let has_agent_tabs = self.hub.lock().tabs().any(|tab| tab.owner == Owner::Agent);
-        let mut head = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .px_3()
-            .h(px(36.))
-            .border_b_1()
-            .border_color(t.border);
-        for (tab, label) in [(SidebarTab::Agent, "✦ Agent"), (SidebarTab::Inspector, "Inspector")] {
+        let mut switcher = div().flex().items_center().gap_0p5().p(px(2.)).rounded(px(8.)).bg(t.well);
+        for (tab, label) in [(SidebarTab::Agent, "Agent"), (SidebarTab::Inspector, "Inspector")] {
             let on = self.sidebar_tab == tab;
-            head = head.child(
+            switcher = switcher.child(
                 div()
                     .id(if tab == SidebarTab::Agent { "sidebar-agent" } else { "sidebar-inspector" })
                     .flex()
@@ -28,7 +21,7 @@ impl RelayApp {
                     .text_size(px(12.))
                     .cursor_pointer()
                     .text_color(if on { t.text } else { t.muted })
-                    .when(on, |d| d.bg(if tab == SidebarTab::Agent { t.agent_bg } else { t.active }))
+                    .when(on, |d| d.bg(t.surface).shadow_sm())
                     .hover(|s| s.text_color(t.text))
                     .on_click(cx.listener(move |app, _, _, cx| {
                         app.sidebar_tab = tab;
@@ -44,33 +37,45 @@ impl RelayApp {
                     }),
             );
         }
-        head = head.child(div().flex_1()).child(
-            div()
-                .id("sidebar-collapse")
-                .w(px(22.))
-                .h(px(22.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(5.))
-                .text_size(px(14.))
-                .text_color(t.muted)
-                .cursor_pointer()
-                .hover(|s| s.bg(t.hover).text_color(t.text))
-                .on_click(cx.listener(|app, _, _, cx| {
-                    app.inspector_open = false;
-                    app.agent_input_focused = false;
-                    app.hub.set_sidebar(false, app.sidebar_tab.as_str());
-                    app.focus_active_page();
-                    cx.notify();
-                }))
-                .child("×"),
-        );
+        let head = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px_2()
+            .pt(px(8.))
+            .pb_1p5()
+            .child(switcher)
+            .child(
+                div()
+                    .id("sidebar-collapse")
+                    .w(px(24.))
+                    .h(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.))
+                    .text_size(px(14.))
+                    .text_color(t.muted)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.inspector_open = false;
+                        app.agent_input_focused = false;
+                        app.hub.set_sidebar(false, app.sidebar_tab.as_str());
+                        app.focus_active_page();
+                        cx.notify();
+                    }))
+                    .child("×"),
+            );
         let body = match self.sidebar_tab {
             SidebarTab::Agent => self.render_agent_pane(cx),
             SidebarTab::Inspector => div()
                 .id("sidebar-body")
                 .flex_1()
+                .mx_2()
+                .mb_2()
+                .rounded(px(10.))
+                .bg(t.surface)
                 .overflow_y_scroll()
                 .font_family("Menlo")
                 .text_size(px(12.))
@@ -78,28 +83,24 @@ impl RelayApp {
                 .into_any_element(),
         };
         div()
-            .w(px(360.))
+            .w(px(340.))
             .h_full()
             .flex()
             .flex_col()
-            .bg(t.surface)
-            .border_l_1()
-            .border_color(t.border)
             .child(head)
             .child(body)
     }
 
     fn render_agent_pane(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
-        let (host, policy) = self
+        let active_site = self
             .active()
-            .and_then(|tab| self.hub.lock().tab(tab).map(|t| t.url.clone()))
-            .and_then(|url| relay_bridge::host_of(&url))
-            .map(|host| {
+            .and_then(|tab| self.hub.lock().tab(tab).map(|t| (t.url.clone(), t.title.clone())))
+            .and_then(|(url, title)| {
+                let host = relay_bridge::host_of(&url)?;
                 let policy = self.hub.agent_policy_for_host(&host);
-                (host, policy)
-            })
-            .unwrap_or_else(|| ("No active site".to_string(), relay_bridge::AgentPolicy::Allow));
+                Some((url, title, host, policy))
+            });
         let paused = self.hub.agents_paused();
         let agent_tabs: Vec<(TabId, String, String, bool)> = self
             .hub
@@ -112,13 +113,13 @@ impl RelayApp {
         let recent_audit = self.store.as_ref().and_then(|s| s.agent_audit(5).ok()).unwrap_or_default();
         let granted = clients.iter().filter(|c| c.granted).count();
 
-        // Compact live status + per-site policy bar at the top.
-        let status_card = div()
-            .mx_3()
-            .mt_3()
+        // Compact live status + per-site policy widget card.
+        let mut status_card = div()
+            .mx_2()
+            .mt_1()
             .p_2p5()
-            .rounded(px(9.))
-            .bg(t.raised)
+            .rounded(px(10.))
+            .bg(t.surface)
             .flex()
             .flex_col()
             .gap_2()
@@ -141,9 +142,9 @@ impl RelayApp {
                                 t.muted
                             }))
                             .child(div().text_size(px(12.)).text_color(t.text).child(if paused {
-                                "Agents paused"
+                                "Paused"
                             } else if self.mcp_enabled {
-                                "Agents ready"
+                                "Ready"
                             } else {
                                 "MCP off"
                             }))
@@ -160,7 +161,7 @@ impl RelayApp {
                             .id(if paused { "agent-resume" } else { "agent-pause" })
                             .px_2()
                             .py_0p5()
-                            .rounded(px(5.))
+                            .rounded(px(6.))
                             .bg(if paused { t.active } else { t.well })
                             .text_size(px(11.))
                             .text_color(if paused { t.accent } else { t.text })
@@ -169,8 +170,9 @@ impl RelayApp {
                             .on_click(cx.listener(|app, _, _, cx| app.toggle_agents(cx)))
                             .child(if paused { "Resume" } else { "Pause" }),
                     ),
-            )
-            .child(
+            );
+        if let Some((url, title, host, policy)) = active_site {
+            status_card = status_card.child(
                 div()
                     .flex()
                     .items_center()
@@ -180,31 +182,41 @@ impl RelayApp {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(px(11.))
-                            .text_color(t.muted)
-                            .child(SharedString::from(host)),
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .child(self.site_icon(&url, &title, 14.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(11.))
+                                    .text_color(t.muted)
+                                    .child(SharedString::from(host)),
+                            ),
                     )
                     .child(
                         div()
                             .id("agent-cycle-policy")
                             .px_2()
                             .py_0p5()
-                            .rounded(px(5.))
+                            .rounded(px(6.))
                             .bg(t.well)
                             .text_size(px(10.))
                             .text_color(t.text)
                             .cursor_pointer()
                             .hover(|s| s.bg(t.hover))
                             .on_click(cx.listener(|app, _, _, cx| app.cycle_agent_policy(cx)))
-                            .child(SharedString::from(format!("Site: {}", policy.label()))),
+                            .child(SharedString::from(policy.label())),
                     ),
             );
+        }
 
         // Live agent-owned tabs section (only when agents have open tabs).
-        let mut agent_tabs_section = div().flex().flex_col().gap_1().mx_3().mt_2();
+        let mut agent_tabs_section = div().flex().flex_col().gap_1().mx_2().mt_2().p_2().rounded(px(10.)).bg(t.surface);
         if !agent_tabs.is_empty() {
             agent_tabs_section = agent_tabs_section.child(
                 div().text_size(px(10.)).text_color(t.agent).child(SharedString::from(format!("AGENT TABS ({})", agent_tabs.len()))),
@@ -252,10 +264,10 @@ impl RelayApp {
             .flex()
             .items_center()
             .justify_between()
-            .px_3()
-            .pt_3()
+            .px_2p5()
+            .pt_2p5()
             .pb_1()
-            .child(div().text_size(px(11.)).text_color(t.muted).child("PAGE ASSISTANT"))
+            .child(div().text_size(px(10.)).text_color(t.muted).child("ASSISTANT"))
             .child(
                 div()
                     .flex()
@@ -300,8 +312,8 @@ impl RelayApp {
             .id("agent-ai-messages")
             .flex_1()
             .overflow_y_scroll()
-            .px_3()
-            .py_2()
+            .px_2()
+            .py_1()
             .flex()
             .flex_col()
             .gap_2();
@@ -310,8 +322,8 @@ impl RelayApp {
             messages = messages.child(
                 div()
                     .p_3()
-                    .rounded(px(9.))
-                    .bg(t.raised)
+                    .rounded(px(10.))
+                    .bg(t.surface)
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -328,7 +340,7 @@ impl RelayApp {
                                 .rounded(px(6.))
                                 .bg(t.accent)
                                 .text_size(px(11.))
-                                .text_color(gpui::rgb(0xffffff))
+                                .text_color(t.on_accent)
                                 .cursor_pointer()
                                 .hover(|s| s.opacity(0.9))
                                 .on_click(cx.listener(|app, _, _, cx| {
@@ -404,12 +416,14 @@ impl RelayApp {
             }
         }
 
-        // Collapsible MCP & Activity drawer so technical config stays quiet until needed.
+        // Collapsible MCP & Activity widget card so technical config stays quiet until needed.
         let mut mcp_drawer = div()
-            .border_t_1()
-            .border_color(t.border)
-            .px_3()
+            .mx_2()
+            .mb_2()
+            .px_2p5()
             .py_2()
+            .rounded(px(10.))
+            .bg(t.surface)
             .flex()
             .flex_col()
             .gap_2()
@@ -426,9 +440,9 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .child(div().text_size(px(11.)).text_color(t.muted).child(if self.agent_mcp_expanded {
-                        "▾ MCP & recent activity"
+                        "▾ MCP & activity"
                     } else {
-                        "▸ MCP & recent activity"
+                        "▸ MCP & activity"
                     }))
                     .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(if !recent_audit.is_empty() {
                         format!("{} recent", recent_audit.len())
@@ -522,9 +536,11 @@ impl RelayApp {
             let busy = chat.is_some_and(|c| c.busy);
             Some(
                 div()
-                    .p_3()
-                    .border_t_1()
-                    .border_color(t.border)
+                    .mx_2()
+                    .mb_2()
+                    .p_2()
+                    .rounded(px(10.))
+                    .bg(t.surface)
                     .flex()
                     .items_center()
                     .gap_2()
@@ -533,7 +549,7 @@ impl RelayApp {
                             .id("agent-chat-input")
                             .flex_1()
                             .min_w_0()
-                            .h(px(32.))
+                            .h(px(30.))
                             .px_2p5()
                             .flex()
                             .items_center()
@@ -575,7 +591,7 @@ impl RelayApp {
                             .rounded(px(6.))
                             .bg(t.accent)
                             .text_size(px(11.))
-                            .text_color(gpui::rgb(0xffffff))
+                            .text_color(t.on_accent)
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.9))
                             .on_click(cx.listener(|app, _, _, cx| app.send_ai(cx)))

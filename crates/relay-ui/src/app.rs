@@ -183,7 +183,7 @@ struct SpacePrompt {
     look: theme::SpaceLook,
 }
 
-/// A minimal chat with the configured OpenAI-compatible endpoint.
+/// Quick MRU / strip-order tab switcher modal.
 struct TabSwitcher {
     tabs: Vec<(TabId, String, String)>,
     selected: usize,
@@ -655,6 +655,7 @@ impl RelayApp {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut web = WebHost::new(hub.clone(), window);
+        web.set_corner_style(if app_mode { 0.0 } else { 10.0 }, true, true);
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
         let hide_cookie_banners = setting_enabled(store.as_ref().and_then(|s| s.setting("cookie_banners").ok().flatten()).as_deref());
@@ -1396,7 +1397,7 @@ impl RelayApp {
             cx.spawn(async move |this, cx| {
                 let reply = futures_timeout(rx, Duration::from_secs(4), cx).await;
                 let _ = this.update(cx, |app, cx| {
-                    app.finish_favicon(host, seq, reply);
+                    app.finish_favicon(host, seq, reply, cx);
                     cx.notify();
                 });
             })
@@ -1404,23 +1405,49 @@ impl RelayApp {
         }
     }
 
-    fn finish_favicon(&mut self, host: String, seq: u64, reply: Option<serde_json::Value>) {
+    fn finish_favicon(&mut self, host: String, seq: u64, reply: Option<serde_json::Value>, cx: &mut Context<Self>) {
         self.favicon_pending.remove(&host);
         self.favicon_tried.insert(host.clone(), seq);
         let payload = reply.as_ref().and_then(favicon_payload);
         if let Some((bytes, ext)) = &payload {
             cache_favicon_file(&host, bytes, ext);
         }
-        match payload.as_ref().and_then(|(bytes, ext)| favicon_decode(bytes, ext).map(Arc::new)) {
-            Some(image) => {
-                self.favicons.insert(host, Some(image));
-            }
-            None => {
-                // A timeout or a page without an icon: keep a previously
-                // decoded icon, otherwise show the monogram until a reload.
-                self.favicons.entry(host).or_insert(None);
-            }
+        if let Some(image) = payload.as_ref().and_then(|(bytes, ext)| favicon_decode(bytes, ext).map(Arc::new)) {
+            self.favicons.insert(host, Some(image));
+            return;
         }
+        // When in-page fetch fails (typically cross-origin CDN favicons without
+        // CORS headers), fall back to a cookie-free native fetch of the page's
+        // declared icon URLs (strictly http(s), bounded 256 KB, SSRF-filtered).
+        let candidates = favicon_candidate_urls(reply.as_ref(), &host);
+        if !candidates.is_empty() {
+            self.favicon_pending.insert(host.clone());
+            let host_bg = host.clone();
+            let fetched = cx.background_executor().spawn(async move {
+                fetch_favicon_candidates(&host_bg, &candidates)
+            });
+            cx.spawn(async move |this, cx| {
+                let payload = fetched.await;
+                let _ = this.update(cx, |app, cx| {
+                    app.favicon_pending.remove(&host);
+                    if let Some((bytes, ext)) = payload {
+                        cache_favicon_file(&host, &bytes, ext);
+                        if let Some(image) = favicon_decode(&bytes, ext).map(Arc::new) {
+                            app.favicons.insert(host, Some(image));
+                            cx.notify();
+                            return;
+                        }
+                    }
+                    app.favicons.entry(host).or_insert(None);
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
+        // A timeout or a page without an icon: keep a previously
+        // decoded icon, otherwise show the monogram until a reload.
+        self.favicons.entry(host).or_insert(None);
     }
 
     /// Which start-page sections are on, in their configured order.
@@ -2396,6 +2423,30 @@ impl RelayApp {
             cx.notify();
             return;
         }
+        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused && !self.has_modal_overlay() && self.find.is_none() && self.hints.is_none() {
+            if let Some(chat) = self.ai_chat.as_mut() {
+                match action {
+                    EditAction::Paste => {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                            let clean: String = text.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).collect();
+                            let remain = 2000usize.saturating_sub(chat.input.chars().count());
+                            chat.input.extend(clean.chars().take(remain));
+                        }
+                    }
+                    EditAction::Copy | EditAction::Cut => {
+                        if !chat.input.is_empty() {
+                            cx.write_to_clipboard(ClipboardItem::new_string(chat.input.clone()));
+                        }
+                        if action == EditAction::Cut {
+                            chat.input.clear();
+                        }
+                    }
+                    EditAction::SelectAll | EditAction::Undo | EditAction::Redo => {}
+                }
+            }
+            cx.notify();
+            return;
+        }
         self.web.borrow().edit(action);
     }
 
@@ -2803,6 +2854,21 @@ impl RelayApp {
                 relay_extensions::ai::stream(&config, &key, &url, &title, &page, &prompt, &history, cancel, tx);
             })
             .detach();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(60)).await;
+                let still_streaming = this
+                    .update(cx, |app, cx| {
+                        app.drain_ai_stream(cx);
+                        app.ai_stream.is_some()
+                    })
+                    .unwrap_or(false);
+                if !still_streaming {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn maybe_send_ai(&mut self, cx: &mut Context<Self>) {
@@ -3571,6 +3637,7 @@ impl RelayApp {
         self.palette = None;
         self.library = None;
         self.connect_open = false;
+        self.agent_input_focused = false;
         self.end_hints();
         let (query, case_sensitive) = self.find.take().map(|f| (f.query, f.case_sensitive)).unwrap_or_default();
         self.find = Some(FindBar { tab, query, found: None, case_sensitive });
@@ -3932,6 +3999,7 @@ impl RelayApp {
 
     fn start_hints(&mut self) {
         let Some(tab) = self.active() else { return };
+        self.agent_input_focused = false;
         let ids = self.hub.lock().tab(tab).map(|t| t.dom.interactive_ids(300)).unwrap_or_default();
         if ids.is_empty() {
             self.toast("No clickable elements on this page");
@@ -4011,7 +4079,7 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused && !self.has_modal_overlay() {
+        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused && !self.has_modal_overlay() && self.hints.is_none() && self.find.is_none() {
             match k.key.as_str() {
                 "escape" => self.unfocus_agent_input(),
                 "enter" => self.send_ai(cx),
@@ -4747,45 +4815,121 @@ impl Render for RelayApp {
             self.placements.borrow_mut().clear();
         }
         let t = self.theme;
+        let dark = t.background.l < 0.5;
+        let shell_bg = self.current_space_look().strip_background(dark, t.background);
         let show_top_status = !self.app_mode && self.status_bar_position == StatusBarPosition::Top;
         let show_bottom_status = (!self.app_mode && self.status_bar_position == StatusBarPosition::Bottom)
             || (!show_top_status && (self.toast.is_some() || self.hints.is_some()));
-        let content = if overlay_open {
-            div().flex_1().h_full().bg(t.page).into_any_element()
-        } else {
-            let mut column = div().flex_1().h_full().flex().flex_col().overflow_hidden();
-            if show_top_status {
-                column = column.child(self.render_status(true, cx));
-            }
-            if self.show_address_bar && !self.app_mode {
-                column = column.child(self.render_address_bar(cx));
-            }
-            if self.extension_toolbar && !self.app_mode {
-                if let Some(bar) = self.render_extension_toolbar(cx) {
-                    column = column.child(bar);
-                }
-            }
-            if bookmarks_bar_shown(self.show_bookmarks_bar, self.bookmarks_new_tab_only, self.active().is_some()) && !self.app_mode {
-                column = column.child(self.render_bookmarks_bar(cx));
-            }
-            column.child(self.render_content(cx)).into_any_element()
-        };
         // A web app window starts chromeless; a popup tab brings the strip
         // back rather than hiding a tab the user cannot reach.
         let show_strip = !self.app_mode || self.hub.lock().tabs().count() > 1;
-        let mut main = div().flex_1().overflow_hidden();
-        if show_strip && !self.strip.folded {
-            main = match self.strip.placement {
-                tabstrip::Placement::Top => main.flex().flex_col().child(self.render_tab_bar(cx)).child(content),
-                tabstrip::Placement::Left => main.flex().child(self.render_tab_bar(cx)).child(content),
-                tabstrip::Placement::Right => main.flex().child(content).child(self.render_tab_bar(cx)),
-            };
+        let strip_visible = show_strip && !self.strip.folded;
+        let has_left_strip = strip_visible && self.strip.placement == tabstrip::Placement::Left;
+        let has_right_strip = strip_visible && self.strip.placement == tabstrip::Placement::Right;
+        let has_top_strip = strip_visible && self.strip.placement == tabstrip::Placement::Top;
+
+        let browser_card = if overlay_open {
+            div().flex_1().h_full().bg(t.page).into_any_element()
         } else {
-            main = main.flex().child(content);
+            let ext_bar = if self.extension_toolbar && !self.app_mode { self.render_extension_toolbar(cx) } else { None };
+            let show_bm_bar = bookmarks_bar_shown(self.show_bookmarks_bar, self.bookmarks_new_tab_only, self.active().is_some()) && !self.app_mode;
+            let login_fill = self.render_login_fill_banner(cx);
+            let login_save = self.render_login_save_banner(cx);
+            let has_top_bar = show_top_status
+                || (self.show_address_bar && !self.app_mode)
+                || ext_bar.is_some()
+                || show_bm_bar
+                || self.hub.agents_paused()
+                || self.challenge_handoff().is_some()
+                || login_fill.is_some()
+                || login_save.is_some();
+            self.web
+                .borrow_mut()
+                .set_corner_style(if self.app_mode { 0.0 } else { 10.0 }, !has_top_bar, !show_bottom_status);
+
+            let mut card = div().flex_1().h_full().flex().flex_col().overflow_hidden().bg(t.page);
+            if show_top_status {
+                card = card.child(self.render_status(true, cx));
+            }
+            if self.show_address_bar && !self.app_mode {
+                card = card.child(self.render_address_bar(cx));
+            }
+            if let Some(bar) = ext_bar {
+                card = card.child(bar);
+            }
+            if show_bm_bar {
+                card = card.child(self.render_bookmarks_bar(cx));
+            }
+            if self.hub.agents_paused() {
+                card = card.child(self.render_agent_banner(cx));
+            } else if self.challenge_handoff().is_some() {
+                card = card.child(self.render_challenge_banner(cx));
+            }
+            if let Some(banner) = login_fill {
+                card = card.child(banner);
+            }
+            if let Some(banner) = login_save {
+                card = card.child(banner);
+            }
+            card = card.child(self.render_content(cx));
+            // When hidden, a compact temporary bar still appears only for a
+            // toast or link hints so those messages stay visible above WKWebView.
+            if show_bottom_status {
+                card = card.child(self.render_status(false, cx));
+            }
+            if self.app_mode {
+                card.into_any_element()
+            } else {
+                card.rounded(px(12.))
+                    .border_1()
+                    .border_color(t.border.opacity(0.45))
+                    .shadow_md()
+                    .into_any_element()
+            }
+        };
+
+        // Frame the middle browser card on the unified shell canvas with
+        // balanced margins, clearing macOS traffic lights when the left strip
+        // is folded or placed on the right.
+        let stage = if self.app_mode {
+            div().flex_1().min_w_0().h_full().flex().overflow_hidden().child(browser_card)
+        } else {
+            let pad_top = if !has_left_strip && !has_top_strip { px(32.) } else if has_top_strip { px(2.) } else { px(8.) };
+            let pad_left = if has_left_strip { px(0.) } else { px(8.) };
+            let pad_right = if has_right_strip || self.inspector_open { px(0.) } else { px(8.) };
+            div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .flex()
+                .pt(pad_top)
+                .pb(px(8.))
+                .pl(pad_left)
+                .pr(pad_right)
+                .overflow_hidden()
+                .child(browser_card)
+        };
+
+        // Horizontal workspace: left sidebar, elevated center card, optional
+        // right tab strip, and right Agent/Inspector sidebar always sit side-by-side.
+        let mut workspace = div().flex_1().min_h_0().flex().overflow_hidden();
+        if has_left_strip {
+            workspace = workspace.child(self.render_tab_bar(cx));
+        }
+        workspace = workspace.child(stage);
+        if has_right_strip {
+            workspace = workspace.child(self.render_tab_bar(cx));
         }
         if self.inspector_open {
-            main = main.flex().child(self.render_inspector(cx));
+            workspace = workspace.child(self.render_inspector(cx));
         }
+
+        let mut main = div().flex_1().min_h_0().flex().flex_col().overflow_hidden();
+        if has_top_strip {
+            main = main.child(self.render_tab_bar(cx));
+        }
+        main = main.child(workspace);
+
         let mut root = div()
             .key_context("Relay")
             .track_focus(&self.focus)
@@ -4793,7 +4937,7 @@ impl Render for RelayApp {
             .relative()
             .flex()
             .flex_col()
-            .bg(t.background)
+            .bg(shell_bg)
             .text_color(t.text)
             .font_family(".SystemUIFont")
             .on_modifiers_changed(cx.listener(|app, event: &ModifiersChangedEvent, _, cx| {
@@ -5004,24 +5148,8 @@ impl Render for RelayApp {
         }
         select!(SelectTab1 => 0, SelectTab2 => 1, SelectTab3 => 2, SelectTab4 => 3, SelectTab5 => 4, SelectTab6 => 5, SelectTab7 => 6, SelectTab8 => 7, SelectTab9 => 8);
         root = root.child(main);
-        if self.hub.agents_paused() {
-            root = root.child(self.render_agent_banner(cx));
-        } else if self.challenge_handoff().is_some() {
-            root = root.child(self.render_challenge_banner(cx));
-        }
-        if let Some(banner) = self.render_login_fill_banner(cx) {
-            root = root.child(banner);
-        }
-        if let Some(banner) = self.render_login_save_banner(cx) {
-            root = root.child(banner);
-        }
-        // When hidden, a compact temporary bar still appears only for a toast
-        // or link hints so those messages stay visible above WKWebView.
-        if show_bottom_status {
-            root = root.child(self.render_status(false, cx));
-        }
         // The folded-strip pill is a small overlay over the page, not part of
-        // the layout: show it on a page too, or hiding the bottom bar leaves
+        // the layout: show it on a page too, or hiding the status bar leaves
         // ⌘S as the only way back.
         if show_strip && self.strip.folded && !overlay_open && !self.app_mode {
             root = root.child(self.render_folded_strip(cx));
@@ -5758,8 +5886,9 @@ pub(crate) fn load_start_background(raw: Option<&str>) -> (theme::StartBackgroun
     }
 }
 
-/// Pull the largest PNG-compressed image out of an ICO container. Old BMP
-/// entries are skipped rather than converted; most current sites ship PNG.
+/// Pull the largest usable image out of an ICO container: prefers embedded PNG
+/// entries, and falls back to decoding classic BMP-DIB entries (32/24/8/4/1-bit
+/// with AND transparency mask) into a standard RGBA PNG.
 fn ico_png(bytes: &[u8]) -> Option<Vec<u8>> {
     if !favicon_signature(bytes, "ico") {
         return None;
@@ -5768,7 +5897,8 @@ fn ico_png(bytes: &[u8]) -> Option<Vec<u8>> {
     if count == 0 || count > 64 || bytes.len() < 6 + count * 16 {
         return None;
     }
-    let mut best: Option<(u32, usize, usize)> = None;
+    let mut best_png: Option<(u32, usize, usize)> = None;
+    let mut best_bmp: Option<(u32, usize, usize, u32, u32)> = None;
     for i in 0..count {
         let entry = 6 + i * 16;
         let width = match bytes[entry] {
@@ -5782,15 +5912,309 @@ fn ico_png(bytes: &[u8]) -> Option<Vec<u8>> {
         let size = u32::from_le_bytes(bytes[entry + 8..entry + 12].try_into().ok()?) as usize;
         let offset = u32::from_le_bytes(bytes[entry + 12..entry + 16].try_into().ok()?) as usize;
         let end = offset.checked_add(size)?;
-        if size < 8 || end > bytes.len() || !bytes[offset..end].starts_with(b"\x89PNG\r\n\x1a\n") {
+        if size < 8 || end > bytes.len() {
             continue;
         }
         let area = width.saturating_mul(height);
-        if best.is_none_or(|(best_area, _, _)| area > best_area) {
-            best = Some((area, offset, size));
+        if bytes[offset..end].starts_with(b"\x89PNG\r\n\x1a\n") {
+            if best_png.is_none_or(|(best_area, _, _)| area > best_area) {
+                best_png = Some((area, offset, size));
+            }
+        } else if size >= 40 && best_bmp.is_none_or(|(best_area, _, _, _, _)| area > best_area) {
+            best_bmp = Some((area, offset, size, width, height));
         }
     }
-    best.map(|(_, offset, size)| bytes[offset..offset + size].to_vec())
+    if let Some((_, offset, size)) = best_png {
+        return Some(bytes[offset..offset + size].to_vec());
+    }
+    let (_, offset, size, dir_w, dir_h) = best_bmp?;
+    ico_bmp_dib_to_png(&bytes[offset..offset + size], dir_w, dir_h)
+}
+
+fn ico_bmp_dib_to_png(dib: &[u8], dir_w: u32, dir_h: u32) -> Option<Vec<u8>> {
+    if dib.len() < 40 {
+        return None;
+    }
+    let hdr_size = u32::from_le_bytes(dib[0..4].try_into().ok()?) as usize;
+    if hdr_size < 40 || hdr_size > dib.len() {
+        return None;
+    }
+    let raw_w = i32::from_le_bytes(dib[4..8].try_into().ok()?);
+    let raw_h = i32::from_le_bytes(dib[8..12].try_into().ok()?);
+    let bpp = u16::from_le_bytes(dib[14..16].try_into().ok()?);
+    let compression = u32::from_le_bytes(dib[16..20].try_into().ok()?);
+    let colors_used = u32::from_le_bytes(dib[32..36].try_into().ok()?) as usize;
+    if compression != 0 || !matches!(bpp, 1 | 4 | 8 | 24 | 32) {
+        return None;
+    }
+    let w = if raw_w > 0 { raw_w as u32 } else { dir_w };
+    let h = if raw_h != 0 { (raw_h.unsigned_abs() / 2).max(1) } else { dir_h };
+    if w == 0 || h == 0 || w > 256 || h > 256 {
+        return None;
+    }
+    let top_down = raw_h < 0;
+    let palette_entries = if bpp <= 8 {
+        if colors_used > 0 { colors_used.min(256) } else { 1usize << bpp }
+    } else {
+        0
+    };
+    let palette_bytes = palette_entries.checked_mul(4)?;
+    let pixel_start = hdr_size.checked_add(palette_bytes)?;
+    if pixel_start > dib.len() {
+        return None;
+    }
+    let palette = &dib[hdr_size..pixel_start];
+    let row_stride = (((w as usize) * (bpp as usize)).div_ceil(32)) * 4;
+    let xor_size = row_stride.checked_mul(h as usize)?;
+    let mask_start = pixel_start.checked_add(xor_size)?;
+    if mask_start > dib.len() {
+        return None;
+    }
+    let xor_data = &dib[pixel_start..mask_start];
+    let mask_stride = (w as usize).div_ceil(32) * 4;
+    let mask_size = mask_stride.checked_mul(h as usize)?;
+    let mask_data = (mask_start.checked_add(mask_size).is_some_and(|end| end <= dib.len()))
+        .then(|| &dib[mask_start..mask_start + mask_size]);
+
+    let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
+    let mut any_alpha = false;
+    for y in 0..h as usize {
+        let src_y = if top_down { y } else { (h as usize) - 1 - y };
+        let row = &xor_data[src_y * row_stride..(src_y + 1) * row_stride];
+        for x in 0..w as usize {
+            let dst = (y * (w as usize) + x) * 4;
+            match bpp {
+                32 => {
+                    let b = row[x * 4];
+                    let g = row[x * 4 + 1];
+                    let r = row[x * 4 + 2];
+                    let a = row[x * 4 + 3];
+                    if a != 0 {
+                        any_alpha = true;
+                    }
+                    rgba[dst..dst + 4].copy_from_slice(&[r, g, b, a]);
+                }
+                24 => {
+                    let b = row[x * 3];
+                    let g = row[x * 3 + 1];
+                    let r = row[x * 3 + 2];
+                    rgba[dst..dst + 4].copy_from_slice(&[r, g, b, 255]);
+                }
+                8 | 4 | 1 => {
+                    let idx = match bpp {
+                        8 => row[x] as usize,
+                        4 => {
+                            let byte = row[x / 2];
+                            (if x % 2 == 0 { byte >> 4 } else { byte & 0x0f }) as usize
+                        }
+                        _ => ((row[x / 8] >> (7 - (x % 8))) & 1) as usize,
+                    };
+                    if idx < palette_entries {
+                        let p = idx * 4;
+                        rgba[dst..dst + 4].copy_from_slice(&[palette[p + 2], palette[p + 1], palette[p], 255]);
+                    }
+                }
+                _ => return None,
+            }
+        }
+    }
+    if bpp != 32 || !any_alpha {
+        for y in 0..h as usize {
+            let src_y = if top_down { y } else { (h as usize) - 1 - y };
+            for x in 0..w as usize {
+                let dst = (y * (w as usize) + x) * 4;
+                let transparent = mask_data.is_some_and(|m| {
+                    let byte = m[src_y * mask_stride + (x / 8)];
+                    ((byte >> (7 - (x % 8))) & 1) != 0
+                });
+                rgba[dst + 3] = if transparent { 0 } else { 255 };
+            }
+        }
+    }
+    Some(encode_rgba_png(w, h, &rgba))
+}
+
+fn encode_rgba_png(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
+    fn crc32(parts: &[&[u8]]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for part in parts {
+            for &b in *part {
+                crc ^= u32::from(b);
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+                }
+            }
+        }
+        !crc
+    }
+    fn push_chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(tag);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&crc32(&[tag, data]).to_be_bytes());
+    }
+
+    let mut raw = Vec::with_capacity((h as usize) * (1 + (w as usize) * 4));
+    for y in 0..h as usize {
+        raw.push(0); // filter type None
+        let start = y * (w as usize) * 4;
+        raw.extend_from_slice(&rgba[start..start + (w as usize) * 4]);
+    }
+    // Wrap raw filtered scanlines in a valid zlib stream using stored deflate blocks.
+    let mut zlib = Vec::with_capacity(raw.len() + 32);
+    zlib.extend_from_slice(&[0x78, 0x01]);
+    let mut offset = 0usize;
+    while offset < raw.len() {
+        let chunk_len = (raw.len() - offset).min(65535);
+        let is_last = offset + chunk_len == raw.len();
+        zlib.push(if is_last { 0x01 } else { 0x00 });
+        let len16 = chunk_len as u16;
+        zlib.extend_from_slice(&len16.to_le_bytes());
+        zlib.extend_from_slice(&(!len16).to_le_bytes());
+        zlib.extend_from_slice(&raw[offset..offset + chunk_len]);
+        offset += chunk_len;
+    }
+    let (mut s1, mut s2) = (1u32, 0u32);
+    for &b in &raw {
+        s1 = (s1 + u32::from(b)) % 65521;
+        s2 = (s2 + s1) % 65521;
+    }
+    zlib.extend_from_slice(&((s2 << 16) | s1).to_be_bytes());
+
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&w.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&h.to_be_bytes());
+    ihdr[8] = 8; // 8-bit
+    ihdr[9] = 6; // RGBA
+    let mut png = Vec::with_capacity(zlib.len() + 64);
+    png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    push_chunk(&mut png, b"IHDR", &ihdr);
+    push_chunk(&mut png, b"IDAT", &zlib);
+    push_chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+/// Extract safe `http(s)` fallback favicon URLs reported by the page bridge
+/// when same-origin `fetch()` hit CORS.
+fn favicon_candidate_urls(reply: Option<&serde_json::Value>, tab_host: &str) -> Vec<String> {
+    let Some(list) = reply.and_then(|v| v.get("urls")).and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|v| v.as_str())
+        .filter(|url| favicon_url_allowed(tab_host, url))
+        .take(5)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Allow only `http(s)` icon URLs and block private/loopback/link-local hosts
+/// unless the tab itself is loaded from that exact host (prevents SSRF).
+pub(crate) fn favicon_url_allowed(tab_host: &str, url: &str) -> bool {
+    if url.len() > 2048 || url.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return false;
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return false;
+    }
+    let Some(cand_host) = host_of(url) else { return false };
+    let cand = cand_host.trim_matches(['[', ']']).to_ascii_lowercase();
+    if cand.is_empty() {
+        return false;
+    }
+    if cand == tab_host.trim_matches(['[', ']']).to_ascii_lowercase() {
+        return true;
+    }
+    if cand == "localhost" || cand.ends_with(".localhost") || cand.ends_with(".local") || cand.ends_with(".internal") {
+        return false;
+    }
+    if let Ok(ip) = cand.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                !(v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast() || v4.is_multicast())
+            }
+            std::net::IpAddr::V6(v6) => {
+                let seg0 = v6.segments()[0];
+                let is_ula = (seg0 & 0xfe00) == 0xfc00;
+                let is_link_local = (seg0 & 0xffc0) == 0xfe80;
+                !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || is_ula || is_link_local || v6.to_ipv4_mapped().is_some())
+            }
+        };
+    }
+    true
+}
+
+/// Detect, validate, and normalize raw favicon bytes fetched natively.
+pub(crate) fn favicon_bytes_to_payload(mut bytes: Vec<u8>) -> Option<(Vec<u8>, &'static str)> {
+    if bytes.is_empty() || bytes.len() > 256 * 1024 {
+        return None;
+    }
+    let mut ext = if favicon_signature(&bytes, "png") {
+        "png"
+    } else if favicon_signature(&bytes, "ico") {
+        "ico"
+    } else if favicon_signature(&bytes, "svg") {
+        "svg"
+    } else if favicon_signature(&bytes, "webp") {
+        "webp"
+    } else if favicon_signature(&bytes, "jpg") {
+        "jpg"
+    } else if favicon_signature(&bytes, "gif") {
+        "gif"
+    } else {
+        return None;
+    };
+    if ext == "ico" {
+        bytes = ico_png(&bytes)?;
+        ext = "png";
+    }
+    if !favicon_pixels_ok(&bytes, ext) {
+        return None;
+    }
+    (bytes.len() <= 256 * 1024).then_some((bytes, ext))
+}
+
+/// Cookie-free native fallback fetch for cross-origin CDN favicons (e.g.
+/// GitHub, Google, YouTube, Reddit) whose `fetch()` is blocked by CORS.
+fn fetch_favicon_candidates(tab_host: &str, urls: &[String]) -> Option<(Vec<u8>, &'static str)> {
+    use std::io::Read;
+    for url in urls.iter().take(5) {
+        if !favicon_url_allowed(tab_host, url) {
+            continue;
+        }
+        let mut child = std::process::Command::new("curl")
+            .args([
+                "--silent",
+                "--fail",
+                "--location",
+                "--max-redirs",
+                "3",
+                "--max-time",
+                "4",
+                "--max-filesize",
+                "262144",
+                "--proto",
+                "=http,https",
+                "--globoff",
+                "--",
+                url,
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let mut buf = Vec::new();
+        if let Some(stdout) = child.stdout.take() {
+            let _ = stdout.take(256 * 1024 + 1).read_to_end(&mut buf);
+        }
+        let status = child.wait().ok();
+        if status.is_some_and(|s| s.success()) {
+            if let Some(payload) = favicon_bytes_to_payload(buf) {
+                return Some(payload);
+            }
+        }
+    }
+    None
 }
 
 fn favicon_decode(bytes: &[u8], ext: &str) -> Option<Image> {

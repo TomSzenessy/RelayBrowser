@@ -97,7 +97,7 @@ impl AccentChoice {
     pub(crate) fn color(self, dark: bool) -> (Hsla, Hsla) {
         let (accent, overlay) = match (self, dark) {
             (Self::Blue, true) => (0x5b8cff, 0x5b8cff33),
-            (Self::Blue, false) => (0x2f6bff, 0x2f6bff24),
+            (Self::Blue, false) => (0x245fe8, 0x245fe824),
             (Self::Purple, true) => (0xb07cff, 0xb07cff38),
             (Self::Purple, false) => (0x7a3cff, 0x7a3cff24),
             (Self::Green, true) => (0x4ecb8d, 0x4ecb8d38),
@@ -438,14 +438,14 @@ impl SpaceGradient {
 }
 
 /// Space surface fill: default, single colour, preset gradient, or custom
-/// 2–3 colour gradient drawn from the AA-verified `GroupColor` set.
+/// 2-colour gradient drawn from the AA-verified `GroupColor` set.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SpaceFill {
     #[default]
     None,
     Color(GroupColor),
     Preset(SpaceGradient),
-    Custom(Vec<GroupColor>),
+    Custom(GroupColor, GroupColor),
 }
 
 impl SpaceFill {
@@ -461,9 +461,9 @@ impl SpaceFill {
             return SpaceGradient::parse(rest).map(Self::Preset).unwrap_or(Self::None);
         }
         if let Some(rest) = s.strip_prefix("custom:") {
-            let colors: Vec<GroupColor> = rest.split(',').filter_map(GroupColor::parse).take(3).collect();
+            let colors: Vec<GroupColor> = rest.split(',').filter_map(GroupColor::parse).collect();
             if colors.len() >= 2 {
-                return Self::Custom(colors);
+                return Self::Custom(colors[0], *colors.last().unwrap_or(&colors[0]));
             }
         }
         Self::None
@@ -474,11 +474,7 @@ impl SpaceFill {
             Self::None => "none".into(),
             Self::Color(c) => format!("color:{}", c.as_str()),
             Self::Preset(g) => format!("preset:{}", g.as_str()),
-            Self::Custom(list) if list.len() >= 2 => {
-                let joined = list.iter().take(3).map(|c| c.as_str()).collect::<Vec<_>>().join(",");
-                format!("custom:{joined}")
-            }
-            Self::Custom(_) => "none".into(),
+            Self::Custom(a, b) => format!("custom:{},{}", a.as_str(), b.as_str()),
         }
     }
 }
@@ -519,12 +515,9 @@ impl SpaceLook {
                 let (a, b) = g.pair();
                 Some((blend_tint_over(a.tint(dark), surface), blend_tint_over(b.tint(dark), surface)))
             }
-            SpaceFill::Custom(list) if list.len() >= 2 => {
-                let a = list[0];
-                let b = *list.last().unwrap_or(&a);
+            SpaceFill::Custom(a, b) => {
                 Some((blend_tint_over(a.tint(dark), surface), blend_tint_over(b.tint(dark), surface)))
             }
-            SpaceFill::Custom(_) => None,
         }
     }
 
@@ -541,7 +534,7 @@ impl SpaceLook {
             SpaceFill::None => None,
             SpaceFill::Color(c) => Some(c.dot(dark)),
             SpaceFill::Preset(g) => Some(g.pair().0.dot(dark)),
-            SpaceFill::Custom(list) => list.first().map(|c| c.dot(dark)),
+            SpaceFill::Custom(a, _) => Some(a.dot(dark)),
         }
     }
 }
@@ -562,6 +555,8 @@ pub struct Theme {
     pub muted: Hsla,
     pub code: Hsla,
     pub accent: Hsla,
+    /// WCAG AA foreground colour paired with `accent` fills (buttons, unread badges).
+    pub on_accent: Hsla,
     pub active: Hsla,
     pub hover: Hsla,
     pub agent: Hsla,
@@ -603,6 +598,7 @@ impl Theme {
             muted: rgb(0x9a9ca3).into(),
             code: rgb(0xc9d1ff).into(),
             accent: rgb(0x5b8cff).into(),
+            on_accent: rgb(0x111216).into(),
             active: rgba(0x5b8cff33).into(),
             hover: rgba(0xffffff12).into(),
             agent: rgb(0xb07cff).into(),
@@ -624,8 +620,9 @@ impl Theme {
             text: rgb(0x1c1c1f).into(),
             muted: rgb(0x6b6d75).into(),
             code: rgb(0x2a3a8f).into(),
-            accent: rgb(0x2f6bff).into(),
-            active: rgba(0x2f6bff24).into(),
+            accent: rgb(0x245fe8).into(),
+            on_accent: rgb(0xffffff).into(),
+            active: rgba(0x245fe824).into(),
             hover: rgba(0x0000000d).into(),
             agent: rgb(0x7a3cff).into(),
             agent_bg: rgba(0x7a3cff1f).into(),
@@ -669,6 +666,7 @@ mod tests {
             ("muted/surface", t.muted, t.surface, 4.5),
             ("code/surface", t.code, t.surface, 4.5),
             ("accent/surface", t.accent, t.surface, 3.0),
+            ("on_accent/accent", t.on_accent, t.accent, 4.5),
             ("error/surface", t.error, t.surface, 4.5),
             ("error/background", t.error, t.background, 4.5),
             ("warn/surface", t.warn, t.surface, 4.5),
@@ -795,7 +793,7 @@ mod tests {
         for g in SpaceGradient::ALL {
             samples.push(SpaceFill::Preset(g));
         }
-        samples.push(SpaceFill::Custom(vec![GroupColor::Blue, GroupColor::Teal, GroupColor::Pink]));
+        samples.push(SpaceFill::Custom(GroupColor::Blue, GroupColor::Pink));
 
         for (mode, dark, theme) in [("dark", true, Theme::dark()), ("light", false, Theme::light())] {
             for fill in &samples {
@@ -811,6 +809,8 @@ mod tests {
                 }
             }
         }
+        // Legacy 3-colour custom setting still parses cleanly as a 2-stop start->end gradient.
+        assert_eq!(SpaceFill::parse("custom:blue,teal,pink"), SpaceFill::Custom(GroupColor::Blue, GroupColor::Pink));
         // Invalid/deleted gradient or icon falls back cleanly to default.
         assert_eq!(SpaceFill::parse("preset:neon"), SpaceFill::None);
         assert_eq!(SpaceFill::parse("custom:onlyone"), SpaceFill::None);

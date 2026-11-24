@@ -56,20 +56,24 @@ theme_color, background_color, manifest_url, icon}` or
 `{available: false, reason}`. Rust validates the origin, URL scheme, icon
 signature, and sizes again before writing an installed `.app`; the page is
 untrusted, so a manifest can never point the installer at another site. The
-`favicon` is async too: it tries the page's `<link rel=icon>` /
-`apple-touch-icon` URLs, then `/favicon.ico`, with `same-origin` credentials,
-a 3 s timeout, a 256 KB cap, and a PNG/JPEG/WebP/GIF/SVG/ICO whitelist
-(`image/x-icon` and `image/vnd.microsoft.icon` included). A blob with no
-`Content-Type` is typed from a known image extension or an extensionless
-`/favicon` path; an unknown extension keeps the server's type and is refused
-if that is not an image. The encoded payload is rebuilt with the declared
-mime. It replies `{available: true, data: "data:<mime>;base64,…",
-mime}` or `{available: false}`; text is refused. The shell validates the
-prefix, mime, byte signature, decoded size, and pixel dimensions (max 1024²,
-2 MP) before caching and painting it. An ICO's largest PNG-compressed entry is
-extracted; BMP-only ICOs fall back to the letter badge. The shell asks only
-after the page has a DOM and retries once per load, so the first request can
-no longer cache a negative answer for a blank tab.
+`favicon` is async too: it ranks the page's `<link rel=icon>` /
+`apple-touch-icon` URLs and `/favicon.ico` (preferring raster PNG/WebP/ICO over
+SVG) and fetches them with `same-origin` credentials, a 3 s timeout, a 256 KB
+cap, and a PNG/JPEG/WebP/GIF/SVG/ICO whitelist (`image/x-icon` and
+`image/vnd.microsoft.icon` included). A blob with no `Content-Type` is typed
+from a known image extension or an extensionless `/favicon` path; an unknown
+extension keeps the server's type and is refused if that is not an image. The
+encoded payload is rebuilt with the declared mime. It replies
+`{available: true, data: "data:<mime>;base64,…", mime}` or
+`{available: false, urls: […]}` (carrying up to 5 `http(s)` candidate URLs when
+in-page `fetch()` hits CORS on a cross-origin CDN); text is refused. The shell
+validates the prefix, mime, byte signature, decoded size, and pixel dimensions
+(max 1024², 2 MP) before caching and painting it, and falls back to a
+cookie-free, SSRF-guarded native fetch when `urls` is returned. For ICO
+containers, the largest PNG-compressed entry is extracted, or else the largest
+classic BMP-DIB entry (32/24/8/4/1-bit with AND mask) is converted to RGBA PNG.
+The shell asks only after the page has a DOM and retries once per load, so the
+first request can no longer cache a negative answer for a blank tab.
 
 `chrome-shims.js` also adapts the callback form of the common Chrome
 namespaces (`storage`, `runtime.sendMessage`, `tabs`, `scripting`,

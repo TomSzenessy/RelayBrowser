@@ -547,7 +547,7 @@ impl RelayApp {
                                     .bg(if recording { t.accent } else { t.background })
                                     .text_size(px(12.))
                                     .font_family("Menlo")
-                                    .text_color(if recording { gpui::rgb(0xffffff).into() } else { t.text })
+                                    .text_color(if recording { t.on_accent } else { t.text })
                                     .child(SharedString::from(key)),
                             ),
                     )
@@ -805,7 +805,7 @@ impl RelayApp {
                                 .rounded(px(6.))
                                 .bg(t.accent)
                                 .text_size(px(12.))
-                                .text_color(gpui::rgb(0xffffff))
+                                .text_color(t.on_accent)
                                 .cursor_pointer()
                                 .hover(|s| s.opacity(0.9))
                                 .on_click(cx.listener(|app, _, _, cx| app.save_profile_prompt(cx)))
@@ -984,10 +984,10 @@ impl RelayApp {
                     .child(grad.label()),
             );
         }
-        let custom_active = matches!(prompt.look.fill, theme::SpaceFill::Custom(_));
-        let custom_stops = match &prompt.look.fill {
-            theme::SpaceFill::Custom(v) => v.clone(),
-            _ => vec![theme::GroupColor::Blue, theme::GroupColor::Teal],
+        let custom_active = matches!(prompt.look.fill, theme::SpaceFill::Custom(_, _));
+        let (custom_start, custom_end) = match prompt.look.fill {
+            theme::SpaceFill::Custom(a, b) => (a, b),
+            _ => (theme::GroupColor::Blue, theme::GroupColor::Teal),
         };
         grad_row = grad_row.child(
             div()
@@ -1002,16 +1002,16 @@ impl RelayApp {
                 .hover(|s| s.bg(t.hover).text_color(t.text))
                 .on_click(cx.listener(move |app, _, _, cx| {
                     if let Some(p) = app.space_prompt.as_mut() {
-                        p.look.fill = theme::SpaceFill::Custom(custom_stops.clone());
+                        p.look.fill = theme::SpaceFill::Custom(custom_start, custom_end);
                     }
                     cx.notify();
                 }))
-                .child("Custom 2–3"),
+                .child("Custom"),
         );
-        let custom_editor = if let theme::SpaceFill::Custom(stops) = &prompt.look.fill {
+        let custom_editor = if let theme::SpaceFill::Custom(a, b) = prompt.look.fill {
             let mut row = div().flex().items_center().gap_1p5();
-            for (idx, color) in stops.iter().enumerate() {
-                let next = theme::GroupColor::ALL[(theme::GroupColor::ALL.iter().position(|c| c == color).unwrap_or(0) + 1) % theme::GroupColor::ALL.len()];
+            for (idx, (label, color)) in [("Start", a), ("End", b)].into_iter().enumerate() {
+                let next = theme::GroupColor::ALL[(theme::GroupColor::ALL.iter().position(|c| *c == color).unwrap_or(0) + 1) % theme::GroupColor::ALL.len()];
                 row = row.child(
                     div()
                         .id(SharedString::from(format!("space-custom-stop-{idx}")))
@@ -1028,65 +1028,18 @@ impl RelayApp {
                         .hover(|s| s.bg(t.hover))
                         .on_click(cx.listener(move |app, _, _, cx| {
                             if let Some(p) = app.space_prompt.as_mut() {
-                                if let theme::SpaceFill::Custom(list) = &mut p.look.fill {
-                                    if let Some(slot) = list.get_mut(idx) {
-                                        *slot = next;
-                                    }
+                                if let theme::SpaceFill::Custom(sa, sb) = p.look.fill {
+                                    p.look.fill = if idx == 0 {
+                                        theme::SpaceFill::Custom(next, sb)
+                                    } else {
+                                        theme::SpaceFill::Custom(sa, next)
+                                    };
                                 }
                             }
                             cx.notify();
                         }))
                         .child(div().size(px(7.)).rounded_full().bg(color.dot(dark)))
-                        .child(SharedString::from(format!("Stop {}: {}", idx + 1, color.label()))),
-                );
-            }
-            if stops.len() < 3 {
-                row = row.child(
-                    div()
-                        .id("space-custom-add")
-                        .px_2()
-                        .py_0p5()
-                        .rounded(px(5.))
-                        .bg(t.well)
-                        .text_size(px(10.))
-                        .text_color(t.muted)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(t.hover).text_color(t.text))
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            if let Some(p) = app.space_prompt.as_mut() {
-                                if let theme::SpaceFill::Custom(list) = &mut p.look.fill {
-                                    if list.len() < 3 {
-                                        list.push(theme::GroupColor::Pink);
-                                    }
-                                }
-                            }
-                            cx.notify();
-                        }))
-                        .child("+ 3rd"),
-                );
-            } else {
-                row = row.child(
-                    div()
-                        .id("space-custom-rem")
-                        .px_2()
-                        .py_0p5()
-                        .rounded(px(5.))
-                        .bg(t.well)
-                        .text_size(px(10.))
-                        .text_color(t.muted)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(t.hover).text_color(t.text))
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            if let Some(p) = app.space_prompt.as_mut() {
-                                if let theme::SpaceFill::Custom(list) = &mut p.look.fill {
-                                    if list.len() > 2 {
-                                        list.pop();
-                                    }
-                                }
-                            }
-                            cx.notify();
-                        }))
-                        .child("2 stops"),
+                        .child(SharedString::from(format!("{label}: {}", color.label()))),
                 );
             }
             Some(row)
@@ -1162,7 +1115,7 @@ impl RelayApp {
                                 .rounded(px(6.))
                                 .bg(t.accent)
                                 .text_size(px(12.))
-                                .text_color(gpui::rgb(0xffffff))
+                                .text_color(t.on_accent)
                                 .cursor_pointer()
                                 .hover(|s| s.opacity(0.9))
                                 .on_click(cx.listener(|app, _, _, cx| app.save_space_prompt(cx)))
@@ -1332,7 +1285,7 @@ impl RelayApp {
                                 .rounded(px(6.))
                                 .bg(t.accent)
                                 .text_size(px(12.))
-                                .text_color(gpui::rgb(0xffffff))
+                                .text_color(t.on_accent)
                                 .cursor_pointer()
                                 .hover(|s| s.opacity(0.9))
                                 .on_click(cx.listener(|app, _, _, cx| app.save_group_prompt(cx)))
@@ -1408,7 +1361,7 @@ impl RelayApp {
                                 .rounded(px(6.))
                                 .bg(t.accent)
                                 .text_size(px(12.))
-                                .text_color(gpui::rgb(0xffffff))
+                                .text_color(t.on_accent)
                                 .cursor_pointer()
                                 .hover(|s| s.opacity(0.9))
                                 .on_click(cx.listener(|app, _, _, cx| app.confirm_close_action(cx)))

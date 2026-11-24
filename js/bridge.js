@@ -955,24 +955,30 @@
   }
   function favicon() {
     var seen = Object.create(null);
-    var urls = [];
-    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]').forEach(function (link) {
+    var links = [];
+    document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="apple-touch-icon-precomposed"]').forEach(function (link) {
       if (!link.href || seen[link.href]) return;
       seen[link.href] = true;
-      urls.push(link.href);
+      var href = String(link.href);
+      var clean = href.split(/[?#]/)[0].toLowerCase();
+      var score = /\.png$/.test(clean) ? 5 : /\.webp$/.test(clean) ? 4 : /\.ico$/.test(clean) ? 3 : /\.svg$/.test(clean) ? 1 : 3;
+      if (/apple-touch-icon/i.test(link.rel || "")) score += 1;
+      links.push({ url: href, score: score });
     });
     try {
       var fallback = new URL("/favicon.ico", location.href).href;
-      if (!seen[fallback]) urls.push(fallback);
+      if (!seen[fallback]) links.push({ url: fallback, score: 2 });
     } catch (e) {}
-    urls = urls.slice(0, 5);
+    links.sort(function (a, b) { return b.score - a.score; });
+    var urls = links.map(function (item) { return item.url; }).slice(0, 5);
+    var httpUrls = urls.filter(function (u) { return /^https?:\/\//i.test(u); });
     var chain = Promise.reject(new Error("no icon candidates"));
     urls.forEach(function (url) {
       chain = chain.catch(function () { return faviconData(url); });
     });
     return chain.then(
       function (icon) { return { available: true, data: icon.data, mime: icon.mime }; },
-      function () { return { available: false }; }
+      function () { return { available: false, urls: httpUrls }; }
     );
   }
 

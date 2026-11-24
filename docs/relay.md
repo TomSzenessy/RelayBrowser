@@ -537,17 +537,28 @@ is checked for WCAG AA contrast (dot ≥ 3:1 and heading text/muted on tinted
 surface ≥ 4.5:1) in `theme.rs`; unknown or deleted colours fall back to the
 deterministic name hash without losing the group.
 
-The compact 22 pt status bar supports `status_bar_position = top | bottom | hidden`
-(default `hidden`; legacy `bottom_bar` remains supported). The 360 pt right
-sidebar (`✦ Agent` / `Inspector`) docks live agent status, per-site policy,
-agent-owned tabs, recent MCP audit activity, shell-write client grants, and the
+The compact 24 pt status bar supports `status_bar_position = top | bottom | hidden`
+(default `hidden`; legacy `bottom_bar` stays bidirectionally synced via CLI and
+settings) and sits cleanly inside the elevated, rounded middle browser card
+(12 pt card radius; embedded macOS `WKWebView` clips to continuous 10 pt squircle
+corners, disabled in chromeless app mode). Both the left tab strip and the 340 pt
+right sidebar (`Agent` / `Inspector`) sit seamlessly on the unified shell canvas
+without intersecting 1 px dividing borders. The Agent pane docks live agent status,
+active site policy, agent-owned tabs, collapsible MCP & activity controls, and the
 side-by-side AI page assistant directly beside the live `WKWebView`.
 
 Spaces persist optional styling in `space_looks` JSON (`fill`: `none`,
-`color:<name>`, `preset:<name>`, or `custom:<c1,c2[,c3]>`; `icon`: curated
-glyph name). The active space tints the tab strip and bookmarks bar; every
+`color:<name>`, `preset:<name>`, or `custom:<c1,c2>`; `icon`: curated
+glyph name). The active space tints the unified shell canvas and bookmarks bar; every
 swatch and gradient endpoint is verified WCAG AA against `text` and `muted` in
 `theme.rs`, and unknown values fall back to default without losing the space.
+
+Website favicons decode PNG, JPEG, WebP, GIF, SVG, and both PNG-compressed and
+classic BMP-DIB `.ico` containers (32/24/8/4/1-bit with AND mask) up to 256 KB.
+When an in-page `fetch()` hits CORS on a cross-origin CDN favicon, the bridge
+returns the page's declared `http(s)` icon URLs and the shell performs a
+cookie-free, timeout/size-bounded, SSRF-guarded fallback fetch before caching
+privately (`0600`) per host.
 
 Enabled WebExtensions surface their `WKWebExtensionAction` badge text (trimmed,
 control-stripped, bounded to 4 chars) and unread flag on the extension toolbar;

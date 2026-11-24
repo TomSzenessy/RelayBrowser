@@ -173,6 +173,10 @@ mod imp {
             self.engine.set_appearance(dark);
         }
 
+        pub fn set_corner_style(&mut self, radius: f64, round_top: bool, round_bottom: bool) {
+            self.engine.set_corner_style(radius, round_top, round_bottom);
+        }
+
         /// Select the next (or previous) match; the answer arrives as
         /// [`WebEvent::Found`].
         pub fn find(&self, tab: TabId, text: &str, backwards: bool, case_sensitive: bool) {
@@ -427,6 +431,7 @@ mod imp {
         pub fn set_zoom(&self, _tab: TabId, _zoom: f64) {}
         pub fn set_user_agent(&self, _tab: TabId, _ua: Option<&str>) {}
         pub fn set_appearance(&mut self, _dark: Option<bool>) {}
+        pub fn set_corner_style(&mut self, _radius: f64, _round_top: bool, _round_bottom: bool) {}
         pub fn find(&self, _tab: TabId, _text: &str, _backwards: bool, _case_sensitive: bool) {}
         pub fn slept_scroll_y(&self, _tab: TabId) -> Option<f64> {
             None

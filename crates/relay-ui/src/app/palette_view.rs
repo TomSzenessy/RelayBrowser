@@ -214,12 +214,19 @@ impl RelayApp {
                 _ => item.detail(),
             };
             let item_c = item.clone();
+            let icon = match item {
+                Item::Tab { title, url, .. } | Item::History { title, url } | Item::Bookmark { title, url } => {
+                    Some(self.site_icon(url, title, 15.))
+                }
+                Item::Open(url) => Some(self.site_icon(url, url, 15.)),
+                _ => None,
+            };
             list = list.child(
                 div()
                     .id(("pal", i))
                     .flex()
                     .items_center()
-                    .gap_3()
+                    .gap_2p5()
                     .h(px(32.))
                     .px_3()
                     .mx_1()
@@ -232,6 +239,7 @@ impl RelayApp {
                         app.run_item(item_c.clone(), cx);
                         cx.notify();
                     }))
+                    .when_some(icon, |d, el| d.child(el))
                     .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(13.)).child(SharedString::from(item.title())))
                     .child(
                         div()
