@@ -305,6 +305,8 @@ pub struct RelayApp {
     settings_tab: SettingsTab,
     settings_dropdown: Option<SettingsDropdown>,
     ext_busy: bool,
+    /// Web Store URL or 32-char id typed in Settings → Extensions.
+    ext_input: String,
     /// Load failures from WKWebExtension, shown in Settings → Extensions.
     ext_errors: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     blocking: bool,
@@ -577,6 +579,7 @@ impl RelayApp {
             settings_tab: SettingsTab::General,
             settings_dropdown: None,
             ext_busy: false,
+            ext_input: String::new(),
             ext_errors: std::rc::Rc::default(),
             blocking,
             hide_cookie_banners,
@@ -1573,13 +1576,22 @@ impl RelayApp {
     }
 
     pub(super) fn install_extension_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        let raw = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+        self.install_extension(&raw, cx);
+    }
+
+    pub(super) fn install_extension_from_input(&mut self, cx: &mut Context<Self>) {
+        let raw = std::mem::take(&mut self.ext_input);
+        self.install_extension(&raw, cx);
+    }
+
+    fn install_extension(&mut self, raw: &str, cx: &mut Context<Self>) {
         if self.ext_busy {
             self.toast("Extension install already in progress…");
             return;
         }
-        let raw = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
-        let Some(id) = relay_extensions::crx::extract_extension_id(&raw) else {
-            self.toast("Copy a Chrome Web Store URL or 32-char extension ID first");
+        let Some(id) = relay_extensions::crx::extract_extension_id(raw) else {
+            self.toast("Enter a Chrome Web Store URL or 32-char extension ID");
             cx.notify();
             return;
         };
@@ -2749,11 +2761,29 @@ impl RelayApp {
             return;
         }
         if self.settings_open {
-            if k.key.as_str() == "escape" {
-                self.close_settings();
-                cx.stop_propagation();
-                cx.notify();
+            match k.key.as_str() {
+                "escape" => self.close_settings(),
+                _ if self.settings_tab == SettingsTab::Extensions => match k.key.as_str() {
+                    "enter" => self.install_extension_from_input(cx),
+                    "backspace" => {
+                        if k.modifiers.secondary() || k.modifiers.alt {
+                            self.ext_input.clear();
+                        } else {
+                            self.ext_input.pop();
+                        }
+                    }
+                    _ => {
+                        if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                            if self.ext_input.chars().count() < 300 {
+                                self.ext_input.push_str(c);
+                            }
+                        }
+                    }
+                },
+                _ => {}
             }
+            cx.stop_propagation();
+            cx.notify();
             return;
         }
         if let Some(f) = self.find.as_mut() {

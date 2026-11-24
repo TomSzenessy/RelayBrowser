@@ -1539,11 +1539,51 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let ext_install_btn = btn("settings-ext-install-field", "Install".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.install_extension_from_input(cx);
+                    }))
+                    .into_any_element();
+                let ext_field = div()
+                    .id("settings-ext-input")
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(30.))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .rounded(px(7.))
+                    .bg(t.well)
+                    .text_size(px(12.))
+                    .text_color(if self.ext_input.is_empty() { t.muted } else { t.text })
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .cursor_text()
+                    .on_click(cx.listener(|app, _, _, _cx| {
+                        app.web.borrow().focus_shell();
+                    }))
+                    .child(SharedString::from(if self.ext_input.is_empty() {
+                        "Chrome Web Store URL or 32-char ID".to_string()
+                    } else {
+                        self.ext_input.clone()
+                    }));
                 let actions_card = div()
                     .flex()
                     .flex_col()
                     .child(row("Import Chrome extensions", Some("Fetches your Chrome extensions via CRX3 and loads them in WebKit (macOS 15.4+)"), import_ext_btn))
-                    .child(row("Install from Chrome Web Store", Some("Copy any CWS URL or 32-char ID, then Install; this grants every requested permission and host pattern"), paste_ext_btn))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_4()
+                            .py_3()
+                            .child(div().flex_1().min_w_0().flex().flex_col().gap_0p5().child(div().text_size(px(13.)).text_color(t.text).child("Install by URL or ID")).child(div().text_size(px(11.)).text_color(t.muted).child("Type or paste a Chrome Web Store address, then Install; this grants every requested permission and host pattern")))
+                            .child(ext_field)
+                            .child(div().flex_shrink_0().child(ext_install_btn)),
+                    )
+                    .child(row("Install from Clipboard", Some("Copy any CWS URL or 32-char ID, then Install"), paste_ext_btn))
                     .child(row("Browse Chrome Web Store", Some("Find extensions, copy their URL, and install directly"), store_btn));
                 let mut list_card = div().flex().flex_col();
                 if installed.is_empty() {
