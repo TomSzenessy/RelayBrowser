@@ -135,6 +135,8 @@ action_table! {
     NewPrivateTab => "new-private-tab", "New private tab", "secondary-shift-n";
     Print => "print", "Print page", "secondary-p";
     ToggleBottomBar => "bottom-bar", "Show / hide bottom bar", "secondary-alt-b";
+    FoldAllGroups => "fold-groups", "Fold all tab groups", "secondary-alt-[";
+    UnfoldAllGroups => "unfold-groups", "Unfold all tab groups", "secondary-alt-]";
 }
 
 /// The headings Settings → Keyboard shortcuts draws, in order. A new action
@@ -167,7 +169,9 @@ impl ActionId {
             | ActionId::TogglePin
             | ActionId::ToggleTabStrip
             | ActionId::NextTabStripPosition
-            | ActionId::NewPrivateTab => "Tabs",
+            | ActionId::NewPrivateTab
+            | ActionId::FoldAllGroups
+            | ActionId::UnfoldAllGroups => "Tabs",
             ActionId::Find
             | ActionId::FindNext
             | ActionId::FindPrevious
@@ -350,7 +354,7 @@ mod tests {
             assert!(ids.insert(id.as_str()), "duplicate action id {}", id.as_str());
             assert!(labels.insert(id.label()), "duplicate Settings label {}", id.label());
         }
-        assert_eq!(ActionId::ALL.len(), 54);
+        assert_eq!(ActionId::ALL.len(), 56);
     }
 
     #[test]

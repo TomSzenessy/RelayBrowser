@@ -7,7 +7,7 @@ use crate::protocol::{
     Challenge, Command, CommandResult, ConsoleEntry, DomNode, NetworkEntry, NodeId, Op, PageMessage,
 };
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, watch};
@@ -420,6 +420,8 @@ pub struct TabView {
     pub playing_audio: bool,
     pub pinned: bool,
     pub private: bool,
+    /// Optional tab-group heading; `None` is an ungrouped tab.
+    pub group: Option<String>,
 }
 
 /// Everything known about one tab.
@@ -441,6 +443,8 @@ pub struct TabState {
     pub last_active_at: Instant,
     pub pinned: bool,
     pub private: bool,
+    /// Optional tab-group heading; `None` is an ungrouped tab.
+    pub group: Option<String>,
     pub playing_audio: bool,
     pub sleeping: bool,
     /// Why the last navigation failed (WebKit's message), cleared on reload.
@@ -452,6 +456,19 @@ pub struct TabState {
     pub hotkeys: Vec<String>,
     /// Last Markdown rendering of the page (`Op::Markdown`); cleared on load.
     pub markdown: Option<String>,
+}
+
+/// Trim, drop control characters, collapse whitespace, and cap a group name
+/// at 40 characters. Empty or whitespace-only input is not a group.
+pub fn normalize_group_name(raw: &str) -> Option<String> {
+    let text: String = raw
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| if c == ',' || c == ';' { ' ' } else { c })
+        .collect();
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    (!trimmed.is_empty()).then(|| trimmed.chars().take(40).collect::<String>().trim_end().to_string())
 }
 
 impl TabState {
@@ -471,6 +488,7 @@ impl TabState {
             last_active_at: Instant::now(),
             pinned: false,
             private: false,
+            group: None,
             playing_audio: false,
             sleeping: false,
             load_error: None,
@@ -487,6 +505,7 @@ impl TabState {
             title: self.title.clone(),
             owner: self.owner,
             sleeping: self.sleeping,
+            group: self.group.clone(),
             waiting_for_human: self.challenge,
             load_error: self.load_error.clone(),
             console_errors: self.console.iter().filter(|c| c.level == crate::protocol::ConsoleLevel::Error).count(),
@@ -502,6 +521,7 @@ pub struct TabSummary {
     pub title: String,
     pub owner: Owner,
     pub sleeping: bool,
+    pub group: Option<String>,
     pub load_error: Option<String>,
     pub waiting_for_human: Option<Challenge>,
     pub console_errors: usize,
@@ -950,8 +970,32 @@ impl Hub {
                 playing_audio: t.playing_audio,
                 pinned: t.pinned,
                 private: t.private,
+                group: t.group.clone(),
             })
             .collect()
+    }
+
+    /// Move a tab into a named group, or out of one with `None`/empty. Names
+    /// are local UI data: trimmed, control characters removed, 40 chars max.
+    pub fn set_tab_group(&mut self, id: TabId, group: Option<&str>) -> Option<Option<String>> {
+        let clean = group.and_then(normalize_group_name);
+        let t = self.tabs.get_mut(&id)?;
+        t.group = clean;
+        Some(t.group.clone())
+    }
+
+    /// Group names in first-tab display order, each once.
+    pub fn tab_groups(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for id in &self.order {
+            if let Some(group) = self.tabs.get(id).and_then(|t| t.group.clone()) {
+                if seen.insert(group.clone()) {
+                    out.push(group);
+                }
+            }
+        }
+        out
     }
 
     /// Pin or unpin a tab. Pinned tabs form a block at the top of the order:
@@ -1477,6 +1521,27 @@ mod tests {
         assert_eq!(hub.lock().tab_ids(), &[d, c, a, b], "unpinning lands right after the block");
         assert!(!hub.lock().tab(c).unwrap().pinned);
         assert_eq!(hub.update(|h| h.set_pinned(999, true)), None);
+    }
+
+    #[test]
+    fn group_names_are_normalized_and_ordered_by_first_tab() {
+        assert_eq!(normalize_group_name("  Work   stuff "), Some("Work stuff".into()));
+        assert_eq!(normalize_group_name("\u{0007} "), None);
+        assert_eq!(normalize_group_name("").as_deref(), None);
+        assert_eq!(normalize_group_name(&"x".repeat(60)).unwrap().len(), 40);
+
+        let hub = SharedHub::new();
+        let [a, b, c] = hub.update(|h| ["a", "b", "c"].map(|n| h.create_tab(&format!("https://{n}.test/"), Owner::User)));
+        hub.update(|h| {
+            assert_eq!(h.set_tab_group(a, Some("Work")), Some(Some("Work".into())));
+            assert_eq!(h.set_tab_group(b, Some("Read")), Some(Some("Read".into())));
+            assert_eq!(h.set_tab_group(c, Some("Work")), Some(Some("Work".into())));
+            assert_eq!(h.set_tab_group(a, Some("  ")), Some(None), "empty clears the group");
+            assert_eq!(h.set_tab_group(999, Some("Nope")), None);
+        });
+        assert_eq!(hub.lock().tab_groups(), vec!["Read".to_string(), "Work".to_string()]);
+        assert_eq!(hub.lock().tab_views().iter().filter_map(|v| v.group.clone()).collect::<Vec<_>>(), vec!["Read".to_string(), "Work".to_string()]);
+        assert_eq!(hub.lock().tab(b).unwrap().summary().group.as_deref(), Some("Read"));
     }
 
     #[test]

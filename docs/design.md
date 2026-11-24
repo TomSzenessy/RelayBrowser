@@ -23,7 +23,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 ```
 
 - **Tab strip:** a vertical list of title rows with status dots, or the same
-  rows in a horizontal strip across the top (`⇧⌘S`). The active tab and the
+  rows in a horizontal strip across the top (`⇧⌘S`). Tabs can carry one named
+  group: a heading with a colour dot, name, count, and collapse chevron; the
+  tab menu moves a tab in or out, and ⌥⌘[ / ⌥⌘] fold or unfold every group. The active tab and the
   row under the pointer show `×` (a middle click closes too). The user's tabs
   come first, then an "Agent" group header with tinted rows for agent-owned
   tabs. Asleep tabs are dimmed. A tab waiting for a human shows ⚠. `⌘S` folds
@@ -188,6 +190,8 @@ and displayed shortcuts cannot drift either.
 | ⌘⇧N | New private tab |
 | ⌘P | Print page |
 | ⌘⌥B | Show / hide bottom bar |
+| ⌘⌥[ | Fold all tab groups |
+| ⌘⌥] | Unfold all tab groups |
 <!-- keymap:end -->
 
 Behaviour that is not a single action:
@@ -206,6 +210,10 @@ Behaviour that is not a single action:
   the native web view never covers it, lists one button per saved account and
   a "Save password?" offer (Save/Replace / Not now). The list and Delete only
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
+- **Tab groups:** a group heading is a 24 pt row with a chevron, colour dot,
+  name, and count. Collapsed groups show only the heading; names are capped at
+  40 characters and persist in `collapsed_groups`. Group names survive session
+  restore.
 - **Tab bar:** `×` closes (hover/active), a middle click closes, `♪` marks
   playing audio, `pin` a pinned tab, and `zz` a sleeping one. Pinned tabs sit
   at the top, never auto-sleep, and ⌘W sleeps them instead of closing.

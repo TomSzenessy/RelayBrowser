@@ -182,6 +182,7 @@ fn clear_data_removes_the_saved_session() {
                 scroll_y: 0.0,
                 active: i == 0,
                 position: i as i64,
+                group: String::new(),
             })
             .collect();
         store.save_session(&tabs).unwrap();

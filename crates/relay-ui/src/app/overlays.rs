@@ -647,6 +647,111 @@ impl RelayApp {
         )
     }
 
+    pub(super) fn render_group_prompt(&self, prompt: &GroupPrompt, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let current = self.hub.lock().tab(prompt.tab).and_then(|tab| tab.group.clone());
+        let groups = self.hub.lock().tab_groups();
+        let mut chips = div().flex().flex_wrap().gap_1();
+        for name in &groups {
+            if current.as_deref() == Some(name.as_str()) {
+                continue;
+            }
+            let target = name.clone();
+            chips = chips.child(
+                div()
+                    .id(SharedString::from(format!("group-pick-{name}")))
+                    .px_2()
+                    .py_1()
+                    .rounded(px(6.))
+                    .bg(t.background)
+                    .text_size(px(11.))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        if let Some(prompt) = &app.group_prompt {
+                            app.hub.update(|h| h.set_tab_group(prompt.tab, Some(&target)));
+                        }
+                        app.group_prompt = None;
+                        app.toast(format!("Moved tab to {target}"));
+                        app.focus_active_page();
+                        cx.notify();
+                    }))
+                    .child(SharedString::from(name.clone())),
+            );
+        }
+        let text = if prompt.value.is_empty() { "Group name".to_string() } else { prompt.value.clone() };
+        let commit_label = if current.is_some() && prompt.value.trim().is_empty() { "Remove" } else { "Move" };
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(120.)).bg(t.scrim).child(
+            div()
+                .id("group-prompt")
+                .w(px(380.))
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_5()
+                .rounded(px(12.))
+                .bg(t.raised)
+                .shadow_lg()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.close_group_prompt();
+                    cx.notify();
+                }))
+                .child(div().text_size(px(15.)).text_color(t.text).child("Move tab to a group"))
+                .child(div().text_size(px(11.)).text_color(t.muted).child("Name it, or pick an existing group. Clearing the name removes it."))
+                .child(
+                    div()
+                        .h(px(34.))
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .rounded(px(8.))
+                        .bg(t.well)
+                        .text_size(px(13.))
+                        .text_color(if prompt.value.is_empty() { t.muted } else { t.text })
+                        .child(SharedString::from(text))
+                        .child(div().ml_0p5().text_color(t.accent).child("▏")),
+                )
+                .when(!groups.is_empty(), |d| d.child(div().text_size(px(10.)).text_color(t.muted).child("EXISTING GROUPS")).child(chips))
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id("group-cancel")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(6.))
+                                .text_size(px(12.))
+                                .text_color(t.muted)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover).text_color(t.text))
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    app.close_group_prompt();
+                                    cx.notify();
+                                }))
+                                .child("Cancel"),
+                        )
+                        .child(
+                            div()
+                                .id("group-commit")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(6.))
+                                .bg(t.accent)
+                                .text_size(px(12.))
+                                .text_color(gpui::rgb(0xffffff))
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.9))
+                                .on_click(cx.listener(|app, _, _, cx| app.save_group_prompt(cx)))
+                                .child(commit_label),
+                        ),
+                ),
+        )
+    }
+
     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let btn = |id: &'static str, label: SharedString, danger: bool| {

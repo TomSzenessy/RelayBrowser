@@ -96,6 +96,8 @@ actions!(
         TabsOnLeft,
         TabsOnTop,
         TabsOnRight,
+        FoldAllGroups,
+        UnfoldAllGroups,
     ]
 );
 
@@ -158,6 +160,12 @@ struct ShortcutEditor {
     recording: Option<ActionId>,
     /// Finds a shortcut by name or by the keys it currently uses.
     query: String,
+}
+
+/// The small modal that names a tab group.
+struct GroupPrompt {
+    tab: TabId,
+    value: String,
 }
 
 struct FindBar {
@@ -288,6 +296,10 @@ pub struct RelayApp {
     palette_private_tab: bool,
     /// Tab currently showing its inline right-click context menu in the tab strip.
     tab_menu: Option<TabId>,
+    /// Inline name prompt opened from a tab's context menu.
+    group_prompt: Option<GroupPrompt>,
+    /// Group headings folded by the user; persisted as `collapsed_groups`.
+    collapsed_groups: HashSet<String>,
     settings_open: bool,
     settings_tab: SettingsTab,
     settings_dropdown: Option<SettingsDropdown>,
@@ -501,6 +513,11 @@ impl RelayApp {
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
         let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
         let show_bookmarks_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bookmarks_bar").ok().flatten()).as_deref());
+        let collapsed_groups: HashSet<String> = store
+            .as_ref()
+            .and_then(|s| s.setting("collapsed_groups").ok().flatten())
+            .map(|raw| raw.split(',').map(str::trim).filter(|g| !g.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default();
         let always_show_close = setting_enabled(store.as_ref().and_then(|s| s.setting("always_show_close").ok().flatten()).as_deref());
         let default_zoom = store
             .as_ref()
@@ -539,6 +556,8 @@ impl RelayApp {
             palette_new_tab: false,
             palette_private_tab: false,
             tab_menu: None,
+            group_prompt: None,
+            collapsed_groups,
             settings_open: false,
             settings_tab: SettingsTab::General,
             settings_dropdown: None,
@@ -1871,6 +1890,73 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn open_group_prompt(&mut self, tab: TabId, cx: &mut Context<Self>) {
+        let current = self.hub.lock().tab(tab).and_then(|t| t.group.clone()).unwrap_or_default();
+        self.group_prompt = Some(GroupPrompt { tab, value: current });
+        self.tab_menu = None;
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_group_prompt(&mut self) {
+        self.group_prompt = None;
+        self.focus_active_page();
+    }
+
+    fn save_group_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(prompt) = self.group_prompt.take() else { return };
+        let group = relay_bridge::hub::normalize_group_name(&prompt.value);
+        self.hub.update(|h| h.set_tab_group(prompt.tab, group.as_deref()));
+        match &group {
+            Some(name) => self.toast(format!("Moved tab to {name}")),
+            None => self.toast("Removed tab from its group"),
+        }
+        self.focus_active_page();
+        cx.notify();
+    }
+
+    fn remove_tab_from_group(&mut self, tab: TabId, cx: &mut Context<Self>) {
+        self.hub.update(|h| h.set_tab_group(tab, None));
+        self.toast("Removed tab from its group");
+        cx.notify();
+    }
+
+    fn set_group_collapsed(&mut self, name: &str, collapsed: bool, cx: &mut Context<Self>) {
+        if collapsed {
+            self.collapsed_groups.insert(name.to_string());
+        } else {
+            self.collapsed_groups.remove(name);
+        }
+        self.persist_collapsed_groups();
+        cx.notify();
+    }
+
+    fn toggle_group_collapsed(&mut self, name: &str, cx: &mut Context<Self>) {
+        let collapsed = !self.collapsed_groups.contains(name);
+        self.set_group_collapsed(name, collapsed, cx);
+    }
+
+    fn fold_all_groups(&mut self, folded: bool, cx: &mut Context<Self>) {
+        if folded {
+            for name in self.hub.lock().tab_groups() {
+                self.collapsed_groups.insert(name);
+            }
+        } else {
+            self.collapsed_groups.clear();
+        }
+        self.persist_collapsed_groups();
+        cx.notify();
+    }
+
+    fn persist_collapsed_groups(&self) {
+        if let Some(store) = &self.store {
+            let mut names: Vec<&String> = self.collapsed_groups.iter().collect();
+            names.sort();
+            let value = names.into_iter().map(String::as_str).collect::<Vec<_>>().join(",");
+            let _ = store.set_setting("collapsed_groups", &value);
+        }
+    }
+
     /// Mute / unmute every media element in a tab. JS reports the page's own
     /// current state, so the native side needs no duplicate media model.
     fn toggle_mute(&mut self, tab: TabId) {
@@ -2427,6 +2513,33 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.group_prompt.is_some() {
+            match k.key.as_str() {
+                "escape" => self.close_group_prompt(),
+                "enter" => self.save_group_prompt(cx),
+                "backspace" => {
+                    if let Some(prompt) = self.group_prompt.as_mut() {
+                        if k.modifiers.secondary() || k.modifiers.alt {
+                            prompt.value.clear();
+                        } else {
+                            prompt.value.pop();
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                        if let Some(prompt) = self.group_prompt.as_mut() {
+                            if prompt.value.chars().count() < 40 {
+                                prompt.value.push_str(c);
+                            }
+                        }
+                    }
+                }
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.shortcuts.is_some() {
             let recording = self.shortcuts.as_ref().and_then(|s| s.recording);
             if let Some(id) = recording {
@@ -3151,6 +3264,12 @@ impl Render for RelayApp {
             .on_action(cx.listener(|app, _: &TabsOnRight, _, cx| {
                 app.set_tab_strip_placement(tabstrip::Placement::Right, cx);
             }))
+            .on_action(cx.listener(|app, _: &FoldAllGroups, _, cx| {
+                app.fold_all_groups(true, cx);
+            }))
+            .on_action(cx.listener(|app, _: &UnfoldAllGroups, _, cx| {
+                app.fold_all_groups(false, cx);
+            }))
             .on_action(cx.listener(|app, _: &NewPrivateTab, _, cx| {
                 app.run_command(Command::NewPrivateTab, cx);
                 cx.notify();
@@ -3207,6 +3326,9 @@ impl Render for RelayApp {
         if let Some(p) = &self.palette {
             root = root.child(self.render_palette(p, cx));
         }
+        if let Some(prompt) = &self.group_prompt {
+            root = root.child(self.render_group_prompt(prompt, cx));
+        }
         if self.settings_open {
             root = root.child(self.render_settings(cx));
         }
@@ -3241,6 +3363,7 @@ fn session_snapshot(hub: &Hub, slept_scroll_y: impl Fn(TabId) -> Option<f64>) ->
             scroll_y: if t.sleeping { slept_scroll_y(t.id).unwrap_or(0.0) } else { 0.0 },
             active: Some(t.id) == active,
             position: i as i64,
+            group: t.group.clone().unwrap_or_default(),
         })
         .collect()
 }
@@ -3255,6 +3378,7 @@ fn restore_into(hub: &mut Hub, saved: &[SessionTab]) -> (Vec<(TabId, String, f64
         if let Some(t) = hub.tab_mut(id) {
             t.title = s.title.clone();
             t.pinned = s.pinned;
+            t.group = relay_bridge::hub::normalize_group_name(&s.group);
         }
         if s.active {
             active = Some(id);

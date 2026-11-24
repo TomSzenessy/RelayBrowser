@@ -3,7 +3,7 @@ use gpui::Action;
 use std::collections::HashSet;
 
 fn saved(url: &str, pinned: bool, active: bool, scroll_y: f64) -> SessionTab {
-    SessionTab { url: url.into(), title: format!("T {url}"), pinned, scroll_y, active, position: 0 }
+    SessionTab { url: url.into(), title: format!("T {url}"), pinned, scroll_y, active, position: 0, group: String::new() }
 }
 
 #[test]

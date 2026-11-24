@@ -11,7 +11,7 @@ frontends read it: the native Inspector and the local MCP server.
 
 | Crate | Owns | Platform |
 |---|---|---|
-| `relay-bridge` | Page protocol (`protocol.rs`), the shared tab state `SharedHub` (`hub.rs`), the `Browser` trait the shell implements, `ChannelBrowser` for off-main-thread callers, `relay_home()` paths | portable |
+| `relay-bridge` | Page protocol (`protocol.rs`), the shared tab state `SharedHub` (`hub.rs`) including named tab groups, the `Browser` trait the shell implements, `ChannelBrowser` for off-main-thread callers, `relay_home()` paths | portable |
 | `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy, download naming policy (`downloads.rs`); `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback, the page's own context menu (with a Reading Mode item that drives the bridge), and PDF export through `createPDF` plus a native save panel | policy portable, engine macOS |
 | `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `login.rs`: pure origin, candidate, fill, and save/decline model with redacted, zeroized secrets; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
 | `relay-mcp` | `RelayMcp` (rmcp 3.x tool router), user-only Unix socket server, `relay mcp` stdio proxy | portable (Unix) |

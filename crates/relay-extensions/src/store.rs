@@ -70,6 +70,8 @@ pub struct SessionTab {
     pub scroll_y: f64,
     pub active: bool,
     pub position: i64,
+    /// Empty for an ungrouped tab; otherwise the tab-group heading.
+    pub group: String,
 }
 
 /// A web app installed from a page: where its `.app` bundle lives and which
@@ -156,7 +158,7 @@ impl Store {
              CREATE TABLE IF NOT EXISTS session_tabs(
                  position INTEGER PRIMARY KEY, url TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
                  pinned INTEGER NOT NULL DEFAULT 0, scroll_y REAL NOT NULL DEFAULT 0,
-                 active INTEGER NOT NULL DEFAULT 0);
+                 active INTEGER NOT NULL DEFAULT 0, group_name TEXT NOT NULL DEFAULT '');
              CREATE TABLE IF NOT EXISTS site_prefs(
                  host TEXT PRIMARY KEY, zoom REAL NOT NULL DEFAULT 1.0,
                  compat_mode INTEGER NOT NULL DEFAULT 0, blocking_off INTEGER NOT NULL DEFAULT 0,
@@ -187,6 +189,17 @@ impl Store {
                 return Err(Error::Invalid(format!("profile schema {v} is newer than this Relay ({SCHEMA_VERSION}); update Relay")));
             }
             Some(_) => {}
+        }
+        // Profiles created before tab groups need the new column; CREATE TABLE
+        // IF NOT EXISTS does not alter an existing table.
+        let has_group = conn
+            .prepare("PRAGMA table_info(session_tabs)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "group_name");
+        if !has_group {
+            conn.execute("ALTER TABLE session_tabs ADD COLUMN group_name TEXT NOT NULL DEFAULT ''", [])?;
         }
         Ok(Self { conn })
     }
@@ -312,8 +325,8 @@ impl Store {
         for (i, t) in kept.take(MAX_SESSION_TABS).enumerate() {
             let scroll = if t.scroll_y.is_finite() { t.scroll_y.max(0.0) } else { 0.0 };
             tx.execute(
-                "INSERT INTO session_tabs(position, url, title, pinned, scroll_y, active) VALUES(?1,?2,?3,?4,?5,?6)",
-                params![i as i64, t.url, t.title, t.pinned as i64, scroll, t.active as i64],
+                "INSERT INTO session_tabs(position, url, title, pinned, scroll_y, active, group_name) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                params![i as i64, t.url, t.title, t.pinned as i64, scroll, t.active as i64, t.group],
             )?;
         }
         tx.commit()?;
@@ -322,7 +335,7 @@ impl Store {
 
     pub fn load_session(&self) -> Result<Vec<SessionTab>, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT url, title, pinned, scroll_y, active, position FROM session_tabs ORDER BY position",
+            "SELECT url, title, pinned, scroll_y, active, position, group_name FROM session_tabs ORDER BY position",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(SessionTab {
@@ -332,6 +345,7 @@ impl Store {
                 scroll_y: r.get(3)?,
                 active: r.get::<_, i64>(4)? != 0,
                 position: r.get(5)?,
+                group: r.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -1033,7 +1047,34 @@ mod tests {
     }
 
     fn tab(url: &str, active: bool) -> SessionTab {
-        SessionTab { url: url.into(), title: "T".into(), pinned: false, scroll_y: 12.5, active, position: 0 }
+        SessionTab { url: url.into(), title: "T".into(), pinned: false, scroll_y: 12.5, active, position: 0, group: String::new() }
+    }
+
+    #[test]
+    fn old_session_tables_get_the_group_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE session_tabs(position INTEGER PRIMARY KEY, url TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+                 pinned INTEGER NOT NULL DEFAULT 0, scroll_y REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO session_tabs(position,url,title,pinned,scroll_y,active) VALUES(0,'https://old.test/','Old',0,0,1)",
+                [],
+            )
+            .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        let mut t = s.load_session().unwrap().pop().unwrap();
+        assert_eq!(t.url, "https://old.test/");
+        assert_eq!(t.group, "", "old rows have no group");
+        t.group = "Later".into();
+        s.save_session(&[t]).unwrap();
+        assert_eq!(s.load_session().unwrap()[0].group, "Later");
     }
 
     #[test]
@@ -1042,11 +1083,13 @@ mod tests {
         assert!(s.load_session().unwrap().is_empty());
         let mut pinned = tab("https://b.test/", false);
         pinned.pinned = true;
+        pinned.group = "Work".into();
         s.save_session(&[tab("https://a.test/", true), tab("about:blank", false), tab("file:///etc/passwd", false), pinned]).unwrap();
         let got = s.load_session().unwrap();
         assert_eq!(got.len(), 2);
         assert_eq!((got[0].url.as_str(), got[0].active, got[0].position, got[0].scroll_y), ("https://a.test/", true, 0, 12.5));
         assert_eq!((got[1].url.as_str(), got[1].pinned, got[1].position), ("https://b.test/", true, 1));
+        assert_eq!(got[1].group, "Work");
         s.save_session(&[tab("http://c.test/", true)]).unwrap();
         assert_eq!(s.load_session().unwrap().len(), 1);
         let many: Vec<_> = (0..300).map(|i| tab(&format!("https://x.test/{i}"), false)).collect();

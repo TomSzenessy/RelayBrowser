@@ -53,3 +53,5 @@ downloads|secondary-shift-j
 new-private-tab|secondary-shift-n
 print|secondary-p
 bottom-bar|secondary-alt-b
+fold-groups|secondary-alt-[
+unfold-groups|secondary-alt-]

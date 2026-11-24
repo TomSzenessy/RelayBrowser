@@ -40,6 +40,13 @@ fn monogram_icon(url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
         .into_any_element()
 }
 
+/// Deterministic group dot colour; names are local UI data, not theme tokens.
+fn group_color(name: &str) -> u32 {
+    const COLORS: [u32; 6] = [0x4c6ef5, 0x7950f2, 0x12b886, 0xfd7e14, 0xe64980, 0x40c057];
+    let hash = name.bytes().fold(0usize, |acc, b| acc.wrapping_mul(31).wrapping_add(b as usize));
+    COLORS[hash % COLORS.len()]
+}
+
 impl RelayApp {
     fn site_icon(&self, url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
         match host_of(url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone()) {
@@ -103,6 +110,17 @@ impl RelayApp {
         };
         let pinned: Vec<&TabView> = user.iter().filter(|v| v.pinned).collect();
         let loose: Vec<&TabView> = user.iter().filter(|v| !v.pinned).collect();
+        let mut ungrouped: Vec<&TabView> = Vec::new();
+        let mut groups: Vec<(String, Vec<&TabView>)> = Vec::new();
+        for tab in &loose {
+            match &tab.group {
+                None => ungrouped.push(tab),
+                Some(name) => match groups.iter_mut().find(|(n, _)| n == name) {
+                    Some((_, rows)) => rows.push(tab),
+                    None => groups.push((name.clone(), vec![tab])),
+                },
+            }
+        }
         let vertical = strip.placement.is_vertical();
         let mut bar = div().flex();
         if vertical {
@@ -188,8 +206,16 @@ impl RelayApp {
                 );
             }
             let mut list = div().id("tab-list-scroll").flex_1().flex().flex_col().gap_0p5().overflow_y_scroll();
-            for tab in &loose {
+            for tab in &ungrouped {
                 list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
+            }
+            for (name, rows) in &groups {
+                list = list.child(self.group_header(name, rows.len(), true, cx));
+                if !self.collapsed_groups.contains(name) {
+                    for tab in rows {
+                        list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
+                    }
+                }
             }
             if !agents.is_empty() {
                 list = list.child(div().mt_2().px_2().pb_1().text_size(px(10.)).text_color(t.agent).child("AGENT"));
@@ -211,8 +237,19 @@ impl RelayApp {
                 .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
                 .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
                 .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
-            for tab in pinned.iter().chain(loose.iter()) {
+            for tab in &pinned {
                 bar = bar.child(self.tab_row(tab, active, false, badge_for(tab.id), cx));
+            }
+            for tab in &ungrouped {
+                bar = bar.child(self.tab_row(tab, active, false, badge_for(tab.id), cx));
+            }
+            for (name, rows) in &groups {
+                bar = bar.child(self.group_header(name, rows.len(), false, cx));
+                if !self.collapsed_groups.contains(name) {
+                    for tab in rows {
+                        bar = bar.child(self.tab_row(tab, active, false, badge_for(tab.id), cx));
+                    }
+                }
             }
             if !agents.is_empty() {
                 bar = bar.child(div().px_1().text_size(px(10.)).text_color(t.agent).child("AGENT"));
@@ -288,6 +325,7 @@ impl RelayApp {
 
     fn tab_context_menu(&self, id: TabId, pinned: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
+        let grouped = self.hub.lock().tab(id).and_then(|tab| tab.group.clone());
         let item = |suffix: &'static str, label: &'static str, danger: bool| {
             div()
                 .id(SharedString::from(format!("tab-menu-{id}-{suffix}")))
@@ -311,6 +349,15 @@ impl RelayApp {
             .flex()
             .flex_col()
             .gap_0p5()
+            .child(item("group", "Move to Group…", false).on_click(cx.listener(move |app, _, _, cx| {
+                app.open_group_prompt(id, cx);
+                cx.notify();
+            })))
+            .when(grouped.is_some(), |d| {
+                d.child(item("ungroup", "Remove from Group", false).on_click(cx.listener(move |app, _, _, cx| {
+                    app.remove_tab_from_group(id, cx);
+                })))
+            })
             .child(item("pin", if pinned { "Unpin Tab" } else { "Pin to Favorites" }, false).on_click(cx.listener(move |app, _, _, cx| {
                 app.toggle_pin_for(id);
                 cx.notify();
@@ -360,6 +407,32 @@ impl RelayApp {
                 .child(self.tab_context_menu(id, pinned, cx))
                 .into_any_element(),
         )
+    }
+
+    /// A heading for one named group: chevron, colour dot, name, and count.
+    fn group_header(&self, name: &str, count: usize, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let collapsed = self.collapsed_groups.contains(name);
+        let owned = name.to_string();
+        div()
+            .id(SharedString::from(format!("group-{name}")))
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .h(px(24.))
+            .px_2()
+            .rounded(px(5.))
+            .when(!vertical, |d| d.max_w(px(190.)))
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(move |app, _, _, cx| {
+                app.toggle_group_collapsed(&owned, cx);
+            }))
+            .child(div().text_size(px(10.)).text_color(t.muted).child(if collapsed { "▸" } else { "▾" }))
+            .child(div().size(px(7.)).rounded_full().bg(gpui::rgb(group_color(name))))
+            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(11.)).text_color(t.text).child(SharedString::from(name.to_string())))
+            .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(count.to_string())))
+            .into_any_element()
     }
 
     fn tab_row(
