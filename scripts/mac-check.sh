@@ -3,6 +3,11 @@
 # library comes from `rustup target add`; when that is unavailable the check
 # says so and passes, because the real evidence is the macOS CI job
 # (.github/workflows/macos.yml), not this type-check.
+#
+# Keep this to the two crates with `cfg(target_os = "macos")` sources and use
+# `--no-default-features` so the bundled SQLite C build is not attempted for
+# the Apple target. This path has caught real AppKit/WebKit API mistakes that
+# the previous whole-workspace invocation missed.
 set -euo pipefail
 
 target=aarch64-apple-darwin
@@ -16,4 +21,4 @@ if ! ls "$libdir"/libcore-*.rlib >/dev/null 2>&1; then
   fi
 fi
 
-exec cargo check --workspace --locked --examples --exclude relay-ui --no-default-features --target "$target"
+exec cargo check -p relay-webkit -p relay-extensions --locked --no-default-features --target "$target"
