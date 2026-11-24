@@ -99,8 +99,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   state (which says where files save) live with the panel. ↑/↓/Home/End move the
   selection in section order and ↩ runs the selected row's action.
 - **Import:** the welcome card and Settings import Chrome, Brave, Edge, Arc,
-  Dia, or Chromium bookmarks/history, plus Safari bookmarks/history (Safari
-  data needs Full Disk Access).
+  Dia, or Chromium bookmarks/history, plus Safari bookmarks/history directly
+  (needs Full Disk Access) or from Safari's exported browsing-data file
+  (`.zip`, `Bookmarks.html`, `Bookmarks.plist`, or `History.json`, with no
+  Full Disk Access required).
 - **New tab:** with no active tab, a quiet page with **no wordmark**, one
   search field (opens ⌘K), and two columns of Recent / Frequent / Apps /
   Bookmarks rows. Rows are one line with a muted note; empty sections say "Nothing yet";
@@ -149,7 +151,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 - **Site permissions:** camera/microphone requests show a native Allow/Block
   alert naming the origin; ordinary tabs remember the choice across launches
   (Settings → Privacy → Forget clears it), private tabs ask every time.
-  Notifications/location memory is not built.
+  Notifications/location memory is intentionally not built using private SPI:
+  in `MacOSX27.2.sdk`, `WKUIDelegate` exposes no public web-notification
+  permission callback at all, and public `requestGeolocationPermissionForOrigin:`
+  requires macOS 27.0+ (unavailable on macOS 13–26 and absent in `objc2-web-kit 0.3.2`).
 - **Privacy:** Settings → Privacy hides consent banners with the blocker's CMP
   selectors, and Clear cookies & site data needs a second click because it
   signs out of every site.

@@ -554,6 +554,19 @@ control-stripped, bounded to 4 chars) and unread flag on the extension toolbar;
 presenting the action popup clears unread state, disabled extensions carry no
 badge, and the toolbar stays hidden when empty.
 
+Safari import (`safari::import_export_file`) also accepts Safari's exported
+browsing-data `.zip` (or standalone `Bookmarks.html`, `Bookmarks.plist`, or
+`History.json`) directly from disk without Full Disk Access and without copying
+the file into the profile; malformed exports fail before writing anything.
+
+Site permissions remember per-origin camera/microphone decisions (`media_permissions`,
+private tabs always ask). Location and web-notification memory are not implemented
+(#195 feasibility decision, verified against `MacOSX27.2.sdk/System/Library/Frameworks/WebKit.framework/Headers/WKUIDelegate.h`
+and `objc2-web-kit 0.3.2`): WebKit exposes no public web-notification permission
+delegate on macOS, and public `webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:`
+is `API_AVAILABLE(macos(27.0))` (unavailable on Relay's macOS 13.3–26 targets).
+Relay avoids private WebKit SPI.
+
 ## Session restore
 
 With `restore_session` on (the default; `relay config set restore_session off`),

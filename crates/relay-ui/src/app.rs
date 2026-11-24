@@ -2467,7 +2467,7 @@ impl RelayApp {
         let bookmarks = relay_extensions::safari::default_bookmarks();
         let history = relay_extensions::safari::default_history();
         if bookmarks.is_none() && history.is_none() {
-            self.toast("No Safari data found; grant Full Disk Access to Relay");
+            self.toast("Direct Safari access needs Full Disk Access — or use Import export file…");
             cx.notify();
             return;
         }
@@ -2482,6 +2482,32 @@ impl RelayApp {
             Err(e) => self.toast(format!("Safari import failed: {e}")),
         }
         cx.notify();
+    }
+
+    fn import_safari_export_file(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose Safari's exported browsing-data file (.zip, Bookmarks.html, or History.json)".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(Result::ok).flatten().and_then(|mut paths| paths.pop());
+            if let Some(path) = picked {
+                let _ = this.update(cx, |app, cx| {
+                    let Some(store) = &app.store else { return };
+                    match relay_extensions::safari::import_export_file(store, &path) {
+                        Ok(c) => {
+                            app.refresh_start_page();
+                            app.toast(format!("Imported {} Safari bookmarks and {} history items", c.bookmarks, c.history));
+                        }
+                        Err(e) => app.toast(format!("Safari export import failed: {e}")),
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn open_extension_popup(&mut self, id: &str, cx: &mut Context<Self>) {

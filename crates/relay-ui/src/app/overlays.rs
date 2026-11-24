@@ -1881,6 +1881,9 @@ impl RelayApp {
                 let safari_btn = btn("settings-import-safari", "Import Safari".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| app.import_safari(cx)))
                     .into_any_element();
+                let safari_file_btn = btn("settings-import-safari-file", "Import export file…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.import_safari_export_file(cx)))
+                    .into_any_element();
                 let import_btn = btn("settings-import-chrome", "Import from Chrome".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.run_command(Command::ImportChrome, cx);
@@ -1888,7 +1891,11 @@ impl RelayApp {
                     }))
                     .into_any_element();
                 general_card = general_card.child(row("Browser bookmarks & history", Some("Chrome, Brave, Edge, Arc, Dia, or Chromium"), import_btn));
-                general_card = general_card.child(row("Safari bookmarks & history", Some("Needs Full Disk Access in System Settings → Privacy & Security"), safari_btn));
+                general_card = general_card.child(row(
+                    "Safari bookmarks & history",
+                    Some("Direct import needs Full Disk Access; or choose Safari's File → Export Browsing Data file"),
+                    div().flex().gap_2().child(safari_btn).child(safari_file_btn).into_any_element(),
+                ));
                 general_card = general_card.child(row("Bookmark HTML", Some("Netscape format used by other browsers"), div().flex().gap_2().child(export_bm).child(import_bm).into_any_element()));
                 general_card = general_card.child(row("Sync folder", Some("Merge this profile on launch, then rewrite it every minute (Dropbox/iCloud)"), sync_control));
                 general_card = general_card.child(row("Back up profile", Some("Write bookmarks, history, and settings to a private JSON file"), backup_btn));
