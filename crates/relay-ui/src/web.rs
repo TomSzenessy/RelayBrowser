@@ -329,6 +329,11 @@ mod imp {
             self.engine.set_media_permissions(entries);
         }
 
+        /// Advertise the active page for Handoff, or clear it with `None`.
+        pub fn set_handoff(&mut self, url: Option<&str>, title: &str) {
+            self.engine.set_handoff(url, title);
+        }
+
         /// Choose the download directory and whether each file asks first.
         pub fn set_downloads(&mut self, dir: std::path::PathBuf, ask: bool) {
             self.engine.set_downloads(dir, ask);
@@ -448,6 +453,7 @@ mod imp {
         pub fn set_media_permissions(&mut self, _entries: Vec<(String, i64, bool)>) {}
         pub fn clear_media_permissions(&mut self) {}
         pub fn set_downloads(&mut self, _dir: std::path::PathBuf, _ask: bool) {}
+        pub fn set_handoff(&mut self, _url: Option<&str>, _title: &str) {}
         pub fn toggle_float_panel(&mut self, _tab: TabId) {}
         pub fn extension_options_url(&self, _id: &str) -> Option<String> { None }
         pub fn open_extension_popup(&mut self, _id: &str) -> bool { false }

@@ -133,6 +133,16 @@ fn mru_cycle_wraps_and_falls_back_to_the_first() {
 }
 
 #[test]
+fn handoff_only_advertises_ordinary_web_tabs() {
+    assert_eq!(handoff_target("https://a.test/", false, true, false), Some("https://a.test/"));
+    assert_eq!(handoff_target("http://a.test/", false, true, false), Some("http://a.test/"));
+    assert_eq!(handoff_target("https://a.test/", true, true, false), None);
+    assert_eq!(handoff_target("https://a.test/", false, false, false), None);
+    assert_eq!(handoff_target("https://a.test/", false, true, true), None);
+    assert_eq!(handoff_target("about:blank", false, true, false), None);
+}
+
+#[test]
 fn sync_file_names_are_profile_specific() {
     assert_eq!(sync_file_name(""), "relay-profile-default.json");
     assert_eq!(sync_file_name("Work"), "relay-profile-Work.json");

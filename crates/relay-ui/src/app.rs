@@ -359,6 +359,9 @@ pub struct RelayApp {
     ext_icons: HashMap<String, Arc<Image>>,
     /// Optional shared folder for a merge-on-launch profile sync.
     sync_folder: String,
+    /// Advertise the active page for Handoff (opt-in).
+    handoff: bool,
+    last_handoff: Option<String>,
     last_sync: Instant,
     last_ext_icons: Instant,
     /// Host whose Site Card is open.
@@ -566,6 +569,7 @@ impl RelayApp {
         let show_bookmarks_bar = setting_on("bookmarks_bar");
         let show_address_bar = setting_on("address_bar");
         let tab_icons_only = setting_on("tab_icons_only");
+        let handoff = setting_on("handoff");
         let extension_toolbar = setting_enabled(store.as_ref().and_then(|s| s.setting("extension_toolbar").ok().flatten()).as_deref());
         let sync_folder = store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default();
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
@@ -653,6 +657,8 @@ impl RelayApp {
             extension_toolbar,
             ext_icons: HashMap::new(),
             sync_folder,
+            handoff,
+            last_handoff: None,
             last_sync: Instant::now(),
             last_ext_icons: Instant::now(),
             site_card: None,
@@ -1102,6 +1108,19 @@ impl RelayApp {
             cx.notify();
         }
         self.web.borrow_mut().poll_float_panel();
+        let target = self
+            .active()
+            .and_then(|id| self.hub.lock().tab(id).map(|t| (t.url.clone(), t.title.clone(), t.private)))
+            .filter(|(url, _, private)| handoff_target(url, *private, self.handoff, self.app_mode).is_some())
+            .map(|(url, title, _)| (url, title));
+        let key = target.as_ref().map(|(url, title)| format!("{url}\n{title}"));
+        if key != self.last_handoff {
+            match &target {
+                Some((url, title)) => self.web.borrow_mut().set_handoff(Some(url), title),
+                None => self.web.borrow_mut().set_handoff(None, ""),
+            }
+            self.last_handoff = key;
+        }
         if !self.sync_folder.is_empty() && self.last_sync.elapsed() > Duration::from_secs(60) {
             self.last_sync = Instant::now();
             self.sync_profile_folder(false);
@@ -3468,6 +3487,7 @@ impl RelayApp {
             "bookmarks_bar" => self.show_bookmarks_bar = setting_enabled(Some(value)),
             "address_bar" => self.show_address_bar = setting_enabled(Some(value)),
             "tab_icons_only" => self.tab_icons_only = setting_enabled(Some(value)),
+            "handoff" => self.handoff = setting_enabled(Some(value)),
             "extension_toolbar" => self.extension_toolbar = setting_enabled(Some(value)),
             "bookmarks_icons_only" => self.bookmarks_icons_only = setting_enabled(Some(value)),
             "bookmarks_new_tab_only" => self.bookmarks_new_tab_only = setting_enabled(Some(value)),
@@ -4130,6 +4150,11 @@ pub(crate) fn profile_name(raw: &str) -> String {
         }
     }
     out.trim_matches('-').chars().take(32).collect()
+}
+
+/// Only ordinary http(s) browser tabs are advertised through Handoff.
+pub(crate) fn handoff_target(url: &str, private: bool, enabled: bool, app_mode: bool) -> Option<&str> {
+    (enabled && !private && !app_mode && (url.starts_with("http://") || url.starts_with("https://"))).then_some(url)
 }
 
 /// Backup file name for a profile; Default gets an explicit suffix.

@@ -21,7 +21,7 @@ use objc2_app_kit::NSWorkspace;
 use objc2_media_player::{MPRemoteCommandCenter, MPRemoteCommandHandlerStatus};
 use objc2_foundation::{
     NSArray, NSBundle, NSData, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect,
-    NSSize, NSString, NSURL, NSURLRequest, NSURLResponse, NSUUID,
+    NSSize, NSString, NSURL, NSURLRequest, NSURLResponse, NSUUID, NSUserActivity, NSUserActivityTypeBrowsingWeb,
 };
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKContentWorld, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo,
@@ -1123,6 +1123,7 @@ pub struct Engine {
     float_info: Rc<RefCell<Option<FloatInfo>>>,
     popup_panel: Option<Retained<NSPanel>>,
     popup_web: Option<Retained<WKWebView>>,
+    handoff: Option<Retained<NSUserActivity>>,
     downloads_dir: Rc<RefCell<std::path::PathBuf>>,
     downloads_ask: Rc<Cell<bool>>,
 }
@@ -1157,6 +1158,7 @@ impl Engine {
             float_info: Rc::default(),
             popup_panel: None,
             popup_web: None,
+            handoff: None,
             downloads_dir: Rc::new(RefCell::new(default_download_folder())),
             downloads_ask: Rc::new(Cell::new(false)),
         }
@@ -1206,6 +1208,22 @@ impl Engine {
             });
         });
         unsafe { t.view.evaluateJavaScript_completionHandler(&NSString::from_str(js), Some(&handler)) };
+    }
+
+    /// Advertise (or clear) the active page for Handoff. `None` invalidates
+    /// the current activity; only http(s) URLs are accepted.
+    pub fn set_handoff(&mut self, url: Option<&str>, title: &str) {
+        if let Some(old) = self.handoff.take() {
+            old.invalidate();
+        }
+        let Some(url) = url.filter(|u| u.starts_with("http://") || u.starts_with("https://")) else { return };
+        let Some(ns_url) = NSURL::URLWithString(&NSString::from_str(url)) else { return };
+        let activity = NSUserActivity::initWithActivityType(NSUserActivity::alloc(), unsafe { NSUserActivityTypeBrowsingWeb });
+        activity.setWebpageURL(Some(&ns_url));
+        activity.setTitle(Some(&NSString::from_str(title)));
+        activity.setEligibleForHandoff(true);
+        activity.becomeCurrent();
+        self.handoff = Some(activity);
     }
 
     /// Show an extension's action popup in a floating panel. Replaces any
