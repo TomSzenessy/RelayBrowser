@@ -79,10 +79,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
   Bookmarks, Tab, Window, Help) carry every shortcut; View names Tabs on the
   Left, Top, and Right explicitly, not only the cycling command.
-- **Address bar:** off by default; Settings → Appearance adds a 26 pt URL line
+- **Address bar:** off by default (absence of the setting means off); Settings → Appearance adds a 26 pt URL line
   above the page. It shows a lock/warning, host, path, and ⌘L; clicking opens
   the palette with the URL selected so typing replaces it.
-- **Bookmarks bar:** off by default; Settings → Tabs turns on a 24 pt row of
+- **Bookmarks bar:** off by default (absence means off); Settings → Tabs turns on a 24 pt row of
   saved pages under the strip. Each row is a site icon and title, click to
   open; ⌘D adds the current page.
 - **Default browser:** Settings → General → Make default asks LaunchServices

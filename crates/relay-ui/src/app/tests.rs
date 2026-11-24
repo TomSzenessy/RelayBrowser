@@ -110,6 +110,13 @@ fn byte_size_reads_naturally() {
 }
 
 #[test]
+fn opt_in_settings_default_off() {
+    assert!(!setting_opt_in(None));
+    assert!(!setting_opt_in(Some("off")));
+    assert!(setting_opt_in(Some("on")));
+}
+
+#[test]
 fn collapsed_group_setting_ignores_blanks_and_duplicates() {
     let parsed = collapsed_group_names(Some(" Work, Read,,Work , "));
     assert_eq!(parsed.len(), 2);

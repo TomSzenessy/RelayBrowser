@@ -514,14 +514,17 @@ impl RelayApp {
             .is_some_and(|v| setting_enabled(Some(v)));
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
         let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
-        let show_bookmarks_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bookmarks_bar").ok().flatten()).as_deref());
-        let show_address_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("address_bar").ok().flatten()).as_deref());
+        // These three are opt-in: absence must mean off, not the `on` that
+        // `setting_enabled(None)` returns for ordinary toggles.
+        let setting_on = |key: &str| setting_opt_in(store.as_ref().and_then(|s| s.setting(key).ok().flatten()).as_deref());
+        let show_bookmarks_bar = setting_on("bookmarks_bar");
+        let show_address_bar = setting_on("address_bar");
         let collapsed_groups = store
             .as_ref()
             .and_then(|s| s.setting("collapsed_groups").ok().flatten())
             .map(|raw| collapsed_group_names(Some(&raw)))
             .unwrap_or_default();
-        let always_show_close = setting_enabled(store.as_ref().and_then(|s| s.setting("always_show_close").ok().flatten()).as_deref());
+        let always_show_close = setting_on("always_show_close");
         let default_zoom = store
             .as_ref()
             .and_then(|s| s.setting("default_zoom").ok().flatten())
@@ -3469,6 +3472,12 @@ fn human_bytes(bytes: u64) -> String {
 /// commas (the hub normalizer maps them to spaces), so splitting is stable.
 pub(crate) fn collapsed_group_names(raw: Option<&str>) -> HashSet<String> {
     raw.unwrap_or("").split(',').map(str::trim).filter(|g| !g.is_empty()).map(str::to_string).collect()
+}
+
+/// Opt-in switches are off when the key is absent, unlike toggles that have
+/// historically defaulted on.
+pub(crate) fn setting_opt_in(value: Option<&str>) -> bool {
+    value.is_some_and(|v| setting_enabled(Some(v)))
 }
 
 pub(crate) fn setting_enabled(value: Option<&str>) -> bool {
