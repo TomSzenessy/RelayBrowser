@@ -410,26 +410,32 @@ impl RelayApp {
                             )
                             .child(div().text_size(px(10.)).text_color(t.muted).child(client.target())),
                     )
-                    .child(
+                    .child({
+                        let just_copied = self
+                            .connect_copied
+                            .is_some_and(|(c, at)| c == client && at.elapsed() < Duration::from_secs(3));
                         div()
                             .id(SharedString::from(format!("connect-copy-{}", client.id())))
-                            .px_2()
+                            .flex_shrink_0()
+                            .px_2p5()
                             .py_1()
                             .rounded(px(5.))
                             .border_1()
-                            .border_color(t.border)
+                            .border_color(if just_copied { t.accent } else { t.border })
+                            .bg(if just_copied { t.active } else { t.background })
                             .text_size(px(11.))
-                            .text_color(t.text)
+                            .text_color(if just_copied { t.accent } else { t.text })
                             .cursor_pointer()
                             .hover(|s| s.bg(t.hover))
                             .on_click(cx.listener(move |app, _, _, cx| {
                                 let command = mcp_config::relay_command();
                                 cx.write_to_clipboard(ClipboardItem::new_string(client.snippet(&command)));
+                                app.connect_copied = Some((client, Instant::now()));
                                 app.toast(format!("Copied the {} config", client.name()));
                                 cx.notify();
                             }))
-                            .child("Copy config"),
-                    ),
+                            .child(if just_copied { "Copied ✓" } else { "Copy config" })
+                    }),
             );
         }
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(80.)).bg(t.scrim).child(
@@ -561,11 +567,11 @@ impl RelayApp {
 
     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let pill = |id: &'static str, label: SharedString, danger: bool| {
+        let btn = |id: &'static str, label: SharedString, danger: bool| {
             div()
                 .id(id)
                 .px_3()
-                .py_1()
+                .py_1p5()
                 .rounded(px(6.))
                 .border_1()
                 .border_color(if danger { t.error } else { t.border })
@@ -576,221 +582,636 @@ impl RelayApp {
                 .hover(|s| s.bg(t.hover))
                 .child(label)
         };
+        let switch = |id: &'static str, on: bool, danger: bool| {
+            let track_bg = if on {
+                if danger { t.error } else { t.accent }
+            } else {
+                t.border
+            };
+            div()
+                .id(id)
+                .w(px(36.))
+                .h(px(20.))
+                .p(px(2.))
+                .rounded_full()
+                .bg(track_bg)
+                .flex()
+                .items_center()
+                .when(on, |d| d.justify_end())
+                .cursor_pointer()
+                .child(div().size(px(16.)).rounded_full().bg(gpui::rgb(0xffffff)).shadow_sm())
+        };
         let row = |title: &'static str, subtitle: Option<&'static str>, control: gpui::AnyElement| {
-            let mut left = div().flex().flex_col().gap_0p5().child(div().text_size(px(13.)).text_color(t.text).child(title));
+            let mut left = div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .flex_1()
+                .min_w_0()
+                .pr_4()
+                .child(div().text_size(px(13.)).text_color(t.text).child(title));
             if let Some(sub) = subtitle {
                 left = left.child(div().text_size(px(11.)).text_color(t.muted).child(sub));
             }
-            div().flex().items_center().justify_between().px_4().py_2p5().border_b_1().border_color(t.border).child(left).child(control)
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px_4()
+                .py_3()
+                .border_b_1()
+                .border_color(t.border)
+                .child(left)
+                .child(control)
         };
-        let sleep_label: SharedString = if self.sleep_minutes == 0 { "Off".into() } else { format!("{} min", self.sleep_minutes).into() };
-        let clear_label: SharedString = if self.confirm_clear_history { "Confirm clear history".into() } else { "Clear history".into() };
-        let search_btn = pill("settings-search", palette::search_label(&self.search).into(), false)
-            .on_click(cx.listener(|app, _, _, cx| {
-                let idx = palette::SEARCH_PRESETS
-                    .iter()
-                    .position(|(_, url)| *url == app.search)
-                    .map(|i| (i + 1) % palette::SEARCH_PRESETS.len())
-                    .unwrap_or(0);
-                app.search = palette::SEARCH_PRESETS[idx].1.to_string();
-                if let Some(store) = &app.store {
-                    let _ = store.set_setting("search", &app.search);
-                }
-                cx.notify();
-            }))
-            .into_any_element();
-        let blocking_btn = pill("settings-blocking", if self.blocking { "On" } else { "Off" }.into(), false)
-            .on_click(cx.listener(|app, _, _, cx| {
-                app.blocking = !app.blocking;
-                if let Some(store) = &app.store {
-                    let _ = store.set_setting("blocking", if app.blocking { "on" } else { "off" });
-                }
-                if app.blocking {
-                    app.web.borrow().load_content_rules(&rules_json(app.store.as_ref()));
-                } else {
-                    app.web.borrow().clear_content_rules();
-                }
-                cx.notify();
-            }))
-            .into_any_element();
-        let sleep_btn = pill("settings-sleep", sleep_label, false)
-            .on_click(cx.listener(|app, _, _, cx| {
-                const PRESETS: [u64; 5] = [5, 15, 30, 60, 0];
-                let idx = PRESETS.iter().position(|&m| m == app.sleep_minutes).map(|i| (i + 1) % PRESETS.len()).unwrap_or(0);
-                app.sleep_minutes = PRESETS[idx];
-                app.sleep_policy.idle_after = Duration::from_secs(app.sleep_minutes * 60);
-                if let Some(store) = &app.store {
-                    let _ = store.set_setting("sleep_minutes", &app.sleep_minutes.to_string());
-                }
-                cx.notify();
-            }))
-            .into_any_element();
-        let mcp_btn = pill("settings-mcp", if self.mcp_enabled { "On" } else { "Off" }.into(), false)
-            .on_click(cx.listener(|app, _, _, cx| {
-                app.mcp_enabled = !app.mcp_enabled;
-                if let Some(store) = &app.store {
-                    let _ = store.set_setting("mcp", if app.mcp_enabled { "on" } else { "off" });
-                }
-                cx.notify();
-            }))
-            .into_any_element();
-        let eval_btn = pill("settings-agent-eval", if self.agent_eval { "On" } else { "Off" }.into(), self.agent_eval)
-            .on_click(cx.listener(|app, _, _, cx| {
-                app.agent_eval = !app.agent_eval;
-                app.hub.set_agent_eval(app.agent_eval);
-                if let Some(store) = &app.store {
-                    let _ = store.set_setting("agent_eval", if app.agent_eval { "on" } else { "off" });
-                }
-                cx.notify();
-            }))
-            .into_any_element();
-        let connect_btn = pill("settings-connect", "Set up…".into(), false)
-            .on_click(cx.listener(|app, _, _, cx| app.open_connect(cx)))
-            .into_any_element();
-        let shell_btn = pill("settings-shell-control", if self.shell_control { "On" } else { "Off" }.into(), self.shell_control)
-            .on_click(cx.listener(|app, _, _, cx| {
-                app.shell_control = !app.shell_control;
-                if let Some(store) = &app.store {
-                    let _ = store.set_setting("shell_control", if app.shell_control { "on" } else { "off" });
-                }
-                cx.notify();
-            }))
-            .into_any_element();
-        let clients = self.store.as_ref().and_then(|s| s.mcp_clients().ok()).unwrap_or_default();
-        let mut client_section = div().flex().flex_col().gap_2().child(row(
-            "Connected agents",
-            Some("Per-client shell writes; the global switch above overrides every grant"),
-            div().into_any_element(),
-        ));
-        if clients.is_empty() {
-            client_section = client_section.child(div().text_size(px(11.)).text_color(t.muted).child("No MCP agent has connected yet."));
-        }
-        for c in clients {
-            let name = c.name.clone();
-            let granted = c.granted;
-            let action = shell_grant_action(granted);
-            let btn = div()
-                .id(SharedString::from(format!("grant-{}", c.name)))
-                .px_2()
-                .py_0p5()
-                .rounded(px(4.))
+        let card = |content: gpui::Div| {
+            content
+                .rounded(px(8.))
+                .bg(t.background)
                 .border_1()
                 .border_color(t.border)
-                .text_size(px(11.))
-                .text_color(if granted { t.accent } else { t.text })
-                .cursor_pointer()
-                .hover(|s| s.bg(t.hover))
-                .child(action)
-                .on_click(cx.listener(move |app, _, _, cx| {
-                    if let Some(store) = &app.store {
-                        let _ = store.set_mcp_client_granted(&name, !granted, now_unix());
-                    }
-                    cx.notify();
-                }))
-                .into_any_element();
-            client_section = client_section.child(
+                .overflow_hidden()
+        };
+
+        let mut nav = div()
+            .w(px(184.))
+            .flex_shrink_0()
+            .h_full()
+            .bg(t.background)
+            .border_r_1()
+            .border_color(t.border)
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().px_2().pb_2().text_size(px(14.)).text_color(t.text).child("Settings"));
+        for tab in SettingsTab::ALL {
+            let active = self.settings_tab == tab;
+            nav = nav.child(
                 div()
+                    .id(SharedString::from(format!("settings-nav-{}", tab.label())))
+                    .px_2p5()
+                    .py_1p5()
+                    .rounded(px(6.))
+                    .text_size(px(13.))
+                    .text_color(if active { t.text } else { t.muted })
+                    .when(active, |d| d.bg(t.active))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.settings_tab = tab;
+                        app.settings_dropdown = None;
+                        cx.notify();
+                    }))
+                    .child(tab.label()),
+            );
+        }
+
+        let sleep_label: SharedString = if self.sleep_minutes == 0 {
+            "Never".into()
+        } else {
+            format!("{} min", self.sleep_minutes).into()
+        };
+        let pane_content: gpui::AnyElement = match self.settings_tab {
+            SettingsTab::General => {
+                let search_open = self.settings_dropdown == Some(SettingsDropdown::SearchEngine);
+                let sleep_open = self.settings_dropdown == Some(SettingsDropdown::SleepTimeout);
+                let search_trigger = div()
+                    .id("settings-search")
                     .flex()
                     .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_1p5()
+                    .min_w(px(140.))
                     .justify_between()
-                    .px_4()
-                    .py_2p5()
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(if search_open { t.accent } else { t.border })
+                    .bg(t.surface)
+                    .text_size(px(12.))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.settings_dropdown = if app.settings_dropdown == Some(SettingsDropdown::SearchEngine) {
+                            None
+                        } else {
+                            Some(SettingsDropdown::SearchEngine)
+                        };
+                        cx.notify();
+                    }))
+                    .child(palette::search_label(&self.search))
+                    .child(div().text_size(px(10.)).text_color(t.muted).child(if search_open { "▴" } else { "▾" }))
+                    .into_any_element();
+
+                let mut search_menu = div().flex().flex_col().px_4().py_2().gap_0p5().bg(t.surface).border_b_1().border_color(t.border);
+                for (name, url) in palette::SEARCH_PRESETS {
+                    let selected = self.search == *url;
+                    let target_url = (*url).to_string();
+                    search_menu = search_menu.child(
                         div()
+                            .id(SharedString::from(format!("settings-search-opt-{name}")))
                             .flex()
-                            .flex_col()
-                            .gap_0p5()
-                            .child(div().text_size(px(13.)).text_color(t.text).child(c.name))
-                            .child(div().text_size(px(11.)).text_color(t.muted).child(if c.granted {
-                                "May plan/apply shell changes"
-                            } else {
-                                "Connected; no shell writes"
-                            })),
-                    )
-                    .child(btn),
-            );
-        }
-        let strip_position = pill("settings-tabs-position", self.strip.placement.label().into(), false)
-            .on_click(cx.listener(|app, _, _, cx| {
-                app.rotate_tab_strip(cx);
-            }))
-            .into_any_element();
-        let strip_folded = pill(
-            "settings-tabs-folded",
-            if self.strip.folded { "Folded" } else { "Open" }.into(),
-            false,
-        )
-        .on_click(cx.listener(|app, _, _, cx| {
-            app.toggle_tab_strip(cx);
-        }))
-        .into_any_element();
-        let strip_control = div().flex().items_center().gap_1().child(strip_position).child(strip_folded).into_any_element();
-        let clear_btn = pill("settings-clear-history", clear_label, self.confirm_clear_history)
-            .on_click(cx.listener(|app, _, _, cx| {
-                if !app.confirm_clear_history {
-                    app.confirm_clear_history = true;
-                } else {
-                    app.confirm_clear_history = false;
-                    match app.store.as_ref().map(|s| s.clear_history().and_then(|n| s.clear_session().map(|_| n))) {
-                        Some(Ok(n)) => {
-                            app.saved_session.clear();
-                            app.refresh_start_page();
-                            app.toast(format!("Cleared {n} history entries and the saved session"))
+                            .items_center()
+                            .justify_between()
+                            .px_3()
+                            .py_1p5()
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .text_color(t.text)
+                            .when(selected, |d| d.bg(t.active))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.search = target_url.clone();
+                                app.settings_dropdown = None;
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_setting("search", &app.search);
+                                }
+                                cx.notify();
+                            }))
+                            .child(*name)
+                            .child(div().text_color(t.accent).child(if selected { "✓" } else { "" })),
+                    );
+                }
+
+                let sleep_trigger = div()
+                    .id("settings-sleep")
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_1p5()
+                    .min_w(px(140.))
+                    .justify_between()
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(if sleep_open { t.accent } else { t.border })
+                    .bg(t.surface)
+                    .text_size(px(12.))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.settings_dropdown = if app.settings_dropdown == Some(SettingsDropdown::SleepTimeout) {
+                            None
+                        } else {
+                            Some(SettingsDropdown::SleepTimeout)
+                        };
+                        cx.notify();
+                    }))
+                    .child(sleep_label)
+                    .child(div().text_size(px(10.)).text_color(t.muted).child(if sleep_open { "▴" } else { "▾" }))
+                    .into_any_element();
+
+                const SLEEP_OPTS: [(u64, &str); 5] = [(5, "5 min"), (15, "15 min"), (30, "30 min"), (60, "60 min"), (0, "Never")];
+                let mut sleep_menu = div().flex().flex_col().px_4().py_2().gap_0p5().bg(t.surface).border_b_1().border_color(t.border);
+                for (mins, label) in SLEEP_OPTS {
+                    let selected = self.sleep_minutes == mins;
+                    sleep_menu = sleep_menu.child(
+                        div()
+                            .id(SharedString::from(format!("settings-sleep-opt-{mins}")))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_3()
+                            .py_1p5()
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .text_color(t.text)
+                            .when(selected, |d| d.bg(t.active))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.sleep_minutes = mins;
+                                app.sleep_policy.idle_after = Duration::from_secs(mins * 60);
+                                app.settings_dropdown = None;
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_setting("sleep_minutes", &mins.to_string());
+                                }
+                                cx.notify();
+                            }))
+                            .child(label)
+                            .child(div().text_color(t.accent).child(if selected { "✓" } else { "" })),
+                    );
+                }
+
+                let mut general_card = div().flex().flex_col();
+                general_card = general_card.child(row("Search engine", Some("Used for non-URL queries in the ⌘K palette"), search_trigger));
+                if search_open {
+                    general_card = general_card.child(search_menu);
+                }
+                general_card = general_card.child(row("Tab sleep timeout", Some("Unload idle background tabs to save RAM"), sleep_trigger));
+                if sleep_open {
+                    general_card = general_card.child(sleep_menu);
+                }
+                let import_btn = btn("settings-import-chrome", "Import from Chrome".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.run_command(Command::ImportChrome, cx);
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                general_card = general_card.child(row("Chrome bookmarks & history", Some("Import from your local Chrome profile"), import_btn));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("General"))
+                    .child(card(general_card))
+                    .into_any_element()
+            }
+            SettingsTab::Appearance => {
+                let mut theme_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.surface).border_1().border_color(t.border);
+                for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
+                    let id = match choice {
+                        ThemeChoice::System => "settings-theme-system",
+                        ThemeChoice::Light => "settings-theme-light",
+                        ThemeChoice::Dark => "settings-theme-dark",
+                    };
+                    let active = choice == self.theme_choice;
+                    theme_seg = theme_seg.child(
+                        div()
+                            .id(id)
+                            .px_3()
+                            .py_1()
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .when(active, |d| d.bg(t.active))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.set_theme_choice(choice);
+                                cx.notify();
+                            }))
+                            .child(choice.label()),
+                    );
+                }
+                let mut accent_row = div().flex().items_center().gap_2();
+                for choice in AccentChoice::ALL {
+                    let id = match choice {
+                        AccentChoice::Blue => "settings-accent-blue",
+                        AccentChoice::Purple => "settings-accent-purple",
+                        AccentChoice::Green => "settings-accent-green",
+                        AccentChoice::Orange => "settings-accent-orange",
+                    };
+                    let active = choice == self.accent_choice;
+                    let (swatch_color, _) = choice.color(true);
+                    accent_row = accent_row.child(
+                        div()
+                            .id(id)
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(6.))
+                            .border_1()
+                            .border_color(if active { t.accent } else { t.border })
+                            .when(active, |d| d.bg(t.active))
+                            .text_size(px(12.))
+                            .text_color(t.text)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.set_accent_choice(choice);
+                                cx.notify();
+                            }))
+                            .child(div().size(px(10.)).rounded_full().bg(swatch_color))
+                            .child(choice.label()),
+                    );
+                }
+                let mut strip_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.surface).border_1().border_color(t.border);
+                for placement in tabstrip::Placement::ALL {
+                    let id = match placement {
+                        tabstrip::Placement::Left => "settings-tabs-left",
+                        tabstrip::Placement::Top => "settings-tabs-top",
+                        tabstrip::Placement::Right => "settings-tabs-right",
+                    };
+                    let active = self.strip.placement == placement;
+                    strip_seg = strip_seg.child(
+                        div()
+                            .id(id)
+                            .px_3()
+                            .py_1()
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .when(active, |d| d.bg(t.active))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.set_tab_strip_placement(placement, cx);
+                            }))
+                            .child(placement.label()),
+                    );
+                }
+                let strip_visible = switch("settings-tabs-folded", !self.strip.folded, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.toggle_tab_strip(cx);
+                    }))
+                    .into_any_element();
+                let tab_nums_sw = switch("settings-tab-numbers", self.show_tab_numbers, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.show_tab_numbers = !app.show_tab_numbers;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("tab_numbers", if app.show_tab_numbers { "on" } else { "off" });
                         }
-                        Some(Err(e)) => app.toast(format!("Clear history failed: {e}")),
-                        None => app.toast("Profile store unavailable"),
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let appearance_card = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Theme", Some("System follows macOS and syncs website prefers-color-scheme"), theme_seg.into_any_element()))
+                    .child(row("Accent colour", None, accent_row.into_any_element()))
+                    .child(row("Tab strip position", Some("Move tabs between Left, Top, and Right (⇧⌘S)"), strip_seg.into_any_element()))
+                    .child(row("Show tab strip", Some("Hide to maximize page area; ⌘S toggles anytime"), strip_visible))
+                    .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Appearance"))
+                    .child(card(appearance_card))
+                    .into_any_element()
+            }
+            SettingsTab::Privacy => {
+                let blocking_sw = switch("settings-blocking", self.blocking, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.blocking = !app.blocking;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("blocking", if app.blocking { "on" } else { "off" });
+                        }
+                        if app.blocking {
+                            app.web.borrow().load_content_rules(&rules_json(app.store.as_ref()));
+                        } else {
+                            app.web.borrow().clear_content_rules();
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let clear_label: SharedString = if self.confirm_clear_history { "Confirm clear history".into() } else { "Clear history".into() };
+                let clear_btn = btn("settings-clear-history", clear_label, self.confirm_clear_history)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        if !app.confirm_clear_history {
+                            app.confirm_clear_history = true;
+                        } else {
+                            app.confirm_clear_history = false;
+                            match app.store.as_ref().map(|s| s.clear_history().and_then(|n| s.clear_session().map(|_| n))) {
+                                Some(Ok(n)) => {
+                                    app.saved_session.clear();
+                                    app.refresh_start_page();
+                                    app.toast(format!("Cleared {n} history entries and the saved session"))
+                                }
+                                Some(Err(e)) => app.toast(format!("Clear history failed: {e}")),
+                                None => app.toast("Profile store unavailable"),
+                            }
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let privacy_card = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Ad & tracker blocking", Some("Native WebKit content-rule blocker"), blocking_sw))
+                    .child(row("Browsing history & saved session", Some("Removes all visited pages and open session tabs"), clear_btn));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Privacy"))
+                    .child(card(privacy_card))
+                    .into_any_element()
+            }
+            SettingsTab::Extensions => {
+                let installed = self.store.as_ref().and_then(|s| s.enabled_extensions().ok()).unwrap_or_default();
+                let import_ext_btn = btn(
+                    "settings-ext-import-chrome",
+                    if self.ext_busy { "Working…".into() } else { "Import from Chrome".into() },
+                    false,
+                )
+                .on_click(cx.listener(|app, _, _, cx| {
+                    app.import_chrome_extensions(cx);
+                }))
+                .into_any_element();
+                let paste_ext_btn = btn(
+                    "settings-ext-install-clip",
+                    if self.ext_busy { "Installing…".into() } else { "Install from Clipboard".into() },
+                    false,
+                )
+                .on_click(cx.listener(|app, _, _, cx| {
+                    app.install_extension_from_clipboard(cx);
+                }))
+                .into_any_element();
+                let store_btn = btn("settings-ext-open-cws", "Open Web Store".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.close_settings();
+                        app.open_url("https://chromewebstore.google.com/".to_string(), true);
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let actions_card = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Import Chrome extensions", Some("Fetches your Chrome extensions via CRX3 and loads them in WebKit (macOS 15.4+)"), import_ext_btn))
+                    .child(row("Install from Chrome Web Store", Some("Copy any CWS URL or 32-char extension ID, then click Install"), paste_ext_btn))
+                    .child(row("Browse Chrome Web Store", Some("Find extensions, copy their URL, and install directly"), store_btn));
+                let mut list_card = div().flex().flex_col();
+                if installed.is_empty() {
+                    list_card = list_card.child(
+                        div()
+                            .px_4()
+                            .py_4()
+                            .text_size(px(12.))
+                            .text_color(t.muted)
+                            .child("No extensions installed yet."),
+                    );
+                } else {
+                    for (id, name, _path) in installed {
+                        let rm_id = id.clone();
+                        list_card = list_card.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .px_4()
+                                .py_2p5()
+                                .border_b_1()
+                                .border_color(t.border)
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .child(div().text_size(px(13.)).text_color(t.text).child(SharedString::from(name)))
+                                        .child(div().text_size(px(10.)).text_color(t.muted).font_family("Menlo").child(SharedString::from(id.clone()))),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("ext-rm-{id}")))
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded(px(5.))
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .text_size(px(11.))
+                                        .text_color(t.error)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover))
+                                        .on_click(cx.listener(move |app, _, _, cx| {
+                                            app.remove_extension(&rm_id, cx);
+                                        }))
+                                        .child("Remove"),
+                                ),
+                        );
                     }
                 }
-                cx.notify();
-            }))
-            .into_any_element();
-        let mut theme_control = div().flex().items_center().gap_1();
-        for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
-            let id = match choice {
-                ThemeChoice::System => "settings-theme-system",
-                ThemeChoice::Light => "settings-theme-light",
-                ThemeChoice::Dark => "settings-theme-dark",
-            };
-            theme_control = theme_control.child(
-                pill(id, choice.label().into(), false)
-                    .when(choice == self.theme_choice, |d| d.bg(t.active))
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        app.set_theme_choice(choice);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Extensions"))
+                    .child(card(actions_card))
+                    .child(div().text_size(px(12.)).text_color(t.muted).child("INSTALLED"))
+                    .child(card(list_card))
+                    .into_any_element()
+            }
+            SettingsTab::Agents => {
+                let mcp_sw = switch("settings-mcp", self.mcp_enabled, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.mcp_enabled = !app.mcp_enabled;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("mcp", if app.mcp_enabled { "on" } else { "off" });
+                        }
                         cx.notify();
-                    })),
-            );
-        }
-        let mut accent_control = div().flex().items_center().gap_1();
-        for choice in AccentChoice::ALL {
-            let id = match choice {
-                AccentChoice::Blue => "settings-accent-blue",
-                AccentChoice::Purple => "settings-accent-purple",
-                AccentChoice::Green => "settings-accent-green",
-                AccentChoice::Orange => "settings-accent-orange",
-            };
-            accent_control = accent_control.child(
-                pill(id, choice.label().into(), false)
-                    .when(choice == self.accent_choice, |d| d.bg(t.active))
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        app.set_accent_choice(choice);
+                    }))
+                    .into_any_element();
+                let eval_sw = switch("settings-agent-eval", self.agent_eval, true)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.agent_eval = !app.agent_eval;
+                        app.hub.set_agent_eval(app.agent_eval);
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("agent_eval", if app.agent_eval { "on" } else { "off" });
+                        }
                         cx.notify();
-                    })),
-            );
-        }
-        let theme_control = theme_control.into_any_element();
-        let accent_control = accent_control.into_any_element();
-        let shortcuts_btn = pill("settings-shortcuts", "Edit…".into(), false)
-            .on_click(cx.listener(|app, _, _, cx| app.open_shortcuts(cx)))
-            .into_any_element();
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
+                    }))
+                    .into_any_element();
+                let shell_sw = switch("settings-shell-control", self.shell_control, true)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.shell_control = !app.shell_control;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("shell_control", if app.shell_control { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let connect_btn = btn("settings-connect", "Set up…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.open_connect(cx)))
+                    .into_any_element();
+                let mcp_card = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Local MCP server", Some("Restart Relay after toggling"), mcp_sw))
+                    .child(row("Connect an agent", Some("9 clients: Claude Code, Codex, OpenCode, Cursor, Windsurf, Zed, …"), connect_btn))
+                    .child(row("Agent JavaScript (eval_js)", Some("Enabled only on Allow sites; agents can read page data"), eval_sw))
+                    .child(row("Agent shell changes", Some("Allow plan/apply for theme, settings, shortcuts, and sidebar"), shell_sw));
+                let clients = self.store.as_ref().and_then(|s| s.mcp_clients().ok()).unwrap_or_default();
+                let mut client_card = div().flex().flex_col();
+                if clients.is_empty() {
+                    client_card = client_card.child(
+                        div()
+                            .px_4()
+                            .py_3()
+                            .text_size(px(12.))
+                            .text_color(t.muted)
+                            .child("No MCP agent has connected yet."),
+                    );
+                } else {
+                    for c in clients {
+                        let name = c.name.clone();
+                        let granted = c.granted;
+                        let action = shell_grant_action(granted);
+                        let gbtn = div()
+                            .id(SharedString::from(format!("grant-{}", c.name)))
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(t.border)
+                            .text_size(px(11.))
+                            .text_color(if granted { t.accent } else { t.text })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .child(action)
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_mcp_client_granted(&name, !granted, now_unix());
+                                }
+                                cx.notify();
+                            }));
+                        client_card = client_card.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .px_4()
+                                .py_2p5()
+                                .border_b_1()
+                                .border_color(t.border)
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .child(div().text_size(px(13.)).text_color(t.text).child(c.name))
+                                        .child(div().text_size(px(11.)).text_color(t.muted).child(if c.granted {
+                                            "May plan/apply shell changes"
+                                        } else {
+                                            "Connected; no shell writes"
+                                        })),
+                                )
+                                .child(gbtn),
+                        );
+                    }
+                }
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Agents & MCP"))
+                    .child(card(mcp_card))
+                    .child(div().text_size(px(12.)).text_color(t.muted).child("CONNECTED AGENTS"))
+                    .child(card(client_card))
+                    .into_any_element()
+            }
+            SettingsTab::Shortcuts => {
+                let shortcuts_btn = btn("settings-shortcuts", "Customize shortcuts…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.open_shortcuts(cx)))
+                    .into_any_element();
+                let sc_card = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Keyboard shortcuts", Some("Remap any command; hold ⌘ to see 1–9 tab badges"), shortcuts_btn));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Shortcuts"))
+                    .child(card(sc_card))
+                    .into_any_element()
+            }
+        };
+
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(56.)).bg(t.scrim).child(
             div()
                 .id("settings")
-                .w(px(520.))
+                .w(px(820.))
+                .h(px(560.))
                 .flex()
-                .flex_col()
-                .rounded(px(10.))
+                .flex_row()
+                .rounded(px(12.))
                 .bg(t.surface)
                 .border_1()
                 .border_color(t.border)
@@ -800,39 +1221,39 @@ impl RelayApp {
                     app.close_settings();
                     cx.notify();
                 }))
+                .child(nav)
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
                         .flex()
-                        .items_center()
-                        .justify_between()
-                        .h(px(44.))
-                        .px_4()
-                        .border_b_1()
-                        .border_color(t.border)
-                        .child(div().text_size(px(15.)).text_color(t.text).child("Settings"))
-                        .child(div().text_size(px(12.)).text_color(t.muted).child("Esc")),
-                )
-                .child(row("Keyboard shortcuts", Some("Click Change, then press the new keys"), shortcuts_btn))
-                .child(row("Appearance", Some("System follows macOS"), theme_control))
-                .child(row("Accent", None, accent_control))
-                .child(row("Search engine", None, search_btn))
-                .child(row("Ad & tracker blocking", None, blocking_btn))
-                .child(row("Tab sleep timeout", None, sleep_btn))
-                .child(row("Tab strip", Some("⌘S folds · ⇧⌘S moves"), strip_control))
-                .child(row("Local MCP server", Some("(restart to apply)"), mcp_btn))
-                .child(row("Agent JavaScript (eval_js)", Some("On only for Allow sites; agents can read page data"), eval_btn))
-                .child(row("Agent shell changes (all clients)", Some("Allow plan/apply for theme, settings, shortcuts, and sidebar"), shell_btn))
-                .child(client_section)
-                .child(row("Connect an agent", Some("Claude Code, Codex, OpenCode, Cursor, Zed"), connect_btn))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .px_4()
-                        .py_2p5()
-                        .child(div().text_size(px(13.)).text_color(t.text).child("Browsing history"))
-                        .child(clear_btn),
+                        .flex_col()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .h(px(36.))
+                                .px_4()
+                                .child(
+                                    div()
+                                        .id("settings-close")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(4.))
+                                        .text_size(px(11.))
+                                        .text_color(t.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                                        .on_click(cx.listener(|app, _, _, cx| {
+                                            app.close_settings();
+                                            cx.notify();
+                                        }))
+                                        .child("Esc"),
+                                ),
+                        )
+                        .child(div().id("settings-body").flex_1().overflow_y_scroll().px_6().pb_6().child(pane_content)),
                 ),
         )
     }

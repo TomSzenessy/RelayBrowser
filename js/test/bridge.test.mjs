@@ -387,14 +387,25 @@ test("web_app reads a manifest asynchronously and returns a PNG icon", async () 
   await p.close();
 });
 
-test("web_app explains a page without a manifest", async () => {
+test("web_app falls back cleanly on a page without a manifest", async () => {
   const p = await browser.newPage();
   await p.addInitScript(BRIDGE);
-  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: "<html><body>plain</body></html>" }));
+  await p.route(`${ORIGIN}/**`, route => route.fulfill({ contentType: "text/html", body: "<html><head><title>Plain App</title></head><body>plain</body></html>" }));
   await p.goto(`${ORIGIN}/plain-app`);
-  const r = await p.evaluate(() => window.__relay.exec({ id: 121, op: "web_app" }).value);
-  assert.equal(r.available, false);
-  assert.match(r.reason, /does not declare/);
+  await p.evaluate(() => window.__relay.exec({ id: 121, op: "web_app" }));
+  let result;
+  for (let i = 0; i < 100 && !result; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    all.push(...msgs);
+    result = msgs.find(m => m.kind === "result" && m.id === 121);
+    if (!result) await p.waitForTimeout(25);
+  }
+  assert.ok(result, "the async fallback result arrived");
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.value.available, true);
+  assert.equal(result.value.name, "Plain App");
+  assert.equal(result.value.start_url, `${ORIGIN}/plain-app`);
+  assert.equal(result.value.display, "standalone");
   await p.close();
 });
 

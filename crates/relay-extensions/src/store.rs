@@ -499,6 +499,11 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    pub fn remove_extension(&self, id: &str) -> Result<bool, Error> {
+        let changed = self.conn.execute("DELETE FROM extensions WHERE id = ?1", params![id])?;
+        Ok(changed > 0)
+    }
+
     /// Append one audit row, keeping the newest 5,000 only.
     pub fn record_agent_call(&self, tool: &str, host: &str, tab: Option<i64>, outcome: &str, at: i64) -> Result<(), Error> {
         self.conn.execute(
