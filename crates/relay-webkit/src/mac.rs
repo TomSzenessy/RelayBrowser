@@ -25,8 +25,8 @@ use objc2_foundation::{
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKContentWorld, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo,
     WKNavigation, WKNavigationAction, WKNavigationDelegate, WKNavigationResponse, WKNavigationResponsePolicy, WKScriptMessage,
-    WKScriptMessageHandler, WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebExtensionController,
-    WKWebView, WKWebViewConfiguration, WKWebsiteDataStore, WKWindowFeatures,
+    WKMediaCaptureType, WKPermissionDecision, WKScriptMessageHandler, WKSecurityOrigin, WKUIDelegate, WKUserContentController, WKUserScript,
+    WKUserScriptInjectionTime, WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWebsiteDataStore, WKWindowFeatures,
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::{Cell, RefCell};
@@ -461,6 +461,10 @@ pub struct HandlerIvars {
     last_status: Rc<Cell<Option<i64>>>,
     /// Shared with the login handler and the engine for this tab.
     login_nonce: Rc<RefCell<String>>,
+    /// Private tabs ask every time and never share a remembered decision.
+    private: bool,
+    /// `(host, capture kind)` → allowed, shared across ordinary tabs.
+    media_permissions: Rc<RefCell<HashMap<(String, i64), bool>>>,
 }
 
 define_class!(
@@ -658,6 +662,49 @@ define_class!(
                 (self.ivars().events)(EngineEvent::OpenInNewTab { opener: self.ivars().tab, url });
             }
             None // we open a real Relay tab instead of a child window
+        }
+
+        #[unsafe(method(webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:))]
+        fn media_capture_permission(
+            &self,
+            _web_view: &WKWebView,
+            origin: &WKSecurityOrigin,
+            _frame: &WKFrameInfo,
+            capture_type: WKMediaCaptureType,
+            decision_handler: &block2::DynBlock<dyn Fn(WKPermissionDecision)>,
+        ) {
+            let host = unsafe { origin.host() }.to_string();
+            let kind = i64::from(capture_type.0 as i32);
+            let key = (host.clone(), kind);
+            let remembered = if self.ivars().private {
+                None
+            } else {
+                self.ivars().media_permissions.borrow().get(&key).copied()
+            };
+            let granted = match remembered {
+                Some(granted) => granted,
+                None => {
+                    let mtm = MainThreadMarker::from(_web_view);
+                    let alert = NSAlert::new(mtm);
+                    let what = match capture_type {
+                        WKMediaCaptureType::Microphone => "microphone",
+                        WKMediaCaptureType::Camera => "camera",
+                        _ => "camera and microphone",
+                    };
+                    alert.setMessageText(&NSString::from_str(&format!("{host} wants to use the {what}")));
+                    alert.setInformativeText(&NSString::from_str(
+                        "Allow only if you trust this site. Relay remembers the choice until it quits.",
+                    ));
+                    alert.addButtonWithTitle(&NSString::from_str("Allow"));
+                    alert.addButtonWithTitle(&NSString::from_str("Block"));
+                    let granted = alert.runModal() == NSAlertFirstButtonReturn;
+                    if !self.ivars().private {
+                        self.ivars().media_permissions.borrow_mut().insert(key, granted);
+                    }
+                    granted
+                }
+            };
+            decision_handler.call((if granted { WKPermissionDecision::Grant } else { WKPermissionDecision::Deny },));
         }
 
         #[unsafe(method(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:))]
@@ -1022,6 +1069,8 @@ pub struct Engine {
     media_key: Arc<AtomicU8>,
     /// Opaque targets returned by MPRemoteCommand; retained for the process.
     _media_targets: Vec<Retained<AnyObject>>,
+    /// Session-level camera/microphone decisions for ordinary tabs.
+    media_permissions: Rc<RefCell<HashMap<(String, i64), bool>>>,
 }
 
 impl Engine {
@@ -1047,6 +1096,7 @@ impl Engine {
             login_nonces: HashMap::new(),
             media_key,
             _media_targets: media_targets,
+            media_permissions: Rc::default(),
         }
     }
 
@@ -1202,6 +1252,8 @@ impl Engine {
                 offered_logins: self.offered_logins.clone(),
                 last_status: Rc::new(Cell::new(None)),
                 login_nonce: login_nonce.clone(),
+                private,
+                media_permissions: self.media_permissions.clone(),
             },
         );
         let login_handler = LoginHandler::new(

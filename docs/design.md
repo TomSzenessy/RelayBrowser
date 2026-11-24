@@ -95,6 +95,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   open; ⌘D adds the current page.
 - **Default browser:** Settings → General → Make default asks LaunchServices
   to open http and https links with Relay; macOS shows its own confirmation.
+- **Site permissions:** camera/microphone requests show a native Allow/Block
+  alert naming the origin; ordinary tabs remember the choice for the session,
+  private tabs ask every time. Notifications/location memory is not built.
 - **Privacy:** Settings → Privacy hides consent banners with the blocker's CMP
   selectors, and Clear cookies & site data needs a second click because it
   signs out of every site.
