@@ -40,7 +40,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   streams the reply (SSE, with a non-SSE fallback and a Stop button); prior
   turns (last 10) are sent with follow-ups; OpenAI/Ollama/LM Studio/OpenRouter
   presets fill endpoint/model; a **Send visible page text** switch disables
-  body context; Esc closes.
+  body context; New resets the conversation, each answer has Copy, and an
+  empty chat offers Summarize this page; Esc closes.
 - **Motion:** palette, Settings, and Library fade in over 140 ms with
   ease-out-quint; no other transitions are animated yet.
 - **Palette:** also exposes duplicate, mute, and sleep tab commands.

@@ -2309,6 +2309,26 @@ impl RelayApp {
         self.focus_active_page();
     }
 
+    fn new_ai_chat(&mut self, cx: &mut Context<Self>) {
+        self.ai_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.ai_stream = None;
+        self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
+        cx.notify();
+    }
+
+    fn copy_ai_text(&mut self, text: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        self.toast("Copied AI answer");
+        cx.notify();
+    }
+
+    fn summarize_page(&mut self, cx: &mut Context<Self>) {
+        if let Some(chat) = self.ai_chat.as_mut() {
+            chat.input = "Summarize this page.".to_string();
+        }
+        self.send_ai(cx);
+    }
+
     fn stop_ai(&mut self, cx: &mut Context<Self>) {
         self.ai_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         self.ai_stream = None;

@@ -1070,9 +1070,22 @@ impl RelayApp {
             } else {
                 "Ask about the current page. The URL, title, and your question are sent; visible page text is off in Settings."
             };
-            messages = messages.child(div().text_size(px(12.)).text_color(t.muted).child(copy));
+            messages = messages.child(div().text_size(px(12.)).text_color(t.muted).child(copy)).child(
+                div()
+                    .id("ai-summarize")
+                    .px_2()
+                    .py_1()
+                    .rounded(px(5.))
+                    .bg(t.well)
+                    .text_size(px(11.))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(|app, _, _, cx| app.summarize_page(cx)))
+                    .child("Summarize this page"),
+            );
         }
-        for (user, text) in &chat.messages {
+        for (index, (user, text)) in chat.messages.iter().enumerate() {
             messages = messages.child(
                 div()
                     .flex()
@@ -1082,7 +1095,21 @@ impl RelayApp {
                     .rounded(px(7.))
                     .when(*user, |d| d.bg(t.well))
                     .child(div().text_size(px(9.)).text_color(t.muted).child(if *user { "YOU" } else { "AI" }))
-                    .child(div().text_size(px(12.)).text_color(t.text).child(SharedString::from(text.clone()))),
+                    .child(div().text_size(px(12.)).text_color(t.text).child(SharedString::from(text.clone())))
+                    .when(!*user, |d| {
+                        let snippet = text.clone();
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("ai-copy-{index}")))
+                                .mt_1()
+                                .text_size(px(9.))
+                                .text_color(t.muted)
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(t.text))
+                                .on_click(cx.listener(move |app, _, _, cx| app.copy_ai_text(snippet.clone(), cx)))
+                                .child("copy"),
+                        )
+                    }),
             );
         }
         if chat.busy {
@@ -1152,6 +1179,21 @@ impl RelayApp {
                         .child(div().text_size(px(15.)).text_color(t.text).child("Ask AI"))
                         .child(
                             div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .id("ai-new")
+                                        .text_size(px(11.))
+                                        .text_color(t.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.text_color(t.text))
+                                        .on_click(cx.listener(|app, _, _, cx| app.new_ai_chat(cx)))
+                                        .child("New"),
+                                )
+                                .child(
+                            div()
                                 .id("ai-close")
                                 .px_2()
                                 .cursor_pointer()
@@ -1162,6 +1204,7 @@ impl RelayApp {
                                     cx.notify();
                                 }))
                                 .child("×"),
+                                ),
                         ),
                 )
                 .child(messages)
