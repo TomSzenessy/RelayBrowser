@@ -1061,6 +1061,15 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let close_sw = switch("settings-always-close", self.always_show_close, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.always_show_close = !app.always_show_close;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("always_show_close", if app.always_show_close { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let bookmarks_sw = switch("settings-bookmarks-bar", self.show_bookmarks_bar, false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.show_bookmarks_bar = !app.show_bookmarks_bar;
@@ -1085,7 +1094,8 @@ impl RelayApp {
                     .child(row("Restore tabs at launch", Some("Reopen last session's pages asleep, so the RAM is not spent until you visit them"), restore_sw))
                     .child(row("Site icons in tabs", Some("Off shows a coloured letter badge instead of each site's favicon"), glyphs_sw))
                     .child(row("Compact tab rows", Some("Shorter rows for more tabs in the same column"), compact_sw))
-                    .child(row("Show the bookmarks bar", Some("A row of saved pages under the tab strip"), bookmarks_sw));
+                    .child(row("Show the bookmarks bar", Some("A row of saved pages under the tab strip"), bookmarks_sw))
+                    .child(row("Always show tab close buttons", Some("Off: × appears on the active tab and on hover"), close_sw));
                 div()
                     .flex()
                     .flex_col()

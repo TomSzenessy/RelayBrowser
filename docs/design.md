@@ -111,6 +111,8 @@ surface. Settings → Appearance changes it live and stores `theme`/`accent`. Th
 Settings rail has ten pages: General, Appearance, Tabs, Browsing, Passwords,
 Privacy, Extensions, Agents, Shortcuts, and About. Every row is a surface on
 the background, not a boxed cell; only the groups' spacing separates them.
+Tabs also offers site-icon/letter badges, compact rows, a bookmarks bar, and
+always-visible close buttons.
 
 Type: system UI font at 13 pt for chrome and 12 pt monospace for the Inspector.
 Corner radius is 6 pt and spacing uses a 4 pt grid. Motion is 150 ms, and is

@@ -310,6 +310,8 @@ pub struct RelayApp {
     compact_tabs: bool,
     /// A row of saved pages under the tab strip (off by default).
     show_bookmarks_bar: bool,
+    /// Keep every tab's close button visible instead of hover/active only.
+    always_show_close: bool,
     /// Cached bookmarks for that bar; refreshed with the start page.
     bookmarks_bar: Vec<(String, String)>,
     /// 100% unless the user picks another default for sites with no zoom pref.
@@ -495,6 +497,7 @@ impl RelayApp {
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
         let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
         let show_bookmarks_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bookmarks_bar").ok().flatten()).as_deref());
+        let always_show_close = setting_enabled(store.as_ref().and_then(|s| s.setting("always_show_close").ok().flatten()).as_deref());
         let default_zoom = store
             .as_ref()
             .and_then(|s| s.setting("default_zoom").ok().flatten())
@@ -545,6 +548,7 @@ impl RelayApp {
             tab_glyphs,
             compact_tabs,
             show_bookmarks_bar,
+            always_show_close,
             bookmarks_bar: vec![],
             default_zoom,
             show_bottom_bar,
@@ -2702,6 +2706,7 @@ impl RelayApp {
             "tab_glyphs" => self.tab_glyphs = setting_enabled(Some(value)),
             "compact_tabs" => self.compact_tabs = setting_enabled(Some(value)),
             "bookmarks_bar" => self.show_bookmarks_bar = setting_enabled(Some(value)),
+            "always_show_close" => self.always_show_close = setting_enabled(Some(value)),
             "default_zoom" => {
                 if let Ok(z) = value.parse::<f64>() {
                     if (0.5..=3.0).contains(&z) {

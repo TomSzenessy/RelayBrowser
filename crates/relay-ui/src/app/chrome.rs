@@ -375,7 +375,7 @@ impl RelayApp {
         let is_active = active == Some(id);
         let agent = tab.owner == Owner::Agent;
         let title: SharedString = if tab.title.is_empty() { palette::short_url(&tab.url).into() } else { tab.title.clone().into() };
-        let show_close = is_active || self.hovered_tab == Some(id);
+        let show_close = is_active || self.hovered_tab == Some(id) || self.always_show_close;
         let mut row = div()
             .id(("tab", id as usize))
             .flex()

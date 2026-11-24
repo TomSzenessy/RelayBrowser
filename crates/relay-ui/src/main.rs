@@ -273,7 +273,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
         }
         "blocking" | "mcp" | "restore_session" | "tabs_folded" | "bottom_bar" | "autofill_logins" | "login_offers" | "login_fill"
-        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" => match trimmed.to_ascii_lowercase().as_str() {
+        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "always_show_close" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
             _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
@@ -312,7 +312,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, default_zoom)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, always_show_close, default_zoom)"),
     }
 }
 
@@ -342,6 +342,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("default_zoom = {}", setting("default_zoom", "1.00"));
             println!("cookie_banners = {}", setting("cookie_banners", "on"));
             println!("bookmarks_bar = {}", setting("bookmarks_bar", "off"));
+            println!("always_show_close = {}", setting("always_show_close", "off"));
             println!("bangs = {}", cfg.bangs);
             println!("start_sections = {}", cfg.start_sections);
             Ok(())
@@ -361,7 +362,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
                 "tabs_position" => println!("{}", store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).unwrap_or_else(|| "left".into())),
                 "bottom_bar" => println!("{}", store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "on".into())),
-                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" => {
+                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "always_show_close" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
                 }
                 "compact_tabs" => println!("{}", store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).unwrap_or_else(|| "off".into())),
@@ -370,7 +371,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 }
                 "bangs" => println!("{}", cfg.bangs),
                 "start_sections" => println!("{}", cfg.start_sections),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, default_zoom)"),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, always_show_close, default_zoom)"),
             }
             Ok(())
         }
