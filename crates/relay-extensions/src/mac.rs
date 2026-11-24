@@ -72,7 +72,7 @@ pub fn extension_options_url(controller: &Retained<WKWebExtensionController>, ui
     for ctx in unsafe { controller.extensionContexts() }.iter() {
         if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
             let url = unsafe { ctx.optionsPageURL() }?;
-            return Some(unsafe { url.absoluteString() }?.to_string());
+            return Some(url.absoluteString()?.to_string());
         }
     }
     None
@@ -85,7 +85,7 @@ pub fn extension_popup(controller: &Retained<WKWebExtensionController>, uid: &st
     for ctx in unsafe { controller.extensionContexts() }.iter() {
         if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
             let action = unsafe { ctx.actionForTab(None) }?;
-            if !unsafe { action.hasPopup() } {
+            if !unsafe { action.presentsPopup() } {
                 return None;
             }
             return unsafe { action.popupWebView() };

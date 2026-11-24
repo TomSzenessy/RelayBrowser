@@ -88,7 +88,7 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   URL/ID field, a clipboard fallback, enable/disable, permission text, and
   load-error text, an **Options** button for extensions that declare an
   options page, and a **Popup** button that presents the default action's
-  `popupWebView` in a floating panel. It never claims a failed load succeeded.
+  `popupWebView` (only when `presentsPopup` is true) in a floating panel. It never claims a failed load succeeded.
 - **Export:** File → Export as PDF… renders the page through WebKit's PDF
   pipeline and opens a save panel with the page title.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
