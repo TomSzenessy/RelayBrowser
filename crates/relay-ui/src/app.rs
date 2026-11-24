@@ -55,6 +55,8 @@ actions!(
         ToggleBookmark,
         TogglePin,
         Find,
+        FindNext,
+        FindPrevious,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -161,6 +163,7 @@ struct FindBar {
     tab: TabId,
     query: String,
     found: Option<bool>,
+    case_sensitive: bool,
 }
 
 struct Hints {
@@ -2033,8 +2036,8 @@ impl RelayApp {
         self.library = None;
         self.connect_open = false;
         self.end_hints();
-        let query = self.find.take().map(|f| f.query).unwrap_or_default();
-        self.find = Some(FindBar { tab, query, found: None });
+        let (query, case_sensitive) = self.find.take().map(|f| (f.query, f.case_sensitive)).unwrap_or_default();
+        self.find = Some(FindBar { tab, query, found: None, case_sensitive });
         self.web.borrow().focus_shell();
     }
 
@@ -2051,7 +2054,15 @@ impl RelayApp {
             f.found = None;
             return;
         }
-        self.web.borrow().find(f.tab, &f.query, backwards);
+        self.web.borrow().find(f.tab, &f.query, backwards, f.case_sensitive);
+    }
+
+    fn find_step(&mut self, backwards: bool) {
+        if self.find.is_none() {
+            self.open_find();
+            return;
+        }
+        self.run_find(backwards);
     }
 
     /// ⌘⌥P: pin or unpin the active tab (pinned tabs sit at the top).
@@ -3055,6 +3066,14 @@ impl Render for RelayApp {
                 app.run_command(Command::Find, cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|app, _: &FindNext, _, cx| {
+                app.find_step(false);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &FindPrevious, _, cx| {
+                app.find_step(true);
+                cx.notify();
+            }))
             .on_action(cx.listener(|app, _: &ZoomIn, _, cx| {
                 app.run_command(Command::ZoomIn, cx);
                 cx.notify();
@@ -3174,7 +3193,7 @@ impl Render for RelayApp {
             }
         }
         if let Some(f) = &self.find {
-            root = root.child(self.render_find(f));
+            root = root.child(self.render_find(f, cx));
         }
         if let Some(p) = &self.palette {
             root = root.child(self.render_palette(p, cx));

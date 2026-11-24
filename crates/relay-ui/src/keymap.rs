@@ -101,6 +101,8 @@ action_table! {
     ToggleBookmark => "bookmark", "Bookmark this page", "secondary-d";
     TogglePin => "pin", "Pin / unpin tab", "secondary-alt-p";
     Find => "find", "Find in page", "secondary-f";
+    FindNext => "find-next", "Find next", "secondary-g";
+    FindPrevious => "find-prev", "Find previous", "secondary-shift-g";
     ZoomIn => "zoom-in", "Zoom in", "secondary-=";
     ZoomOut => "zoom-out", "Zoom out", "secondary--";
     ZoomReset => "zoom-reset", "Actual size", "secondary-0";
@@ -167,6 +169,8 @@ impl ActionId {
             | ActionId::NextTabStripPosition
             | ActionId::NewPrivateTab => "Tabs",
             ActionId::Find
+            | ActionId::FindNext
+            | ActionId::FindPrevious
             | ActionId::ZoomIn
             | ActionId::ZoomOut
             | ActionId::ZoomReset
@@ -346,7 +350,7 @@ mod tests {
             assert!(ids.insert(id.as_str()), "duplicate action id {}", id.as_str());
             assert!(labels.insert(id.label()), "duplicate Settings label {}", id.label());
         }
-        assert_eq!(ActionId::ALL.len(), 52);
+        assert_eq!(ActionId::ALL.len(), 54);
     }
 
     #[test]

@@ -60,6 +60,8 @@ pub(super) fn app_menus_named(app_name: Option<&str>) -> Vec<Menu> {
                 item("Select All", SelectAll),
                 sep(),
                 item("Find in Page…", Find),
+                item("Find Next", FindNext),
+                item("Find Previous", FindPrevious),
             ],
         },
         Menu {

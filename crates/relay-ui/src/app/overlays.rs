@@ -1705,7 +1705,7 @@ impl RelayApp {
     /// What the window title should say: the active page, or Relay itself.
     /// A web app window is just its page; the bundle already carries its name.
 
-    pub(super) fn render_find(&self, f: &FindBar) -> impl IntoElement {
+    pub(super) fn render_find(&self, f: &FindBar, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let (text, color) = if f.query.is_empty() {
             ("Find in page…".to_string(), t.muted)
@@ -1722,7 +1722,7 @@ impl RelayApp {
                 .flex()
                 .items_center()
                 .gap_3()
-                .w(px(340.))
+                .w(px(380.))
                 .h(px(34.))
                 .px_3()
                 .rounded(px(8.))
@@ -1730,6 +1730,26 @@ impl RelayApp {
                 .shadow_lg()
                 .text_size(px(13.))
                 .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(color).child(SharedString::from(text)))
+                .child(
+                    div()
+                        .id("find-case")
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded(px(5.))
+                        .bg(if f.case_sensitive { t.active } else { t.well })
+                        .text_size(px(10.))
+                        .text_color(if f.case_sensitive { t.accent } else { t.muted })
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            if let Some(f) = app.find.as_mut() {
+                                f.case_sensitive = !f.case_sensitive;
+                            }
+                            app.run_find(false);
+                            cx.notify();
+                        }))
+                        .child("Aa"),
+                )
                 .child(div().text_size(px(11.)).text_color(if f.found == Some(false) { t.warn } else { t.muted }).child(status)),
         )
     }

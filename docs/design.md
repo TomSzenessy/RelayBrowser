@@ -152,6 +152,8 @@ and displayed shortcuts cannot drift either.
 | ⌘D | Bookmark this page |
 | ⌘⌥P | Pin / unpin tab |
 | ⌘F | Find in page |
+| ⌘G | Find next |
+| ⌘⇧G | Find previous |
 | ⌘= | Zoom in |
 | ⌘- | Zoom out |
 | ⌘0 | Actual size |
@@ -191,7 +193,8 @@ Behaviour that is not a single action:
 - **⌘K palette:** each command shows its current custom shortcut; ←/→/Home/End
   move, ⇧ extends, ⌥ moves by word, ⌘A/⌘C/⌘X select/copy/cut, and a click
   places the caret. ⌘L opens it prefilled with the current URL.
-- **Find:** ↩ goes to the next hit, ⇧↩ to the previous, Esc closes.
+- **Find:** ↩ goes to the next hit, ⇧↩ to the previous, ⌘G/⇧⌘G step
+  outside the field, `Aa` toggles case sensitivity, Esc closes.
 - **Sidebar:** ⌘⌥I opens / closes it; × collapses it, and the Agent / Inspector
   tabs switch panes.
 - **Paused agents:** ⇧⌘. pauses or resumes every agent tool call and shows a

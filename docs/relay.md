@@ -455,7 +455,8 @@ WKWebView. `after_load` restores scroll once the bridge says `hello`.
 ## Find and zoom
 
 ⌘F opens a find bar over the content; each keystroke calls
-`Engine::find` (`WKWebView findString`, wrapping, case-insensitive) and the
+`Engine::find` (`WKWebView findString`, wrapping, with an Aa case toggle and
+⌘G/⇧⌘G step) and the
 match answer returns as `WebEvent::Found`, so the bar can say "No matches".
 Switching tabs or opening the palette closes it. ⌘= / ⌘- / ⌘0 step through
 browser-style presets (50%–300%) and store the result in the host's

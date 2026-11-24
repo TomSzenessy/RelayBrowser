@@ -52,7 +52,8 @@ is an owner decision or a later issue, not an implicit part of #57.
   the capture helper compare against it, so a stale document or a page-world
   caller cannot answer for the current one.
 - Keychain failures distinguish **Denied** (user cancel/auth/interaction) from
-  **Unavailable**; a denied read is not retried against another path.
+  **Unavailable**; a denied read is not retried against another path. Find's
+  case mode and the native find callback are unrelated to this path.
 - Relay records the logins it writes (host, user, path) in the profile. The
   Settings list, fill offers, and Delete act only on those records, so another
   browser's Keychain items are never offered or destroyed. A second save for

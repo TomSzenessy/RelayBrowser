@@ -1355,7 +1355,7 @@ impl Engine {
 
     /// Find `text` in the page, selecting and scrolling to the next match
     /// (wrapping). `done` receives whether anything matched.
-    pub fn find(&self, tab: TabId, text: &str, backwards: bool, done: impl Fn(bool) + 'static) {
+    pub fn find(&self, tab: TabId, text: &str, backwards: bool, case_sensitive: bool, done: impl Fn(bool) + 'static) {
         let Some(t) = self.tabs.get(&tab) else {
             done(false);
             return;
@@ -1365,7 +1365,7 @@ impl Engine {
         unsafe {
             config.setBackwards(backwards);
             config.setWraps(true);
-            config.setCaseSensitive(false);
+            config.setCaseSensitive(case_sensitive);
         }
         let block = RcBlock::new(move |result: NonNull<WKFindResult>| {
             done(unsafe { result.as_ref().matchFound() });
