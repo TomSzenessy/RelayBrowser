@@ -77,7 +77,7 @@ namespaces (`storage`, `runtime.sendMessage`, `tabs`, `scripting`,
 `chrome.runtime.lastError` during a failed callback. Event registration is
 never wrapped. Only `sidePanel` and `offscreen` have native receivers.
 
-`page_text` posts `{kind:"page_text",url,text}` with up to 20,000 characters
+`page_text` posts `{kind:"page_text",url,text}` (the URL is the page's own `location.href`) with up to 20,000 characters
 of visible `document.body.innerText` (the WebKit test asserts the reply); the hub caches it per URL for the AI
 assistant and clears it on navigation.
 

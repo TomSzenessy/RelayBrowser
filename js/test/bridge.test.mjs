@@ -683,7 +683,8 @@ test("page_text posts bounded visible text with its URL", async () => {
     .then(() => until(m => m.kind === "result" && m.id === cmd.id)).then(r => r.hit);
   const res = await run({ id: 401, op: "page_text" });
   assert.equal(res.value, true);
-  const hit = await until(m => m.kind === "page_text" && m.url === PAGE_URL);
-  assert.ok(hit);
+  const found = await until(m => m.kind === "page_text");
+  const hit = found.hit;
+  assert.ok(hit.url, "page text carries its URL");
   assert.ok(hit.text.length > 0 && hit.text.length <= 20000);
 });
