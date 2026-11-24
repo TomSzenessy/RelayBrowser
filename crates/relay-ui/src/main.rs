@@ -35,7 +35,7 @@ USAGE:
   relay audit [--limit N]           show the lean log of agent tool calls
   relay mcp-config [CLIENT]         print the MCP config for 9 clients (claude-code, codex, opencode, cursor, zed, vscode, windsurf, claude-desktop, gemini)
   relay import-chrome [--dry-run] [--profile DIR]
-                                    import Chrome bookmarks + history into Relay's profile
+                                    import Chrome/Chromium-family bookmarks + history into Relay's profile
   relay import-passwords CSV        move a Chrome password export into the macOS Keychain, then delete the CSV
   relay install-extension ID        fetch a Chrome Web Store extension (loaded on next launch)
   relay compile-rules FILE          compile EasyList filters to WebKit content-blocker JSON
@@ -577,10 +577,10 @@ fn import_chrome(args: &[String]) -> anyhow::Result<()> {
     }
     let profile = match profile {
         Some(p) => p,
-        None => chrome_import::default_profile().context("no Chrome profile found; pass --profile DIR")?,
+        None => chrome_import::default_profile().context("no Chrome-family profile found; pass --profile DIR")?,
     };
     let p = chrome_import::preview(&profile, 20_000);
-    println!("Chrome profile: {}", profile.display());
+    println!("{} profile: {}", chrome_import::browser_name(&profile), profile.display());
     println!("  bookmarks:  {}", p.bookmarks.len());
     println!("  history:    {}", p.history.len());
     println!("  extensions: {}", p.extensions.len());

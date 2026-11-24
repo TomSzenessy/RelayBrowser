@@ -11,7 +11,7 @@ map is checked against that table; the shell-write row covers plan/apply for
 theme, allowlisted settings, shortcuts, sidebar, a start-page note, hashed
 audit, and action-id/duplicate-key validation; the Downloads row covers
 cancel/retry and native byte progress. The owner pass of 2026-11-24 (#189)
-adds ten Settings pages, case-sensitive find with ⌘G, Export as PDF, an optional address bar with inline palette completion, system media keys, a bookmarks bar, hideable bottom bar, default zoom,
+adds ten Settings pages, case-sensitive find with ⌘G, Export as PDF, a Chrome-family browser import, an optional address bar with inline palette completion, system media keys, a bookmarks bar, hideable bottom bar, default zoom,
 cookie-banner and site-data controls, tab mute, scoped saved-login records,
 SVG/ICO favicons, and a true default-browser path; the matrix records which
 remain Mac-observation or Apple-entitlement gates. These sources

@@ -1624,7 +1624,7 @@ impl RelayApp {
             return;
         }
         let Some(profile) = relay_extensions::chrome_import::default_profile() else {
-            self.toast("No Chrome profile found on this Mac");
+            self.toast("No Chrome-family profile found on this Mac");
             cx.notify();
             return;
         };
@@ -2523,7 +2523,7 @@ impl RelayApp {
 
     fn import_chrome(&mut self, cx: &mut Context<Self>) {
         let Some(profile) = relay_extensions::chrome_import::default_profile() else {
-            self.toast("No Chrome profile found");
+            self.toast("No Chrome-family profile found");
             return;
         };
         let preview = relay_extensions::chrome_import::preview(&profile, 20_000);

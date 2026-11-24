@@ -52,14 +52,43 @@ impl std::fmt::Debug for Credential {
 }
 
 /// `~/Library/Application Support/Google/Chrome/Default` on macOS.
+/// Browser profiles that use Chrome's on-disk format, in preference order.
+/// Arc, Dia, Brave, Edge and Chromium can be imported by the same reader.
+pub const CHROMIUM_FAMILY: [(&str, &str); 7] = [
+    ("Chrome", "Library/Application Support/Google/Chrome/Default"),
+    ("Chrome", ".config/google-chrome/Default"),
+    ("Brave", "Library/Application Support/BraveSoftware/Brave-Browser/Default"),
+    ("Edge", "Library/Application Support/Microsoft Edge/Default"),
+    ("Arc", "Library/Application Support/Arc/User Data/Default"),
+    ("Dia", "Library/Application Support/Dia/User Data/Default"),
+    ("Chromium", ".config/chromium/Default"),
+];
+
+/// Existing Chrome-family profiles under `home`, named for the UI.
+pub fn chromium_profiles(home: &Path) -> Vec<(&'static str, PathBuf)> {
+    CHROMIUM_FAMILY
+        .iter()
+        .filter_map(|(name, rel)| {
+            let path = home.join(rel);
+            path.is_dir().then_some((*name, path))
+        })
+        .collect()
+}
+
 pub fn default_profile() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var_os("HOME")?);
-    let candidates = [
-        home.join("Library/Application Support/Google/Chrome/Default"),
-        home.join(".config/google-chrome/Default"),
-        home.join(".config/chromium/Default"),
-    ];
-    candidates.into_iter().find(|p| p.is_dir())
+    chromium_profiles(&home).into_iter().next().map(|(_, path)| path)
+}
+
+/// Name of the browser a profile path belongs to, best effort.
+pub fn browser_name(profile: &Path) -> &'static str {
+    let text = profile.to_string_lossy();
+    for (name, _) in CHROMIUM_FAMILY {
+        if (name == "Chrome" && text.contains("Google/Chrome")) || (name != "Chrome" && text.contains(name)) {
+            return name;
+        }
+    }
+    "Chromium"
 }
 
 /// Parse the `Bookmarks` JSON file.
@@ -374,5 +403,23 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = preview(d.path(), 10);
         assert_eq!(p.errors.len(), 2, "{:?}", p.errors); // bookmarks + history missing; no Extensions dir is fine
+    }
+}
+
+
+#[cfg(test)]
+mod family_tests {
+    use super::*;
+
+    #[test]
+    fn finds_every_chromium_family_profile_that_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        std::fs::create_dir_all(home.join("Library/Application Support/BraveSoftware/Brave-Browser/Default")).unwrap();
+        std::fs::create_dir_all(home.join("Library/Application Support/Arc/User Data/Default")).unwrap();
+        let found = chromium_profiles(home);
+        assert_eq!(found.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec!["Brave", "Arc"]);
+        assert_eq!(browser_name(&found[0].1), "Brave");
+        assert_eq!(browser_name(&found[1].1), "Arc");
     }
 }

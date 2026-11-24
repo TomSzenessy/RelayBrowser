@@ -1043,7 +1043,7 @@ impl RelayApp {
             .bg(t.raised)
             .shadow_lg()
             .child(div().text_size(px(15.)).text_color(t.text).child("A browser that agents can read"))
-            .child(div().text_size(px(13.)).text_color(t.muted).child("Import your Chrome bookmarks and history, or connect Claude Code, Codex, OpenCode, or Zed to the live page."))
+            .child(div().text_size(px(13.)).text_color(t.muted).child("Import your Chrome, Brave, Edge, Arc, or Dia bookmarks and history, or connect Claude Code, Codex, OpenCode, or Zed to the live page."))
             .child(div().flex().gap_2().child(button("import", "Import from Chrome", Command::ImportChrome, cx)).child(button("mcp", "Copy MCP setup", Command::CopyMcpSetup, cx)))
             .child(
                 div()

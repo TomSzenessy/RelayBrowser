@@ -988,7 +988,7 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
-                general_card = general_card.child(row("Chrome bookmarks & history", Some("Import from your local Chrome profile"), import_btn));
+                general_card = general_card.child(row("Browser bookmarks & history", Some("Chrome, Brave, Edge, Arc, Dia, or Chromium"), import_btn));
                 let default_btn = btn("settings-default-browser", "Make default".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         if app.web.borrow().renders_pages() {
