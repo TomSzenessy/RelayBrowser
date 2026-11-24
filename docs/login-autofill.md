@@ -42,11 +42,14 @@ is an owner decision or a later issue, not an implicit part of #57.
 - A fill reports `LoginFilled { ok }` from the page; the shell no longer
   toasts success before the field is set.
 - Password capture is refused in native code when saving is off, and passwords
-  are zeroized when a `Password`/`PendingCapture` is dropped.
+  are zeroized when a `Password`/`PendingCapture` is dropped. The confirmed
+  login crosses the native seam as a named `PendingLogin`, not a tuple.
 - A save offer requires a main-frame 2xx response in addition to the same
   origin, so an error page that still renders a form cannot ask to store the
   posted password. The response status is tracked in the native handler, not
   read from the page.
+- A submit signal must be a trusted user event (`event.isTrusted`); a page
+  calling `requestSubmit()` cannot trigger capture.
 - Every provisional navigation rotates a 128-bit nonce and injects it into the
   isolated `relay.login` world only. Focus/submit signals, the fill helper, and
   the capture helper compare against it, so a stale document or a page-world

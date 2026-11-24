@@ -279,18 +279,18 @@ mod imp {
 
         /// Save the confirmed native login capture for `tab` to Keychain and drop it.
         pub fn accept_save_login(&self, tab: TabId) -> Result<String, String> {
-            let Some((url, username, password)) = self.engine.take_pending_login(tab) else {
+            let Some(pending) = self.engine.take_pending_login(tab) else {
                 return Err("No pending login to save".into());
             };
-            let (origin, path) = relay_extensions::login::Origin::parse_with_path(&url).map_err(|e| e.to_string())?;
+            let (origin, path) = relay_extensions::login::Origin::parse_with_path(&pending.url).map_err(|e| e.to_string())?;
             let captured = relay_extensions::login::CapturedLogin::new(
                 origin,
-                username.clone(),
+                pending.username.clone(),
                 &path,
-                relay_extensions::login::Password::new(password.as_str()),
+                relay_extensions::login::Password::new(pending.password.as_str()),
             );
             relay_extensions::mac::save_login(&captured).map_err(keychain_message)?;
-            Ok(username)
+            Ok(pending.username)
         }
 
         pub fn decline_save_login(&self, tab: TabId) {

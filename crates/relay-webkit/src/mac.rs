@@ -89,6 +89,9 @@ const LOGIN_WATCH_JS: &str = r#"(function(){
     if (isLoginField(field)) post({ kind: 'focus', form: findFormIndex(field) });
   }, true);
   document.addEventListener('submit', function(e) {
+    // A real user submission is trusted; requestSubmit()/form.submit() from
+    // page script is not, so it cannot trigger a password capture.
+    if (!e.isTrusted) return;
     var form = e.target;
     if (!form || !form.querySelector) return;
     if (!form.querySelector('input[type="password"]')) return;
@@ -293,6 +296,13 @@ struct PendingCapture {
     username: String,
     /// Wiped on drop even when this capture is dropped without saving.
     password: zeroize::Zeroizing<String>,
+}
+
+/// A confirmed login handed to the shell; the password zeroizes on drop.
+pub struct PendingLogin {
+    pub url: String,
+    pub username: String,
+    pub password: zeroize::Zeroizing<String>,
 }
 
 impl std::fmt::Debug for PendingCapture {
@@ -1313,13 +1323,15 @@ impl Engine {
         }
     }
 
-    /// Pop the confirmed pending login `(url, username, password)` for `tab` so
-    /// `WebHost` can write it directly to the Keychain and drop it immediately.
-    pub fn take_pending_login(&self, tab: TabId) -> Option<(String, String, zeroize::Zeroizing<String>)> {
-        self.offered_logins
-            .borrow_mut()
-            .remove(&tab)
-            .map(|c| (c.url, c.username, c.password))
+    /// Pop the confirmed pending login for `tab` so `WebHost` can write it
+    /// directly to the Keychain and drop it immediately. A named struct, not
+    /// a tuple, so the secret cannot be confused with the public fields.
+    pub fn take_pending_login(&self, tab: TabId) -> Option<PendingLogin> {
+        self.offered_logins.borrow_mut().remove(&tab).map(|c| PendingLogin {
+            url: c.url,
+            username: c.username,
+            password: c.password,
+        })
     }
 
     /// Discard any pending or offered login capture for `tab`.
