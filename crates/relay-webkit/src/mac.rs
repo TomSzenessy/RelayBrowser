@@ -165,7 +165,7 @@ define_class!(
         #[unsafe(method(webView:navigationResponse:didBecomeDownload:))]
         fn did_become_download(&self, _web_view: &WKWebView, _response: &WKNavigationResponse, download: &WKDownload) {
             let url = unsafe { download.originalRequest() }
-                .and_then(|r| unsafe { r.URL() })
+                .and_then(|r| r.URL())
                 .and_then(|u| u.absoluteString())
                 .map(|s| s.to_string())
                 .unwrap_or_default();
