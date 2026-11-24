@@ -2,7 +2,73 @@
 
 use super::*;
 
+/// Deterministic letter-monogram fallback badge when a host has no cached favicon.
+fn monogram_icon(url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
+    const PALETTE: [u32; 8] = [
+        0x4c6ef5, // indigo
+        0x7950f2, // violet
+        0x12b886, // teal
+        0x228be6, // blue
+        0xfa5252, // coral
+        0xfd7e14, // orange
+        0xe64980, // rose
+        0x40c057, // green
+    ];
+    let host = host_of(url).unwrap_or_default();
+    let clean_host = host.strip_prefix("www.").unwrap_or(&host);
+    let initial = clean_host
+        .chars()
+        .find(|c| c.is_ascii_alphanumeric())
+        .or_else(|| title.chars().find(|c| c.is_alphanumeric()))
+        .unwrap_or('·')
+        .to_ascii_uppercase()
+        .to_string();
+    let hash = clean_host.bytes().fold(0usize, |acc, b| acc.wrapping_mul(31).wrapping_add(b as usize));
+    let bg = gpui::rgb(PALETTE[hash % PALETTE.len()]);
+    div()
+        .size(px(size_px))
+        .flex_shrink_0()
+        .rounded(px((size_px * 0.25).max(3.)))
+        .bg(bg)
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px((size_px * 0.62).max(9.)))
+        .text_color(gpui::rgb(0xffffff))
+        .child(SharedString::from(initial))
+        .into_any_element()
+}
+
 impl RelayApp {
+    fn site_icon(&self, url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
+        match host_of(url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone()) {
+            Some(icon) => img(icon).size(px(size_px)).flex_shrink_0().rounded(px(3.)).into_any_element(),
+            None => monogram_icon(url, title, size_px),
+        }
+    }
+
+    fn nav_icon_button(&self, id: &'static str, label: &'static str, active: bool, cmd: Command, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        div()
+            .id(id)
+            .w(px(24.))
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(5.))
+            .text_size(px(13.))
+            .text_color(if active { t.accent } else { t.muted })
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover).text_color(t.text))
+            .on_click(cx.listener(move |app, _, _, cx| {
+                app.run_command(cmd, cx);
+                cx.notify();
+            }))
+            .child(label)
+            .into_any_element()
+    }
+
     pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let strip = self.strip;
@@ -19,67 +85,208 @@ impl RelayApp {
             }
             (active, user, agents)
         };
+        let bookmarked = self.active_is_bookmarked();
+        let show_nums = self.cmd_held && self.show_tab_numbers;
+        // Assign 1-based ⌘1–⌘9 shortcut numbers in display order (pinned first, then loose, then agent).
+        let pinned: Vec<&TabView> = user.iter().filter(|v| v.pinned).collect();
+        let loose: Vec<&TabView> = user.iter().filter(|v| !v.pinned).collect();
         let vertical = strip.placement.is_vertical();
         let mut bar = div().flex();
         if vertical {
+            let is_left = strip.placement == tabstrip::Placement::Left;
             bar = bar
                 .flex_col()
-                .gap_0p5()
-                .p_2()
+                .gap_1()
+                .px_2()
+                .pb_2()
+                .pt(if is_left { px(34.) } else { px(10.) })
                 .w(px(strip.width()))
                 .h_full()
                 .bg(t.surface)
                 .border_color(t.border);
-            bar = if strip.placement == tabstrip::Placement::Left { bar.border_r_1() } else { bar.border_l_1() };
+            bar = if is_left { bar.border_r_1() } else { bar.border_l_1() };
+            // Compact navigation + bookmark + fold header row.
             bar = bar.child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px_2()
-                    .pb_2()
-                    .child(div().text_size(px(11.)).text_color(t.muted).child("TABS"))
-                    .child(self.fold_button(if strip.placement == tabstrip::Placement::Left { "«" } else { "»" }, cx)),
+                    .pb_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_0p5()
+                            .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
+                            .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
+                            .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_0p5()
+                            .child(self.nav_icon_button(
+                                "nav-bookmark",
+                                if bookmarked { "★" } else { "☆" },
+                                bookmarked,
+                                Command::ToggleBookmark,
+                                cx,
+                            ))
+                            .child(self.fold_button(if is_left { "«" } else { "»" }, cx)),
+                    ),
             );
-            for tab in &user {
-                bar = bar.child(self.tab_row(tab, active, true, cx));
+            // Arc/Search-style Favorites grid for pinned tabs.
+            if !pinned.is_empty() {
+                let mut grid = div().flex().flex_wrap().gap_1p5().pb_1();
+                for (i, tab) in pinned.iter().enumerate() {
+                    let badge = (show_nums && i < 9).then_some(i + 1);
+                    grid = grid.child(self.pin_tile(tab, active, badge, cx));
+                }
+                bar = bar.child(grid);
+            }
+            // Subtle divider + Clear button between pinned favorites and loose tabs.
+            if !pinned.is_empty() || !loose.is_empty() {
+                bar = bar.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .py_0p5()
+                        .child(div().flex_1().h(px(1.)).bg(t.border))
+                        .when(!loose.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .id("clear-loose-tabs")
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded(px(4.))
+                                    .text_size(px(10.))
+                                    .text_color(t.muted)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                                    .on_click(cx.listener(|app, _, _, cx| {
+                                        app.clear_loose_tabs(cx);
+                                    }))
+                                    .child("Clear"),
+                            )
+                        }),
+                );
+            }
+            let mut list = div().id("tab-list-scroll").flex_1().flex().flex_col().gap_0p5().overflow_y_scroll();
+            for (i, tab) in loose.iter().enumerate() {
+                let idx = pinned.len() + i;
+                let badge = (show_nums && idx < 9).then_some(idx + 1);
+                list = list.child(self.tab_row(tab, active, true, badge, cx));
             }
             if !agents.is_empty() {
-                bar = bar.child(div().mt_3().px_2().pb_1().text_size(px(11.)).text_color(t.agent).child("AGENT"));
-                for tab in &agents {
-                    bar = bar.child(self.tab_row(tab, active, true, cx));
+                list = list.child(div().mt_2().px_2().pb_1().text_size(px(10.)).text_color(t.agent).child("AGENT"));
+                for (i, tab) in agents.iter().enumerate() {
+                    let idx = pinned.len() + loose.len() + i;
+                    let badge = (show_nums && idx < 9).then_some(idx + 1);
+                    list = list.child(self.tab_row(tab, active, true, badge, cx));
                 }
             }
-            bar.child(div().flex_1()).child(self.new_tab_button(true, cx)).into_any_element()
+            bar.child(list).child(self.new_tab_button(true, cx)).into_any_element()
         } else {
             bar = bar
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .px_2()
+                .pl(px(78.))
+                .pr_2()
                 .h(px(strip.height()))
                 .w_full()
                 .bg(t.surface)
                 .border_b_1()
                 .border_color(t.border)
-                .child(div().text_size(px(11.)).text_color(t.muted).child("TABS"));
-            for tab in &user {
-                bar = bar.child(self.tab_row(tab, active, false, cx));
+                .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
+                .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
+                .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
+            for (i, tab) in pinned.iter().chain(loose.iter()).enumerate() {
+                let badge = (show_nums && i < 9).then_some(i + 1);
+                bar = bar.child(self.tab_row(tab, active, false, badge, cx));
             }
             if !agents.is_empty() {
                 bar = bar.child(div().px_1().text_size(px(10.)).text_color(t.agent).child("AGENT"));
-                for tab in &agents {
-                    bar = bar.child(self.tab_row(tab, active, false, cx));
+                for (i, tab) in agents.iter().enumerate() {
+                    let idx = pinned.len() + loose.len() + i;
+                    let badge = (show_nums && idx < 9).then_some(idx + 1);
+                    bar = bar.child(self.tab_row(tab, active, false, badge, cx));
                 }
             }
             bar.child(self.new_tab_button(false, cx))
                 .child(div().flex_1())
+                .child(self.nav_icon_button(
+                    "nav-bookmark",
+                    if bookmarked { "★" } else { "☆" },
+                    bookmarked,
+                    Command::ToggleBookmark,
+                    cx,
+                ))
                 .child(self.fold_button("⌃", cx))
                 .into_any_element()
         }
     }
 
-    fn tab_row(&self, tab: &TabView, active: Option<TabId>, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// Compact Arc-style Favorites tile for a pinned tab in the vertical sidebar.
+    fn pin_tile(&self, tab: &TabView, active: Option<TabId>, shortcut_num: Option<usize>, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let id = tab.id;
+        let is_active = active == Some(id);
+        div()
+            .id(("pin-tile", id as usize))
+            .relative()
+            .w(px(45.))
+            .h(px(34.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(8.))
+            .bg(if is_active { t.active } else { t.background })
+            .border_1()
+            .border_color(if is_active { t.accent } else { t.border })
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(cx.listener(move |app, _, _, cx| {
+                app.activate(id);
+                cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Middle, cx.listener(move |app, _, _, cx| {
+                app.close_tab(id, cx);
+                cx.notify();
+            }))
+            .child(self.site_icon(&tab.url, &tab.title, 16.))
+            .when(tab.playing_audio, |d| {
+                d.child(div().absolute().bottom(px(2.)).right(px(3.)).text_size(px(9.)).text_color(t.accent).child("♪"))
+            })
+            .when_some(shortcut_num, |d, n| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(2.))
+                        .left(px(3.))
+                        .px_1()
+                        .rounded(px(3.))
+                        .bg(t.accent)
+                        .text_size(px(9.))
+                        .line_height(px(11.))
+                        .text_color(gpui::rgb(0xffffff))
+                        .child(SharedString::from(n.to_string())),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn tab_row(
+        &self,
+        tab: &TabView,
+        active: Option<TabId>,
+        vertical: bool,
+        shortcut_num: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let t = self.theme;
         let id = tab.id;
         let is_active = active == Some(id);
@@ -90,7 +297,7 @@ impl RelayApp {
             .id(("tab", id as usize))
             .flex()
             .items_center()
-            .gap_1()
+            .gap_1p5()
             .h(px(28.))
             .px_2()
             .rounded(px(6.))
@@ -113,19 +320,27 @@ impl RelayApp {
                 app.close_tab(id, cx);
                 cx.notify();
             }));
-        let icon = host_of(&tab.url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone());
-        row = row.child(match icon {
-            Some(icon) => img(icon).size(px(14.)).rounded(px(3.)).into_any_element(),
-            None => div()
-                .size(px(8.))
-                .rounded_full()
-                .bg(if agent { t.agent } else if is_active { t.accent } else { t.border })
-                .into_any_element(),
-        });
-        let title_el = if vertical {
-            div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
+        if let Some(n) = shortcut_num {
+            row = row.child(
+                div()
+                    .size(px(15.))
+                    .flex_shrink_0()
+                    .rounded(px(4.))
+                    .bg(t.accent)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(10.))
+                    .text_color(gpui::rgb(0xffffff))
+                    .child(SharedString::from(n.to_string())),
+            );
         } else {
-            div().max_w(px(170.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
+            row = row.child(self.site_icon(&tab.url, &tab.title, 15.));
+        }
+        let title_el = if vertical {
+            div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
+        } else {
+            div().max_w(px(160.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(title)
         };
         row = row.child(title_el);
         if agent {
@@ -138,19 +353,20 @@ impl RelayApp {
             row = row.child(div().text_color(t.warn).child("⚠"));
         }
         if tab.playing_audio {
-            row = row.child(div().text_color(t.muted).text_size(px(11.)).child("♪"));
+            row = row.child(div().text_color(t.accent).text_size(px(11.)).child("♪"));
         }
-        if tab.pinned {
-            row = row.child(div().text_color(t.muted).text_size(px(11.)).child("pin"));
+        if tab.pinned && !vertical {
+            row = row.child(div().text_color(t.muted).text_size(px(10.)).child("•"));
         }
         if tab.sleeping {
-            row = row.child(div().text_color(t.muted).text_size(px(11.)).child("zz"));
+            row = row.child(div().text_color(t.muted).text_size(px(10.)).child("zz"));
         }
         row.child(
             div()
                 .id(("close-tab", id as usize))
                 .w(px(18.))
                 .h(px(18.))
+                .flex_shrink_0()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -181,15 +397,15 @@ impl RelayApp {
             .text_size(px(12.))
             .text_color(t.muted)
             .cursor_pointer()
-            .hover(|s| s.bg(t.hover))
+            .hover(|s| s.bg(t.hover).text_color(t.text))
             .on_click(cx.listener(|app, _, _, cx| {
                 app.open_palette(None, true);
                 cx.notify();
             }));
         if vertical {
-            button.px_2().h(px(28.)).child("+ New tab   ⌘T").into_any_element()
+            button.px_2().h(px(28.)).justify_between().child("+ New tab").child(div().text_size(px(10.)).child("⌘T")).into_any_element()
         } else {
-            button.w(px(26.)).h(px(26.)).justify_center().child("+").into_any_element()
+            button.w(px(24.)).h(px(24.)).justify_center().child("+").into_any_element()
         }
     }
 
@@ -197,12 +413,12 @@ impl RelayApp {
         let t = self.theme;
         div()
             .id("fold-tab-strip")
-            .w(px(20.))
-            .h(px(20.))
+            .w(px(24.))
+            .h(px(24.))
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(4.))
+            .rounded(px(5.))
             .text_size(px(12.))
             .text_color(t.muted)
             .cursor_pointer()
@@ -214,38 +430,42 @@ impl RelayApp {
             .into_any_element()
     }
 
-    /// The folded strip is a thin rail: visible, clickable, and never in the
-    /// way. Clicking anywhere on it brings the tabs back.
+    /// Compact floating corner reveal button when the tab strip is folded:
+    /// occupies zero layout height/width, tucked cleanly beside the traffic lights.
     pub(super) fn render_folded_strip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
-        let strip = self.strip;
-        let (arrow, vertical) = match strip.placement {
-            tabstrip::Placement::Left => ("›", true),
-            tabstrip::Placement::Right => ("‹", true),
-            tabstrip::Placement::Top => ("⌄", false),
+        let arrow = match self.strip.placement {
+            tabstrip::Placement::Left => "»",
+            tabstrip::Placement::Right => "«",
+            tabstrip::Placement::Top => "⌄",
         };
-        let rail = div()
+        let mut pill = div()
             .id("unfold-tab-strip")
-            .bg(t.surface)
+            .absolute()
+            .top(px(8.))
+            .w(px(26.))
+            .h(px(24.))
+            .rounded(px(6.))
+            .bg(t.surface.opacity(0.92))
+            .border_1()
             .border_color(t.border)
+            .shadow_sm()
             .cursor_pointer()
             .flex()
             .items_center()
             .justify_center()
+            .text_size(px(12.))
+            .text_color(t.muted)
+            .hover(|s| s.bg(t.hover).text_color(t.text))
             .on_click(cx.listener(|app, _, _, cx| {
                 app.toggle_tab_strip(cx);
             }))
-            .child(div().text_size(px(if vertical { 11. } else { 10. })).text_color(t.muted).child(arrow));
-        if vertical {
-            let rail = rail.w(px(strip.width())).h_full();
-            match strip.placement {
-                tabstrip::Placement::Left => rail.border_r_1(),
-                _ => rail.border_l_1(),
-            }
-            .into_any_element()
-        } else {
-            rail.w_full().h(px(strip.height())).border_b_1().into_any_element()
-        }
+            .child(arrow);
+        pill = match self.strip.placement {
+            tabstrip::Placement::Right => pill.right(px(10.)),
+            _ => pill.left(px(78.)),
+        };
+        pill.into_any_element()
     }
 
     fn render_pane(&self, tab: TabId, cx: &mut Context<Self>) -> impl IntoElement {
@@ -410,8 +630,8 @@ impl RelayApp {
     }
 
     fn start_grid(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let mut left = div().flex().flex_col().gap_6().flex_1();
-        let mut right = div().flex().flex_col().gap_6().flex_1();
+        let mut left = div().flex().flex_col().gap_6().flex_1().min_w_0().overflow_hidden();
+        let mut right = div().flex().flex_col().gap_6().flex_1().min_w_0().overflow_hidden();
         for (i, (section, items)) in self.start_page.sections.iter().enumerate() {
             let card = self.start_section(*section, items, cx);
             if i % 2 == 0 {
@@ -420,61 +640,113 @@ impl RelayApp {
                 right = right.child(card);
             }
         }
-        div().flex().gap_6().mt_8().w(px(680.)).child(left).child(right).into_any_element()
+        div()
+            .flex()
+            .gap_8()
+            .mt_8()
+            .pb_8()
+            .w_full()
+            .max_w(px(880.))
+            .child(left)
+            .child(right)
+            .into_any_element()
     }
 
     fn start_section(&self, section: Section, items: &[StartItem], cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
-        let mut col = div()
+        let is_bookmarks = section == Section::Bookmarks;
+        let header = div()
             .flex()
-            .flex_col()
-            .gap_1()
-            .child(div().px_2().text_size(px(11.)).text_color(t.muted).child(section.title().to_uppercase()));
+            .items_center()
+            .justify_between()
+            .px_2()
+            .pb_1()
+            .child(div().text_size(px(11.)).text_color(t.muted).child(section.title().to_uppercase()))
+            .when(is_bookmarks, |d| {
+                d.child(
+                    div()
+                        .id("start-manage-bookmarks")
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            app.run_command(Command::ShowBookmarks, cx);
+                            cx.notify();
+                        }))
+                        .child("Manage"),
+                )
+            });
+        let mut col = div().flex().flex_col().gap_1().min_w_0().overflow_hidden().child(header);
         if items.is_empty() {
             col = col.child(div().px_2().py_1().text_size(px(12.)).text_color(t.muted).child("Nothing yet"));
         }
         for (i, item) in items.iter().enumerate() {
             let url = item.url.clone();
-            col = col.child(
-                div()
-                    .id(SharedString::from(format!("start-{}-{i}", section.as_str())))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h(px(26.))
-                    .px_2()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        app.open_url(url.clone(), false);
-                        cx.notify();
-                    }))
-                    .child(match host_of(&item.url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone()) {
-                        Some(icon) => img(icon).size(px(14.)).rounded(px(3.)).into_any_element(),
-                        None => div().size(px(14.)).into_any_element(),
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(13.))
-                            .text_color(t.text)
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(SharedString::from(item.title.clone())),
-                    )
-                    .child(
-                        div()
-                            .max_w(px(150.))
-                            .text_size(px(11.))
-                            .text_color(t.muted)
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(SharedString::from(item.note.clone())),
-                    ),
-            );
+            let rm_url = item.url.clone();
+            let mut row = div()
+                .id(SharedString::from(format!("start-{}-{i}", section.as_str())))
+                .flex()
+                .items_center()
+                .gap_2()
+                .h(px(30.))
+                .px_2()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    app.open_url(url.clone(), false);
+                    cx.notify();
+                }))
+                .child(self.site_icon(&item.url, &item.title, 16.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(13.))
+                        .text_color(t.text)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(item.title.clone())),
+                )
+                .child(
+                    div()
+                        .max_w(px(120.))
+                        .flex_shrink_0()
+                        .text_size(px(11.))
+                        .text_color(t.muted)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(item.note.clone())),
+                );
+            if is_bookmarks {
+                row = row.child(
+                    div()
+                        .id(("start-rm-bm", i))
+                        .w(px(18.))
+                        .h(px(18.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.))
+                        .text_size(px(13.))
+                        .text_color(t.muted)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover).text_color(t.error))
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            cx.stop_propagation();
+                            app.remove_bookmark_url(&rm_url, cx);
+                        }))
+                        .child("×"),
+                );
+            }
+            col = col.child(row);
         }
         col.into_any_element()
     }
@@ -630,7 +902,7 @@ impl RelayApp {
             let url = h.active().and_then(|a| h.tab(a)).map(|x| x.url.clone()).unwrap_or_default();
             (url, h.tabs().count(), h.tabs().filter(|x| x.sleeping).count(), h.tabs().filter(|x| x.owner == Owner::Agent).count())
         };
-        let mut right = format!("{total} tabs");
+        let mut right = if total == 1 { "1 tab".to_string() } else { format!("{total} tabs") };
         if asleep > 0 {
             right.push_str(&format!(" · {asleep} asleep"));
         }

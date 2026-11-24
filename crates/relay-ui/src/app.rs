@@ -16,8 +16,8 @@ use crate::webapp;
 use gpui::{
     actions, canvas, div, fill, img, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, GlobalElementId, Hsla, Image, ImageFormat,
-    InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem, MouseButton, MouseDownEvent, Pixels, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
+    InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem, ModifiersChangedEvent, MouseButton, MouseDownEvent, Pixels,
+    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
 use relay_extensions::store::{SessionTab, Store, WebAppRecord};
@@ -201,6 +201,9 @@ pub struct RelayApp {
     /// the same host this session is pointless.
     favicons: HashMap<String, Option<Arc<Image>>>,
     favicon_pending: HashSet<String>,
+    bookmarked_urls: HashSet<String>,
+    cmd_held: bool,
+    show_tab_numbers: bool,
     shortcuts: Option<ShortcutEditor>,
     keymap: Keymap,
     palette: Option<Palette>,
@@ -363,6 +366,7 @@ impl RelayApp {
             .and_then(|v| AccentChoice::parse(&v))
             .unwrap_or_default();
         let keymap = Keymap::from_setting(store.as_ref().and_then(|s| s.setting("keybindings").ok().flatten()).as_deref());
+        let show_tab_numbers = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_numbers").ok().flatten()).as_deref());
         let mut app = Self {
             hub,
             web: Rc::new(RefCell::new(web)),
@@ -374,6 +378,9 @@ impl RelayApp {
             accent_choice,
             favicons: cached_favicons(),
             favicon_pending: HashSet::new(),
+            bookmarked_urls: HashSet::new(),
+            cmd_held: false,
+            show_tab_numbers,
             shortcuts: None,
             keymap,
             palette: None,
@@ -754,10 +761,51 @@ impl RelayApp {
     fn refresh_start_page(&mut self) {
         let Some(store) = &self.store else {
             self.start_page = StartPage::welcome();
+            self.bookmarked_urls.clear();
             return;
         };
         let sections = store.setting("start_sections").ok().flatten();
         self.start_page = StartPage::build(store, sections.as_deref()).unwrap_or_default();
+        self.bookmarked_urls = store
+            .bookmarks()
+            .map(|list| list.into_iter().map(|b| b.url).collect())
+            .unwrap_or_default();
+    }
+
+    pub(super) fn active_is_bookmarked(&self) -> bool {
+        let Some(active) = self.active() else { return false };
+        self.hub
+            .lock()
+            .tab(active)
+            .is_some_and(|t| self.bookmarked_urls.contains(&t.url))
+    }
+
+    pub(super) fn remove_bookmark_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        if let Some(store) = &self.store {
+            if self.bookmarked_urls.contains(url) {
+                let _ = store.toggle_bookmark(url, "");
+                self.refresh_start_page();
+                self.toast("Bookmark removed");
+                cx.notify();
+            }
+        }
+    }
+
+    pub(super) fn clear_loose_tabs(&mut self, cx: &mut Context<Self>) {
+        let loose: Vec<TabId> = {
+            let h = self.hub.lock();
+            h.tabs()
+                .filter(|t| t.owner == Owner::User && !t.pinned)
+                .map(|t| t.id)
+                .collect()
+        };
+        let count = loose.len();
+        for id in loose {
+            self.close_tab(id, cx);
+        }
+        if count > 0 {
+            self.toast(if count == 1 { "Cleared 1 tab".to_string() } else { format!("Cleared {count} tabs") });
+        }
     }
 
     fn sleep_idle_tabs(&mut self, cx: &mut Context<Self>) {
@@ -2230,14 +2278,14 @@ impl Render for RelayApp {
         // back rather than hiding a tab the user cannot reach.
         let show_strip = !self.app_mode || self.hub.lock().tabs().count() > 1;
         let mut main = div().flex_1().overflow_hidden();
-        if show_strip {
+        if show_strip && !self.strip.folded {
             main = match self.strip.placement {
                 tabstrip::Placement::Top => main.flex().flex_col().child(self.render_tab_bar(cx)).child(content),
                 tabstrip::Placement::Left => main.flex().child(self.render_tab_bar(cx)).child(content),
                 tabstrip::Placement::Right => main.flex().child(content).child(self.render_tab_bar(cx)),
             };
         } else {
-            main = main.child(content);
+            main = main.flex().child(content);
         }
         if self.inspector_open {
             main = main.flex().child(self.render_inspector(cx));
@@ -2252,6 +2300,13 @@ impl Render for RelayApp {
             .bg(t.background)
             .text_color(t.text)
             .font_family(".SystemUIFont")
+            .on_modifiers_changed(cx.listener(|app, event: &ModifiersChangedEvent, _, cx| {
+                let held = event.modifiers.platform;
+                if app.cmd_held != held {
+                    app.cmd_held = held;
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(Self::on_key))
             .on_action(cx.listener(|app, _: &OpenPalette, _, cx| {
                 if app.palette.is_some() {
@@ -2403,6 +2458,9 @@ impl Render for RelayApp {
         }
         if !self.app_mode || self.toast.is_some() || self.hints.is_some() {
             root = root.child(self.render_status());
+        }
+        if show_strip && self.strip.folded && !overlay_open {
+            root = root.child(self.render_folded_strip(cx));
         }
         if let Some(f) = &self.find {
             root = root.child(self.render_find(f));
