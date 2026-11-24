@@ -581,7 +581,7 @@ modules the palette calls before its normal URL/search item:
 
 Six layers, cheapest first:
 
-1. **Portable tests** (`cargo test --workspace`, 177 test functions) run anywhere: protocol, hub,
+1. **Portable tests** (`cargo test --workspace`, 248 test functions) run anywhere: protocol, hub,
    MCP round-trip with a real client, Chrome import, CRX, content rules, sleep,
    palette, inspector filters, hints, WCAG AA theme contrast, key bindings, and
    CLI subcommands (`doctor`, `config`, `export`, `clear-data`). The stdio
