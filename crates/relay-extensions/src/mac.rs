@@ -7,9 +7,11 @@
 use crate::chrome_import::Credential;
 use block2::RcBlock;
 use objc2::rc::Retained;
+use objc2::AnyThread;
 use objc2::MainThreadMarker;
 use objc2_foundation::{NSDate, NSDictionary, NSError, NSString, NSURL};
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep};
+use objc2_core_foundation::CGSize;
 use objc2_web_kit::{
     WKWebExtension, WKWebExtensionContext, WKWebExtensionContextPermissionStatus, WKWebExtensionController,
     WKWebExtensionPermission, WKWebView,
@@ -85,7 +87,7 @@ pub fn extension_icon(controller: &Retained<WKWebExtensionController>, uid: &str
     for ctx in unsafe { controller.extensionContexts() }.iter() {
         if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
             let action = unsafe { ctx.actionForTab(None) }?;
-            let image = unsafe { action.iconForSize(objc2_foundation::CGSize::new(20.0, 20.0)) }?;
+            let image = unsafe { action.iconForSize(CGSize::new(20.0, 20.0)) }?;
             let tiff = image.TIFFRepresentation()?;
             let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff)?;
             let png = unsafe {

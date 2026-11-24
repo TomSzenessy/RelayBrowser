@@ -29,6 +29,7 @@ objc2.workspace = true
 block2 = "0.6"
 objc2-foundation.workspace = true
 objc2-web-kit.workspace = true
-objc2-app-kit.workspace = true
+objc2-app-kit = { workspace = true, features = ["NSBitmapImageRep", "NSImageRep"] }
+objc2-core-foundation = "0.3"
 security-framework = "3.7"
 security-framework-sys = "2.17"
