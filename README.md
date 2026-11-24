@@ -36,7 +36,11 @@ Early development, built in the open. Honest evidence as of this commit:
 See [`docs/relay.md`](./docs/relay.md) for the architecture,
 [`docs/privacy.md`](./docs/privacy.md) for local data and agent boundaries, and
 [`docs/product/features.csv`](./docs/product/features.csv) for the live feature
-matrix. Extensions need macOS 15.4.
+matrix. Extensions need macOS 15.4 and are experimental: WebKit loads a
+WebExtensions subset, many Chrome-only APIs are shimmed, and the Extensions
+page shows each load error. Passkeys need Apple's restricted browser
+entitlement; an ad-hoc build says so in Settings, and
+[`docs/passkeys.md`](./docs/passkeys.md) gives the signed path.
 
 ## Quick start
 
@@ -63,7 +67,11 @@ per site), `⇧⌘R` reading mode, `⇧⌘P` picture-in-picture, `⇧⌘J` downl
 bookmark to a folder).
 
 The tab strip folds with `⌘S` and moves between the left, top, and right edge
-with `⇧⌘S`; the choice is remembered. Every row shows a `×` on hover (and on the
+with `⇧⌘S`; the choice is remembered. `⌘⌥B` hides the bottom bar. Settings
+has ten pages (General, Appearance, Tabs, Browsing, Passwords, Privacy,
+Extensions, Agents, Shortcuts, About), including a bookmarks bar, default
+zoom, cookie-banner and site-data controls, and independent fill/save/autofill
+switches. Every row shows a `×` on hover (and on the
 active tab), and a middle click closes it too. Relay installs a native macOS
 menu bar, so those shortcuts keep working while the page — not Relay — has
 keyboard focus, and `Edit` (`⌘X`/`⌘C`/`⌘V`/`⌘A`) reaches the page's own editing
