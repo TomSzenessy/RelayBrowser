@@ -257,8 +257,7 @@ impl RelayApp {
             marked: p.marked.clone(),
             completion: p.completion.clone().map(SharedString::from),
         });
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(
-            div()
+        let panel = div()
                 .id("palette")
                 .w(px(560.))
                 .max_h(px(480.))
@@ -280,10 +279,10 @@ impl RelayApp {
                         .px_4()
                         .child(query_row),
                 )
-                .child(list),
-        )
+                .child(list);
+        let overlay = div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(90.)).bg(t.scrim).child(panel);
+        super::fade_in(overlay, "palette-in")
     }
-
 }
 
 impl EntityInputHandler for RelayApp {

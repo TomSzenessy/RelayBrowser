@@ -34,6 +34,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   the strip to a thin, clickable rail (14 pt at the side, 10 pt at the top)
   that brings it back; the edge and folded state persist in `tabs_position`
   and `tabs_folded`.
+- **Motion:** palette, Settings, and Library fade in over 140 ms with
+  ease-out-quint; no other transitions are animated yet.
 - **Palette:** one input with ranked rows (open tabs, history, bookmarks,
   commands). The first row is always "Open <typed URL>" or "Search <query>".
   The query is a real text input: GPUI's platform handler supplies IME

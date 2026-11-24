@@ -16,8 +16,8 @@ use crate::webapp;
 use gpui::{
     actions, canvas, div, fill, img, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, GlobalElementId, Hsla, Image, ImageFormat,
-    InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    PathPromptOptions, Pixels,
+    ease_out_quint, Animation, AnimationExt, InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, PathPromptOptions, Pixels,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
@@ -4262,6 +4262,11 @@ pub(crate) fn profile_name(raw: &str) -> String {
         }
     }
     out.trim_matches('-').chars().take(32).collect()
+}
+
+/// One-shot 140 ms fade for modal panels.
+pub(crate) fn fade_in(panel: gpui::Div, id: &'static str) -> impl IntoElement {
+    panel.with_animation(id, Animation::new(Duration::from_millis(140)).with_easing(ease_out_quint()), |el, delta| el.opacity(delta))
 }
 
 /// iCloud Drive's Relay folder under a home directory.

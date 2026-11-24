@@ -205,7 +205,7 @@ impl RelayApp {
         } else {
             panel
         };
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(80.)).bg(t.scrim).child(panel.child(list))
+        super::fade_in(div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(80.)).bg(t.scrim).child(panel.child(list)), "library-in")
     }
 
 
@@ -2412,7 +2412,7 @@ impl RelayApp {
             }
         };
 
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(56.)).bg(t.scrim).child(
+        let panel = div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(56.)).bg(t.scrim).child(
             div()
                 .id("settings")
                 .w(px(860.))
@@ -2461,7 +2461,8 @@ impl RelayApp {
                         )
                         .child(div().id("settings-body").flex_1().overflow_y_scroll().px_6().pb_6().child(pane_content)),
                 ),
-        )
+        );
+        super::fade_in(panel, "settings-in")
     }
 
     /// What the window title should say: the active page, or Relay itself.
