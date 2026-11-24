@@ -998,6 +998,22 @@ impl Hub {
         self.tabs.get(&tab).and_then(|t| t.markdown.clone())
     }
 
+    /// Clear recorded network requests for one tab. Returns how many were removed.
+    pub fn clear_network(&mut self, tab: TabId) -> usize {
+        let Some(t) = self.tabs.get_mut(&tab) else { return 0 };
+        let n = t.network.len();
+        t.network.clear();
+        n
+    }
+
+    /// Clear recorded console messages for one tab. Returns how many were removed.
+    pub fn clear_console(&mut self, tab: TabId) -> usize {
+        let Some(t) = self.tabs.get_mut(&tab) else { return 0 };
+        let n = t.console.len();
+        t.console.clear();
+        n
+    }
+
     pub fn ingest(&mut self, tab: TabId, msg: PageMessage) {
         if let PageMessage::Result(r) = msg {
             if let Some((owner, tx)) = self.pending.remove(&r.id) {
@@ -1514,5 +1530,29 @@ mod tests {
             h.close_tab(a);
             assert_eq!(h.active(), None);
         });
+    }
+
+    #[test]
+    fn clear_network_and_console_only_affect_target_tab() {
+        let hub = SharedHub::new();
+        let a = hub.update(|h| h.create_tab("https://a.test", Owner::User));
+        let b = hub.update(|h| h.create_tab("https://b.test", Owner::User));
+        hub.ingest_json(a, r#"{"kind":"network","id":"1","api":"fetch","method":"GET","url":"https://a.test/1","status":200}"#).unwrap();
+        hub.ingest_json(b, r#"{"kind":"network","id":"2","api":"fetch","method":"GET","url":"https://b.test/2","status":200}"#).unwrap();
+        hub.ingest_json(a, r#"{"kind":"console","level":"error","args":["oops"]}"#).unwrap();
+        hub.ingest_json(b, r#"{"kind":"console","level":"log","args":["keep"]}"#).unwrap();
+
+        let rx = hub.subscribe();
+        let v0 = *rx.borrow();
+        assert_eq!(hub.update(|h| h.clear_network(a)), 1);
+        assert!(*rx.borrow() > v0);
+        assert!(hub.lock().tab(a).unwrap().network.is_empty());
+        assert_eq!(hub.lock().tab(b).unwrap().network.len(), 1);
+
+        assert_eq!(hub.update(|h| h.clear_console(a)), 1);
+        assert!(hub.lock().tab(a).unwrap().console.is_empty());
+        assert_eq!(hub.lock().tab(b).unwrap().console.len(), 1);
+        assert_eq!(hub.update(|h| h.clear_network(999)), 0);
+        assert_eq!(hub.update(|h| h.clear_console(999)), 0);
     }
 }

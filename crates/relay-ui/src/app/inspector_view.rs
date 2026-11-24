@@ -240,55 +240,121 @@ impl RelayApp {
         tabs = tabs.child(div().flex_1());
         if self.panel == Panel::Network {
             let failed_only = self.network_failed_only;
-            tabs = tabs.child(
-                div()
-                    .id("network-filter")
-                    .px_2()
-                    .py_0p5()
-                    .rounded(px(4.))
-                    .text_size(px(11.))
-                    .cursor_pointer()
-                    .text_color(if failed_only { t.error } else { t.muted })
-                    .when(failed_only, |d| d.bg(t.active))
-                    .hover(|s| s.bg(t.hover))
-                    .on_click(cx.listener(|app, _, _, cx| {
-                        app.network_failed_only = !app.network_failed_only;
-                        cx.notify();
-                    }))
-                    .child(if failed_only { "Failed" } else { "All" }),
-            );
+            tabs = tabs
+                .child(
+                    div()
+                        .id("network-filter")
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .text_size(px(11.))
+                        .cursor_pointer()
+                        .text_color(if failed_only { t.error } else { t.muted })
+                        .when(failed_only, |d| d.bg(t.active))
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            app.network_failed_only = !app.network_failed_only;
+                            cx.notify();
+                        }))
+                        .child(if failed_only { "Failed" } else { "All" }),
+                )
+                .child(
+                    div()
+                        .id("network-clear")
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .text_size(px(11.))
+                        .cursor_pointer()
+                        .text_color(t.muted)
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            if let Some(tab) = app.active() {
+                                app.hub.update(|h| {
+                                    h.clear_network(tab);
+                                });
+                                app.selected_network = None;
+                                app.inspector_cache = None;
+                                cx.notify();
+                            }
+                        }))
+                        .child("Clear"),
+                );
         } else if self.panel == Panel::Console {
             let level = self.console_min;
             let active_filter = level != ConsoleLevel::Log;
+            tabs = tabs
+                .child(
+                    div()
+                        .id("console-filter")
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .text_size(px(11.))
+                        .cursor_pointer()
+                        .text_color(match level {
+                            ConsoleLevel::Error => t.error,
+                            ConsoleLevel::Warn => t.warn,
+                            _ => t.muted,
+                        })
+                        .when(active_filter, |d| d.bg(t.active))
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            app.console_min = next_console_min(app.console_min);
+                            cx.notify();
+                        }))
+                        .child(console_filter_label(level)),
+                )
+                .child(
+                    div()
+                        .id("console-clear")
+                        .px_2()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .text_size(px(11.))
+                        .cursor_pointer()
+                        .text_color(t.muted)
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            if let Some(tab) = app.active() {
+                                app.hub.update(|h| {
+                                    h.clear_console(tab);
+                                });
+                                app.inspector_cache = None;
+                                cx.notify();
+                            }
+                        }))
+                        .child("Clear"),
+                );
+        } else if self.panel == Panel::Cookies {
             tabs = tabs.child(
                 div()
-                    .id("console-filter")
+                    .id("cookies-refresh")
                     .px_2()
                     .py_0p5()
                     .rounded(px(4.))
                     .text_size(px(11.))
                     .cursor_pointer()
-                    .text_color(match level {
-                        ConsoleLevel::Error => t.error,
-                        ConsoleLevel::Warn => t.warn,
-                        _ => t.muted,
-                    })
-                    .when(active_filter, |d| d.bg(t.active))
-                    .hover(|s| s.bg(t.hover))
+                    .text_color(t.muted)
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
                     .on_click(cx.listener(|app, _, _, cx| {
-                        app.console_min = next_console_min(app.console_min);
-                        cx.notify();
+                        if let Some(tab) = app.active() {
+                            app.web.borrow_mut().apply(BrowserRequest::RefreshCookies(tab));
+                            cx.notify();
+                        }
                     }))
-                    .child(console_filter_label(level)),
+                    .child("Refresh"),
             );
         }
         let body = self.render_panel_body(cx);
+        let detail = self.render_inspector_detail(cx);
         div()
             .flex()
             .flex_col()
             .h_full()
             .child(tabs)
             .child(div().id("inspector-body").flex_1().overflow_y_scroll().p_1().text_size(px(12.)).child(body))
+            .when_some(detail, |d, drawer| d.child(drawer))
             .into_any_element()
     }
 
@@ -366,6 +432,9 @@ impl RelayApp {
         let Some(tab_id) = self.active() else {
             return div().p_2().text_color(t.muted).child("No tab").into_any_element();
         };
+        let load_seq = self.hub.lock().tab(tab_id).map(|s| s.load_seq).unwrap_or(0);
+        let selected_el = self.selected_element.and_then(|(tid, seq, id)| (tid == tab_id && seq == load_seq).then_some(id));
+        let selected_net = self.selected_network.as_ref().and_then(|(tid, seq, id)| (*tid == tab_id && *seq == load_seq).then(|| id.clone()));
         let rows = self.inspector_rows();
         let mut col = div().flex().flex_col();
         match rows {
@@ -373,7 +442,9 @@ impl RelayApp {
             InspectorRows::Elements(rows) => {
                 for r in rows {
                     let id = r.id;
-                    let marker = if !r.has_children { "  " } else if r.expanded { "▾ " } else { "▸ " };
+                    let has_children = r.has_children;
+                    let selected = selected_el == Some(id);
+                    let marker = if !has_children { "  " } else if r.expanded { "▾ " } else { "▸ " };
                     col = col.child(
                         div()
                             .id(("el", id as usize))
@@ -381,14 +452,18 @@ impl RelayApp {
                             .h(px(18.))
                             .whitespace_nowrap()
                             .text_color(t.code)
+                            .when(selected, |d| d.bg(t.active))
                             .cursor_pointer()
                             .hover(|s| s.bg(t.hover))
                             .on_hover(cx.listener(move |app, hovered: &bool, _, _| {
                                 app.eval_op(tab_id, if *hovered { Op::Highlight { target: id } } else { Op::Unhighlight });
                             }))
                             .on_click(cx.listener(move |app, _, _, cx| {
-                                app.tree.toggle(id);
-                                app.tree_epoch = app.tree_epoch.wrapping_add(1);
+                                app.selected_element = Some((tab_id, load_seq, id));
+                                if has_children {
+                                    app.tree.toggle(id);
+                                    app.tree_epoch = app.tree_epoch.wrapping_add(1);
+                                }
                                 cx.notify();
                             }))
                             .child(SharedString::from(format!("{marker}{}", r.label))),
@@ -396,14 +471,28 @@ impl RelayApp {
                 }
             }
             InspectorRows::Network(rows) => {
-                for r in rows {
+                for (i, r) in rows.iter().enumerate() {
+                    let req_id = r.id.clone();
+                    let selected = selected_net.as_deref() == Some(req_id.as_str());
                     col = col.child(
                         div()
+                            .id(("net", i))
                             .flex()
                             .gap_2()
                             .h(px(18.))
                             .px_1()
+                            .cursor_pointer()
+                            .when(selected, |d| d.bg(t.active))
+                            .hover(|s| s.bg(t.hover))
                             .text_color(if r.failed { t.error } else { t.text })
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                if app.selected_network.as_ref().is_some_and(|(tid, seq, id)| *tid == tab_id && *seq == load_seq && id == &req_id) {
+                                    app.selected_network = None;
+                                } else {
+                                    app.selected_network = Some((tab_id, load_seq, req_id.clone()));
+                                }
+                                cx.notify();
+                            }))
                             .child(div().w(px(36.)).child(SharedString::from(r.method.clone())))
                             .child(div().w(px(32.)).child(SharedString::from(r.status.clone())))
                             .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(r.url.clone())))
@@ -412,32 +501,50 @@ impl RelayApp {
                 }
             }
             InspectorRows::Console(rows) => {
-                for r in rows {
+                for (i, r) in rows.iter().enumerate() {
                     let color = match r.level {
                         ConsoleLevel::Error => t.error,
                         ConsoleLevel::Warn => t.warn,
                         _ => t.text,
                     };
+                    let copy_text = r.text.clone();
                     col = col.child(
                         div()
+                            .id(("con", i))
                             .px_1()
                             .py_0p5()
                             .border_b_1()
                             .border_color(t.border)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
                             .text_color(color)
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
+                                app.toast("Copied console message");
+                                cx.notify();
+                            }))
                             .child(SharedString::from(r.text.clone()))
                             .when(!r.source.is_empty(), |d| d.child(div().text_color(t.muted).child(SharedString::from(r.source.clone())))),
                     );
                 }
             }
             InspectorRows::Cookies(rows) => {
-                for c in rows {
+                for (i, c) in rows.iter().enumerate() {
+                    let pair = format!("{}={}", c.name, c.value);
                     col = col.child(
                         div()
+                            .id(("ck", i))
                             .px_1()
                             .py_0p5()
                             .border_b_1()
                             .border_color(t.border)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(pair.clone()));
+                                app.toast("Copied cookie");
+                                cx.notify();
+                            }))
                             .child(SharedString::from(format!("{} = {}", c.name, truncate(&c.value, 80))))
                             .child(div().text_color(t.muted).child(SharedString::from(format!(
                                 "{}{}  {}{}",
@@ -453,4 +560,199 @@ impl RelayApp {
         col.into_any_element()
     }
 
+    fn render_inspector_detail(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = self.theme;
+        let tab_id = self.active()?;
+        let btn = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .px_1p5()
+                .py_0p5()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(t.border)
+                .text_size(px(10.))
+                .text_color(t.text)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child(label)
+        };
+        let load_seq = self.hub.lock().tab(tab_id).map(|s| s.load_seq).unwrap_or(0);
+        match self.panel {
+            Panel::Elements => {
+                let id = self.selected_element.and_then(|(tid, seq, id)| (tid == tab_id && seq == load_seq).then_some(id))?;
+                let detail = {
+                    let h = self.hub.lock();
+                    inspector::element_detail(h.tab(tab_id)?, id)?
+                };
+                let selector = detail.selector.clone();
+                let mut box_el = div()
+                    .id("element-detail")
+                    .border_t_1()
+                    .border_color(t.border)
+                    .bg(t.background)
+                    .p_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .max_h(px(190.))
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(11.))
+                                    .text_color(t.code)
+                                    .child(SharedString::from(format!("{} ({} children)", detail.selector, detail.child_count))),
+                            )
+                            .child(
+                                div()
+                                    .id("el-detail-close")
+                                    .px_1()
+                                    .cursor_pointer()
+                                    .text_color(t.muted)
+                                    .hover(|s| s.text_color(t.text))
+                                    .on_click(cx.listener(|app, _, _, cx| {
+                                        app.selected_element = None;
+                                        cx.notify();
+                                    }))
+                                    .child("×"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(btn("el-scroll", "Scroll").on_click(cx.listener(move |app, _, _, _| {
+                                app.eval_op(tab_id, Op::ScrollIntoView { target: id });
+                            })))
+                            .child(btn("el-copy-sel", "Copy selector").on_click(cx.listener(move |app, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(selector.clone()));
+                                app.toast("Copied CSS selector");
+                                cx.notify();
+                            })))
+                            .child(btn("el-hide", "Hide").on_click(cx.listener(move |app, _, _, cx| {
+                                app.eval_op(tab_id, Op::EditStyle { target: id, css: "display: none !important".into() });
+                                app.toast("Hidden on this page");
+                                cx.notify();
+                            }))),
+                    );
+                if !detail.text.is_empty() {
+                    box_el = box_el.child(div().text_size(px(10.)).text_color(t.text).child(SharedString::from(truncate(&detail.text, 160))));
+                }
+                for (k, v) in detail.attrs.iter().take(12) {
+                    box_el = box_el.child(
+                        div()
+                            .text_size(px(10.))
+                            .text_color(t.muted)
+                            .child(SharedString::from(format!("{k}={}", truncate(v, 100)))),
+                    );
+                }
+                Some(box_el.into_any_element())
+            }
+            Panel::Network => {
+                let req_id = self.selected_network.as_ref().and_then(|(tid, seq, id)| (*tid == tab_id && *seq == load_seq).then_some(id.as_str()))?;
+                let row = {
+                    let cache = self.inspector_cache.as_ref()?;
+                    let InspectorRows::Network(rows) = &cache.rows else { return None };
+                    rows.iter().find(|r| r.id == req_id)?.clone()
+                };
+                let curl = inspector::network_to_curl(&row);
+                let full_url = row.full_url.clone();
+                let resp_copy = row.response_body.clone();
+                let mut meta = format!("{} · {} · {}", row.api, row.status, row.time);
+                if let Some(sz) = row.transfer_size {
+                    meta.push_str(&format!(" · {}", human_bytes(sz)));
+                }
+                if let Some(ct) = &row.content_type {
+                    meta.push_str(&format!(" · {}", truncate(ct, 40)));
+                }
+                let mut drawer = div()
+                    .id("network-detail")
+                    .border_t_1()
+                    .border_color(t.border)
+                    .bg(t.background)
+                    .p_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .max_h(px(230.))
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(px(11.))
+                                    .text_color(if row.failed { t.error } else { t.text })
+                                    .child(SharedString::from(format!("{} {}", row.method, row.full_url))),
+                            )
+                            .child(
+                                div()
+                                    .id("net-detail-close")
+                                    .px_1()
+                                    .cursor_pointer()
+                                    .text_color(t.muted)
+                                    .hover(|s| s.text_color(t.text))
+                                    .on_click(cx.listener(|app, _, _, cx| {
+                                        app.selected_network = None;
+                                        cx.notify();
+                                    }))
+                                    .child("×"),
+                            ),
+                    )
+                    .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(meta)))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(btn("net-copy-curl", "Copy as cURL").on_click(cx.listener(move |app, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(curl.clone()));
+                                app.toast("Copied cURL command");
+                                cx.notify();
+                            })))
+                            .child(btn("net-copy-url", "Copy URL").on_click(cx.listener(move |app, _, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(full_url.clone()));
+                                app.toast("Copied request URL");
+                                cx.notify();
+                            })))
+                            .when_some(resp_copy, |d, body| {
+                                d.child(btn("net-copy-body", "Copy body").on_click(cx.listener(move |app, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(body.clone()));
+                                    app.toast("Copied response body");
+                                    cx.notify();
+                                })))
+                            }),
+                    );
+                if let Some(err) = &row.error {
+                    drawer = drawer.child(div().text_size(px(10.)).text_color(t.error).child(SharedString::from(format!("Error: {err}"))));
+                }
+                if let Some(req) = row.request_body.as_deref().filter(|s| !s.is_empty()) {
+                    drawer = drawer
+                        .child(div().text_size(px(10.)).text_color(t.muted).child("Request body"))
+                        .child(div().text_size(px(10.)).text_color(t.code).child(SharedString::from(truncate(req, 400))));
+                }
+                if let Some(resp) = row.response_body.as_deref().filter(|s| !s.is_empty()) {
+                    drawer = drawer
+                        .child(div().text_size(px(10.)).text_color(t.muted).child("Response body"))
+                        .child(div().text_size(px(10.)).text_color(t.code).child(SharedString::from(truncate(resp, 600))));
+                }
+                Some(drawer.into_any_element())
+            }
+            Panel::Console | Panel::Cookies => None,
+        }
+    }
 }

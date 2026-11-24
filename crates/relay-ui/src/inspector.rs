@@ -98,12 +98,78 @@ pub fn element_label(n: &DomNode) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ElementDetail {
+    pub id: NodeId,
+    pub tag: String,
+    pub selector: String,
+    pub attrs: Vec<(String, String)>,
+    pub text: String,
+    pub child_count: usize,
+}
+
+/// CSSOM-compatible identifier escaping for class/id tokens (e.g. `w-1/2`, `a.b`, `1x`).
+fn css_escape_ident(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().enumerate().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if ch == '\0' {
+            out.push('\u{FFFD}');
+        } else if ch.is_control() || ch == '\x7f' || (i == 0 && ch.is_ascii_digit()) || (i == 1 && ch.is_ascii_digit() && s.starts_with('-')) {
+            out.push_str(&format!("\\{:x} ", ch as u32));
+        } else if i == 0 && ch == '-' && chars.peek().is_none() {
+            out.push_str("\\-");
+        } else if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || !ch.is_ascii() {
+            out.push(ch);
+        } else {
+            out.push('\\');
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Inspect one node by id: tag, CSS selector preview, sorted attributes, text,
+/// and direct child count. Returns `None` if the node is no longer in the DOM.
+pub fn element_detail(tab: &TabState, id: NodeId) -> Option<ElementDetail> {
+    let n = tab.dom.tree(id, 1)?;
+    let mut selector = n.tag.clone();
+    if let Some(dom_id) = n.attrs.get("id").filter(|s| !s.is_empty()) {
+        selector.push('#');
+        selector.push_str(&css_escape_ident(dom_id));
+    }
+    if let Some(class) = n.attrs.get("class") {
+        for c in class.split_whitespace().take(3) {
+            selector.push('.');
+            selector.push_str(&css_escape_ident(c));
+        }
+    }
+    let mut attrs: Vec<(String, String)> = n.attrs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    attrs.sort_by(|a, b| a.0.cmp(&b.0));
+    Some(ElementDetail {
+        id,
+        tag: n.tag.clone(),
+        selector,
+        attrs,
+        text: n.text.clone(),
+        child_count: n.children.len(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct NetworkRow {
+    pub id: String,
+    pub api: String,
     pub method: String,
     pub status: String,
     pub url: String,
+    pub full_url: String,
     pub time: String,
     pub failed: bool,
+    pub content_type: Option<String>,
+    pub transfer_size: Option<u64>,
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
+    pub error: Option<String>,
 }
 
 pub fn network_rows(tab: &TabState, filter: &str) -> Vec<NetworkRow> {
@@ -116,6 +182,8 @@ pub fn network_rows_filtered(tab: &TabState, filter: &str, failed_only: bool) ->
         .rev()
         .filter(|n| (!failed_only || n.failed()) && (filter.is_empty() || n.url.contains(filter)))
         .map(|n| NetworkRow {
+            id: n.id.clone(),
+            api: n.api.clone(),
             method: n.method.clone(),
             status: match (&n.error, n.status) {
                 (Some(_), _) => "ERR".into(),
@@ -123,10 +191,52 @@ pub fn network_rows_filtered(tab: &TabState, filter: &str, failed_only: bool) ->
                 (None, None) => "—".into(),
             },
             url: crate::palette::short_url(&n.url),
+            full_url: n.url.clone(),
             time: n.duration_ms.map(|d| if d >= 1000.0 { format!("{:.2} s", d / 1000.0) } else { format!("{d:.0} ms") }).unwrap_or_default(),
             failed: n.failed(),
+            content_type: n.content_type.clone(),
+            transfer_size: n.transfer_size,
+            request_body: n.request_body.clone(),
+            response_body: n.response_body.clone(),
+            error: n.error.clone(),
         })
         .collect()
+}
+
+fn posix_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else if ch == '\0' {
+            continue;
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn strip_header_controls(s: &str) -> String {
+    s.chars().filter(|&c| c >= ' ' && c != '\x7f').collect()
+}
+
+/// Format a recorded request as a POSIX-shell-safe `curl` command.
+/// Note: `row.content_type` is the response Content-Type captured by the
+/// bridge, so it is intentionally not emitted as a request header, and `--`
+/// precedes the URL so a leading `-` cannot be parsed as a curl option.
+pub fn network_to_curl(row: &NetworkRow) -> String {
+    let method: String = row.method.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    let method = if method.is_empty() { "GET".to_string() } else { method.to_ascii_uppercase() };
+    let url = strip_header_controls(&row.full_url);
+    let mut cmd = format!("curl --globoff -X {}", posix_quote(&method));
+    if let Some(body) = row.request_body.as_deref().filter(|b| !b.is_empty()) {
+        cmd.push_str(&format!(" --data-raw {}", posix_quote(body)));
+    }
+    cmd.push_str(&format!(" -- {}", posix_quote(&url)));
+    cmd
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,8 +288,8 @@ mod tests {
         let hub = SharedHub::new();
         let tab = hub.update(|h| h.create_tab("https://a.test", Owner::User));
         hub.ingest_json(tab, r#"{"kind":"dom_snapshot","root":{"id":1,"tag":"body","children":[
-            {"id":2,"tag":"div","attrs":{"class":"cart big"},"children":[{"id":3,"tag":"button","attrs":{"id":"pay"},"text":"Pay","children":[{"id":4,"tag":"span","children":[{"id":5,"tag":"b"}]}]}]}]}}"#).unwrap();
-        hub.ingest_json(tab, r#"{"kind":"network","id":"1","api":"fetch","method":"POST","url":"https://a.test/api/pay","status":502,"duration_ms":1234.5}"#).unwrap();
+            {"id":2,"tag":"div","attrs":{"class":"cart big"},"children":[{"id":3,"tag":"button","attrs":{"id":"pay","data-test":"buy"},"text":"Pay","children":[{"id":4,"tag":"span","children":[{"id":5,"tag":"b"}]}]}]}]}}"#).unwrap();
+        hub.ingest_json(tab, r#"{"kind":"network","id":"1","api":"fetch","method":"POST","url":"https://a.test/api/pay","status":502,"duration_ms":1234.5,"content_type":"application/json","request_body":"{\"total\":10}","response_body":"{\"err\":\"gateway\"}"}"#).unwrap();
         hub.ingest_json(tab, r#"{"kind":"console","level":"error","args":["boom"],"source":"app.js:1:2"}"#).unwrap();
         hub.ingest_json(tab, r#"{"kind":"console","level":"debug","args":["noise"]}"#).unwrap();
         (hub, tab)
@@ -203,16 +313,74 @@ mod tests {
     }
 
     #[test]
+    fn element_detail_reads_sorted_attrs_and_handles_missing_node() {
+        let (hub, tab) = tab_with_dom();
+        let h = hub.lock();
+        let t = h.tab(tab).unwrap();
+        let d = element_detail(t, 3).expect("button#pay exists");
+        assert_eq!(d.tag, "button");
+        assert_eq!(d.selector, "button#pay");
+        assert_eq!(d.text, "Pay");
+        assert_eq!(d.child_count, 1);
+        assert_eq!(d.attrs, vec![("data-test".into(), "buy".into()), ("id".into(), "pay".into())]);
+        assert!(element_detail(t, 9999).is_none());
+        assert_eq!(css_escape_ident("a.b"), r"a\.b");
+        assert_eq!(css_escape_ident("w-1/2"), r"w-1\/2");
+        assert_eq!(css_escape_ident("1col"), r"\31 col");
+    }
+
+    #[test]
     fn network_and_console_rows() {
         let (hub, tab) = tab_with_dom();
         let h = hub.lock();
         let t = h.tab(tab).unwrap();
         let n = network_rows(t, "");
-        assert_eq!(n[0], NetworkRow { method: "POST".into(), status: "502".into(), url: "a.test/api/pay".into(), time: "1.23 s".into(), failed: true });
+        assert_eq!(n[0].method, "POST");
+        assert_eq!(n[0].status, "502");
+        assert_eq!(n[0].url, "a.test/api/pay");
+        assert_eq!(n[0].full_url, "https://a.test/api/pay");
+        assert_eq!(n[0].time, "1.23 s");
+        assert!(n[0].failed);
+        assert_eq!(n[0].request_body.as_deref(), Some(r#"{"total":10}"#));
+        assert_eq!(n[0].response_body.as_deref(), Some(r#"{"err":"gateway"}"#));
         assert!(network_rows(t, "nothing").is_empty());
         let c = console_rows(t, ConsoleLevel::Log);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].source, "app.js:1:2");
+    }
+
+    #[test]
+    fn network_to_curl_formats_post_and_escapes_shell_metacharacters() {
+        let (hub, tab) = tab_with_dom();
+        let h = hub.lock();
+        let t = h.tab(tab).unwrap();
+        let row = &network_rows(t, "")[0];
+        let curl = network_to_curl(row);
+        assert_eq!(curl, "curl --globoff -X 'POST' --data-raw '{\"total\":10}' -- 'https://a.test/api/pay'");
+        assert!(!curl.contains("Content-Type"), "response content_type must not be sent as a request header: {curl}");
+
+        // Negative test: single quotes, newlines, brackets, leading-dash URLs, and shell metacharacters
+        // cannot break out of POSIX single-quoting or be parsed as curl option flags.
+        let hostile = NetworkRow {
+            id: "x".into(),
+            api: "fetch".into(),
+            method: "POST; rm -rf /".into(),
+            status: "200".into(),
+            url: "evil.test".into(),
+            full_url: "-K/etc/passwd?ids=[1-3]&q='$(id)'\nrm -rf /".into(),
+            time: "1 ms".into(),
+            failed: false,
+            content_type: Some("text/html".into()),
+            transfer_size: None,
+            request_body: Some("a'b$(whoami)".into()),
+            response_body: None,
+            error: None,
+        };
+        let safe = network_to_curl(&hostile);
+        assert!(safe.starts_with("curl --globoff -X 'POSTRMRF' --data-raw 'a'\\''b$(whoami)' -- '-K/etc/passwd"));
+        assert!(!safe.contains('\n') && !safe.contains('\r'), "control chars stripped from URL: {safe}");
+        assert!(safe.contains("ids=[1-3]"), "bracketed query preserved with --globoff: {safe}");
+        assert!(safe.contains("'\\''$(id)'\\''"), "single quotes escaped: {safe}");
     }
 
     #[test]
