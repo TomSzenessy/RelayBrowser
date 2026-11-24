@@ -1121,6 +1121,8 @@ pub struct Engine {
     float_panel: Option<Retained<NSPanel>>,
     float_web: Option<Retained<WKWebView>>,
     float_info: Rc<RefCell<Option<FloatInfo>>>,
+    popup_panel: Option<Retained<NSPanel>>,
+    popup_web: Option<Retained<WKWebView>>,
     downloads_dir: Rc<RefCell<std::path::PathBuf>>,
     downloads_ask: Rc<Cell<bool>>,
 }
@@ -1153,6 +1155,8 @@ impl Engine {
             float_panel: None,
             float_web: None,
             float_info: Rc::default(),
+            popup_panel: None,
+            popup_web: None,
             downloads_dir: Rc::new(RefCell::new(default_download_folder())),
             downloads_ask: Rc::new(Cell::new(false)),
         }
@@ -1202,6 +1206,33 @@ impl Engine {
             });
         });
         unsafe { t.view.evaluateJavaScript_completionHandler(&NSString::from_str(js), Some(&handler)) };
+    }
+
+    /// Show an extension's action popup in a floating panel. Replaces any
+    /// previous popup.
+    pub fn show_extension_popup(&mut self, web: Retained<WKWebView>) {
+        if let Some(panel) = self.popup_panel.take() {
+            panel.close();
+        }
+        self.popup_web = None;
+        let mtm = self.mtm;
+        let (x, y) = NSScreen::mainScreen(mtm).map_or((160.0, 160.0), |screen| {
+            let visible = screen.visibleFrame();
+            (visible.origin.x + visible.size.width - 400.0, visible.origin.y + visible.size.height - 540.0)
+        });
+        let rect = NSRect::new(NSPoint::new(x, y), NSSize::new(380.0, 500.0));
+        let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::UtilityWindow;
+        let panel = NSPanel::initWithContentRect_styleMask_backing_defer(NSPanel::alloc(mtm), rect, style, NSBackingStoreType::Buffered, false);
+        unsafe {
+            panel.setTitle(&NSString::from_str("Extension"));
+            panel.setLevel(NSFloatingWindowLevel);
+            panel.setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary);
+            panel.setReleasedWhenClosed(false);
+            panel.setContentView(Some(&web));
+            panel.orderFrontRegardless();
+        }
+        self.popup_panel = Some(panel);
+        self.popup_web = Some(web);
     }
 
     /// Create the panel once `toggle_float_panel` has a video URL.

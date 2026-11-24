@@ -2032,6 +2032,15 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn open_extension_popup(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.web.borrow_mut().open_extension_popup(id) {
+            self.toast("Opened extension popup");
+        } else {
+            self.toast("This extension has no action popup");
+        }
+        cx.notify();
+    }
+
     fn open_extension_options(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(url) = self.web.borrow().extension_options_url(id) else {
             self.toast("This extension has no options page");

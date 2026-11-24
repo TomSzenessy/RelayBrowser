@@ -86,8 +86,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   which the shell maps to `Op::media` on its main-thread pump.
 - **Extensions:** Settings → Extensions has an inline Chrome Web Store
   URL/ID field, a clipboard fallback, enable/disable, permission text, and
-  load-error text, and an **Options** button for extensions that declare an
-  options page; it never claims a failed load succeeded.
+  load-error text, an **Options** button for extensions that declare an
+  options page, and a **Popup** button that presents the default action's
+  `popupWebView` in a floating panel. It never claims a failed load succeeded.
 - **Export:** File → Export as PDF… renders the page through WebKit's PDF
   pipeline and opens a save panel with the page title.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,

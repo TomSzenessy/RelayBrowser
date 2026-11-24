@@ -334,6 +334,15 @@ mod imp {
             self.engine.set_downloads(dir, ask);
         }
 
+        /// Show an extension's action popup, if it declares one.
+        pub fn open_extension_popup(&mut self, id: &str) -> bool {
+            let Some(web) = self.engine.extension_controller().and_then(|c| relay_extensions::mac::extension_popup(c, id)) else {
+                return false;
+            };
+            self.engine.show_extension_popup(web);
+            true
+        }
+
         /// The options-page URL for an installed extension, if it has one.
         pub fn extension_options_url(&self, id: &str) -> Option<String> {
             self.engine.extension_controller().and_then(|c| relay_extensions::mac::extension_options_url(c, id))
@@ -436,6 +445,7 @@ mod imp {
         pub fn set_downloads(&mut self, _dir: std::path::PathBuf, _ask: bool) {}
         pub fn toggle_float_panel(&mut self, _tab: TabId) {}
         pub fn extension_options_url(&self, _id: &str) -> Option<String> { None }
+        pub fn open_extension_popup(&mut self, _id: &str) -> bool { false }
         pub fn poll_float_panel(&mut self) {}
         pub fn export_pdf(&self, _tab: TabId) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {

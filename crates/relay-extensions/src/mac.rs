@@ -11,7 +11,7 @@ use objc2::MainThreadMarker;
 use objc2_foundation::{NSDate, NSDictionary, NSError, NSString, NSURL};
 use objc2_web_kit::{
     WKWebExtension, WKWebExtensionContext, WKWebExtensionContextPermissionStatus, WKWebExtensionController,
-    WKWebExtensionPermission,
+    WKWebExtensionPermission, WKWebView,
 };
 use std::path::Path;
 
@@ -73,6 +73,22 @@ pub fn extension_options_url(controller: &Retained<WKWebExtensionController>, ui
         if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
             let url = unsafe { ctx.optionsPageURL() }?;
             return Some(unsafe { url.absoluteString() }?.to_string());
+        }
+    }
+    None
+}
+
+/// A ready-to-show action popup for the extension, if it declares one. The
+/// caller presents the web view; no tab adapter is needed for the default
+/// action.
+pub fn extension_popup(controller: &Retained<WKWebExtensionController>, uid: &str) -> Option<Retained<WKWebView>> {
+    for ctx in unsafe { controller.extensionContexts() }.iter() {
+        if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
+            let action = unsafe { ctx.actionForTab(None) }?;
+            if !unsafe { action.hasPopup() } {
+                return None;
+            }
+            return unsafe { action.popupWebView() };
         }
     }
     None
