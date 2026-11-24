@@ -4,6 +4,7 @@
 
 pub mod content_rules;
 pub mod downloads;
+pub mod float;
 pub mod sleep;
 
 #[cfg(target_os = "macos")]

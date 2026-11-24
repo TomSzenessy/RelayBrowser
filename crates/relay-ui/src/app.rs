@@ -56,6 +56,7 @@ actions!(
         TogglePin,
         Find,
         ToggleFloatVideo,
+        ToggleFloatPanel,
         FindNext,
         FindPrevious,
         ZoomIn,
@@ -1066,6 +1067,7 @@ impl RelayApp {
             self.title_cache = (u64::MAX, String::new());
             cx.notify();
         }
+        self.web.borrow_mut().poll_float_panel();
         if let Some(action) = self.web.borrow().take_media_key() {
             if let Some(tab) = self.active() {
                 self.eval_op(tab, Op::Media { action: action.to_string() });
@@ -2279,6 +2281,13 @@ impl RelayApp {
         self.float_tabs.borrow_mut().insert(tab, on);
         self.eval_op(tab, Op::FloatVideo { on });
         self.toast(if on { "Video floated" } else { "Video restored" });
+        cx.notify();
+    }
+
+    fn toggle_float_panel(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active() else { return };
+        self.web.borrow_mut().toggle_float_panel(tab);
+        self.toast("Toggled the floating video panel");
         cx.notify();
     }
 
@@ -3669,6 +3678,9 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &ToggleFloatVideo, _, cx| {
                 app.toggle_float_video(cx);
+            }))
+            .on_action(cx.listener(|app, _: &ToggleFloatPanel, _, cx| {
+                app.toggle_float_panel(cx);
             }))
             .on_action(cx.listener(|app, _: &ShowDownloads, _, cx| {
                 app.open_downloads(cx);

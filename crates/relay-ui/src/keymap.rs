@@ -102,6 +102,7 @@ action_table! {
     TogglePin => "pin", "Pin / unpin tab", "secondary-alt-p";
     Find => "find", "Find in page", "secondary-f";
     ToggleFloatVideo => "float-video", "Float video", "secondary-shift-f";
+    ToggleFloatPanel => "float-panel", "Float video in panel", "secondary-alt-shift-f";
     FindNext => "find-next", "Find next", "secondary-g";
     FindPrevious => "find-prev", "Find previous", "secondary-shift-g";
     ZoomIn => "zoom-in", "Zoom in", "secondary-=";
@@ -177,6 +178,7 @@ impl ActionId {
             | ActionId::Spaces => "Tabs",
             ActionId::Find
             | ActionId::ToggleFloatVideo
+            | ActionId::ToggleFloatPanel
             | ActionId::FindNext
             | ActionId::FindPrevious
             | ActionId::ZoomIn
@@ -358,7 +360,7 @@ mod tests {
             assert!(ids.insert(id.as_str()), "duplicate action id {}", id.as_str());
             assert!(labels.insert(id.label()), "duplicate Settings label {}", id.label());
         }
-        assert_eq!(ActionId::ALL.len(), 58);
+        assert_eq!(ActionId::ALL.len(), 59);
     }
 
     #[test]

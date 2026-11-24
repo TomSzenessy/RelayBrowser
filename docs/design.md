@@ -79,7 +79,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   is horizontal.
 - **Float video:** ⌘⇧F or View → Float Video pins the first `<video>` to a
   fixed 16 pt corner overlay with a shadow; the same command restores the
-  original style. PiP remains a separate native option.
+  original style. ⌘⌥⇧F opens a native always-on-top panel with the page's
+  current video URL; PiP remains a separate native option.
 - **Media keys:** the system play/pause key controls the first media element
   in the active tab; the native MediaPlayer handlers only enqueue a request,
   which the shell maps to `Op::media` on its main-thread pump.
@@ -184,6 +185,7 @@ and displayed shortcuts cannot drift either.
 | ⌘⌥P | Pin / unpin tab |
 | ⌘F | Find in page |
 | ⌘⇧F | Float video |
+| ⌘⌥⇧F | Float video in panel |
 | ⌘G | Find next |
 | ⌘⇧G | Find previous |
 | ⌘= | Zoom in |

@@ -13,8 +13,9 @@ use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPasteboard, NSPasteboardTypeString,
-    NSModalResponseOK, NSPrintInfo, NSSavePanel, NSTextField, NSUserInterfaceItemIdentification, NSView,
+    NSApplication, NSBackingStoreType, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPanel, NSPasteboard,
+    NSPasteboardTypeString, NSModalResponseOK, NSPrintInfo, NSSavePanel, NSScreen, NSTextField, NSUserInterfaceItemIdentification, NSView,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSFloatingWindowLevel,
 };
 use objc2_app_kit::NSWorkspace;
 use objc2_media_player::{MPRemoteCommandCenter, MPRemoteCommandHandlerStatus};
@@ -26,7 +27,8 @@ use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKContentWorld, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo,
     WKNavigation, WKNavigationAction, WKNavigationDelegate, WKNavigationResponse, WKNavigationResponsePolicy, WKScriptMessage,
     WKMediaCaptureType, WKPermissionDecision, WKScriptMessageHandler, WKSecurityOrigin, WKUIDelegate, WKUserContentController, WKUserScript,
-    WKUserScriptInjectionTime, WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWebsiteDataStore, WKWindowFeatures,
+    WKAudiovisualMediaTypes, WKUserScriptInjectionTime, WKWebExtensionController, WKWebView, WKWebViewConfiguration, WKWebsiteDataStore,
+    WKWindowFeatures,
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::{Cell, RefCell};
@@ -224,6 +226,14 @@ fn install_media_keys(media_key: Arc<AtomicU8>) -> Vec<Retained<AnyObject>> {
         targets.push(unsafe { command.addTargetWithHandler(&handler) });
     }
     targets
+}
+
+/// A video URL read from the active page for the always-on-top panel.
+#[derive(Clone)]
+struct FloatInfo {
+    src: String,
+    poster: String,
+    title: String,
 }
 
 /// Things the engine needs the shell to do. Never carries passwords.
@@ -1108,6 +1118,9 @@ pub struct Engine {
     media_permissions: Rc<RefCell<HashMap<(String, i64), bool>>>,
     /// Named-profile data store; `None` uses WebKit's default store.
     profile_store: Option<Retained<WKWebsiteDataStore>>,
+    float_panel: Option<Retained<NSPanel>>,
+    float_web: Option<Retained<WKWebView>>,
+    float_info: Rc<RefCell<Option<FloatInfo>>>,
     downloads_dir: Rc<RefCell<std::path::PathBuf>>,
     downloads_ask: Rc<Cell<bool>>,
 }
@@ -1137,6 +1150,9 @@ impl Engine {
             _media_targets: media_targets,
             media_permissions: Rc::default(),
             profile_store: None,
+            float_panel: None,
+            float_web: None,
+            float_info: Rc::default(),
             downloads_dir: Rc::new(RefCell::new(default_download_folder())),
             downloads_ask: Rc::new(Cell::new(false)),
         }
@@ -1155,6 +1171,75 @@ impl Engine {
         unsafe {
             store.removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done);
         }
+    }
+
+    /// Open (or close) the native always-on-top video panel. The page is
+    /// asked for its first video's URL; the result is handled on the next
+    /// shell pump so no self-reference is captured in the completion block.
+    pub fn toggle_float_panel(&mut self, tab: TabId) {
+        if let Some(panel) = self.float_panel.take() {
+            self.float_web = None;
+            panel.close();
+            return;
+        }
+        let Some(t) = self.tabs.get(&tab) else { return };
+        let js = r#"(function(){var v=document.querySelector('video');if(!v)return '';return JSON.stringify({src:v.currentSrc||v.src||'',poster:v.poster||'',title:document.title||''});})()"#;
+        let slot = self.float_info.clone();
+        let handler = RcBlock::new(move |result: *mut AnyObject, _error: *mut NSError| {
+            if result.is_null() {
+                return;
+            }
+            let text = unsafe { &*(result as *const NSString) }.to_string();
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+            let src = v.get("src").and_then(|s| s.as_str()).unwrap_or_default().to_string();
+            if !(src.starts_with("http://") || src.starts_with("https://")) {
+                return;
+            }
+            *slot.borrow_mut() = Some(FloatInfo {
+                src,
+                poster: v.get("poster").and_then(|s| s.as_str()).unwrap_or_default().to_string(),
+                title: v.get("title").and_then(|s| s.as_str()).unwrap_or_default().to_string(),
+            });
+        });
+        unsafe { t.view.evaluateJavaScript_completionHandler(&NSString::from_str(js), Some(&handler)) };
+    }
+
+    /// Create the panel once `toggle_float_panel` has a video URL.
+    pub fn poll_float_panel(&mut self) {
+        let Some(info) = self.float_info.borrow_mut().take() else { return };
+        self.show_float_panel(&info);
+    }
+
+    fn show_float_panel(&mut self, info: &FloatInfo) {
+        let Some(html) = crate::float::panel_html(&info.src, &info.poster, &info.title) else { return };
+        let mtm = self.mtm;
+        let config = unsafe { WKWebViewConfiguration::new(mtm) };
+        unsafe {
+            config.setMediaTypesRequiringUserActionForPlayback(WKAudiovisualMediaTypes::None);
+            if let Some(store) = &self.profile_store {
+                config.setWebsiteDataStore(store);
+            }
+        }
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(480.0, 290.0));
+        let web = unsafe { WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config) };
+        unsafe { web.loadHTMLString_baseURL(&NSString::from_str(&html), None) };
+        let (x, y) = NSScreen::mainScreen(mtm).map_or((120.0, 120.0), |screen| {
+            let visible = screen.visibleFrame();
+            (visible.origin.x + visible.size.width - 500.0, visible.origin.y + 40.0)
+        });
+        let rect = NSRect::new(NSPoint::new(x, y), NSSize::new(480.0, 290.0));
+        let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Resizable | NSWindowStyleMask::UtilityWindow;
+        let panel = NSPanel::initWithContentRect_styleMask_backing_defer(NSPanel::alloc(mtm), rect, style, NSBackingStoreType::Buffered, false);
+        unsafe {
+            panel.setTitle(&NSString::from_str(if info.title.is_empty() { "Relay Float" } else { &info.title }));
+            panel.setLevel(NSFloatingWindowLevel);
+            panel.setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary);
+            panel.setReleasedWhenClosed(false);
+            panel.setContentView(Some(&web));
+            panel.orderFrontRegardless();
+        }
+        self.float_panel = Some(panel);
+        self.float_web = Some(web);
     }
 
     /// Use a named profile's persistent website data store. The identifier is
