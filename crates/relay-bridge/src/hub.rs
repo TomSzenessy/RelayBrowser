@@ -446,6 +446,8 @@ pub struct TabState {
     /// Optional tab-group heading; `None` is an ungrouped tab.
     pub group: Option<String>,
     pub playing_audio: bool,
+    /// Hovered link target for the status line; cleared on a new page.
+    pub hover_url: Option<String>,
     pub sleeping: bool,
     /// Why the last navigation failed (WebKit's message), cleared on reload.
     pub load_error: Option<String>,
@@ -490,6 +492,7 @@ impl TabState {
             private: false,
             group: None,
             playing_audio: false,
+            hover_url: None,
             sleeping: false,
             load_error: None,
             bridge_version: None,
@@ -884,6 +887,7 @@ impl Hub {
             t.hotkeys.clear();
             t.console.clear();
             t.network.clear();
+            t.hover_url = None;
         }
     }
 
@@ -1155,6 +1159,12 @@ impl Hub {
             }
             PageMessage::Challenge { challenge } => t.challenge = challenge,
             PageMessage::Media { playing } => t.playing_audio = playing,
+            PageMessage::Link { url } => {
+                t.hover_url = url.filter(|u| u.starts_with("http://") || u.starts_with("https://")).map(|mut u| {
+                    truncate(&mut u, 2048);
+                    u
+                });
+            }
             PageMessage::Hotkey { mut key } => {
                 truncate(&mut key, 64);
                 t.hotkeys.push(key);

@@ -120,6 +120,8 @@ pub enum PageMessage {
     Network(NetworkEntry),
     Challenge { challenge: Option<Challenge> },
     Media { playing: bool },
+    /// The href of the link under the pointer, or `null` when none.
+    Link { #[serde(default)] url: Option<String> },
     /// A browser hotkey pressed while the page had keyboard focus (e.g. `f`
     /// for link hints); WebKit, not GPUI, receives keys then.
     Hotkey { key: String },

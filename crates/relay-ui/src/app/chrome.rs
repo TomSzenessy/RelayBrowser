@@ -1305,10 +1305,12 @@ impl RelayApp {
 
     pub(super) fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let (url, total, asleep, agents) = {
+        let (url, hover, total, asleep, agents) = {
             let h = self.hub.lock();
-            let url = h.active().and_then(|a| h.tab(a)).map(|x| x.url.clone()).unwrap_or_default();
-            (url, h.tabs().count(), h.tabs().filter(|x| x.sleeping).count(), h.tabs().filter(|x| x.owner == Owner::Agent).count())
+            let active = h.active().and_then(|a| h.tab(a));
+            let url = active.map(|x| x.url.clone()).unwrap_or_default();
+            let hover = active.and_then(|x| x.hover_url.clone());
+            (url, hover, h.tabs().count(), h.tabs().filter(|x| x.sleeping).count(), h.tabs().filter(|x| x.owner == Owner::Agent).count())
         };
         let mut right = if total == 1 { "1 tab".to_string() } else { format!("{total} tabs") };
         if asleep > 0 {
@@ -1353,7 +1355,7 @@ impl RelayApp {
                 // Native web views cover GPUI overlays, so hint status lives here.
                 (Some(h), _) => format!("Link hints: type a label{} · Esc cancels", if h.typed.is_empty() { String::new() } else { format!(" ({})", h.typed.to_uppercase()) }),
                 (None, Some((m, _))) => m.clone(),
-                (None, None) => url,
+                (None, None) => hover.map(|h| format!("→ {h}")).unwrap_or(url),
             })))
             .child(SharedString::from(right))
     }

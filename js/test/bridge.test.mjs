@@ -16,6 +16,7 @@ const ORIGIN = "https://shop.relay.test";
 
 const PAGE = `<!doctype html><html><head><title>Checkout</title></head><body>
   <h1>Your cart</h1>
+  <a id="link" href="https://example.org/x">Example link</a>
   <video id="v" muted></video>
   <audio id="a"></audio>
   <form id="f" onsubmit="event.preventDefault(); window.submitted = true">
@@ -666,4 +667,12 @@ test("mute flips every media element and reports the count", async () => {
   assert.notEqual(await page.evaluate(() => getComputedStyle(document.getElementById("v")).position), "fixed");
   assert.equal(await page.evaluate(() => document.getElementById("v").muted), true);
   assert.equal(await page.evaluate(() => document.getElementById("a").muted), true);
+});
+
+test("hovering a link posts its target and clearing posts null", async () => {
+  await page.hover("#link");
+  const hit = await until(m => m.kind === "link" && m.url === "https://example.org/x");
+  assert.ok(hit);
+  await page.mouse.move(0, 0);
+  await until(m => m.kind === "link" && m.url === null);
 });

@@ -1009,6 +1009,26 @@
     post({ kind: "hotkey", key: ev.key });
   }, true);
 
+  // --------------------------------------------------------- Link status
+  // The shell draws the target in its status bar. Only http(s), bounded, and
+  // throttled to changes so moving inside one link sends nothing.
+  var lastHover = null;
+  function postHover(url) {
+    if (url === lastHover) return;
+    lastHover = url;
+    post({ kind: "link", url: url });
+  }
+  document.addEventListener("mouseover", function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+    var href = a && a.href && /^https?:/i.test(a.href) ? String(a.href).slice(0, 2048) : null;
+    postHover(href);
+  }, true);
+  document.addEventListener("mouseout", function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+    if (a && !(ev.relatedTarget && a.contains(ev.relatedTarget))) postHover(null);
+  }, true);
+  window.addEventListener("blur", function () { postHover(null); }, true);
+
   // ---------------------------------------------------------- Lifecycle
   function announce() { post({ kind: "page", url: location.href, title: document.title }); }
   ["pushState", "replaceState"].forEach(function (m) {

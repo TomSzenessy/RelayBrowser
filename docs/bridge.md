@@ -91,6 +91,11 @@ and toggle commands and drains one request on the shell pump.
 state so one menu item works as a toggle. It returns the number of media
 elements and is a mutating op (refused while a tab waits for a human).
 
+`link` is a non-command message: `{kind:"link", url:"https://…"}` when the
+pointer enters a link, and `{url:null}` when it leaves. The bridge throttles to
+changes, only sends http(s), and caps at 2048 bytes; the shell shows it in the
+status bar. A hostile page can only replace that status text.
+
 `press_key` dispatches keydown/keyup to the focused element (or `<body>`),
 with `ctrl`/`alt`/`shift`/`meta`; Enter submits a focused form unless the page
 prevented the event. It never inserts text.

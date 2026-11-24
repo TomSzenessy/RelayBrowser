@@ -97,6 +97,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   open; ⌘D adds the current page.
 - **Default browser:** Settings → General → Make default asks LaunchServices
   to open http and https links with Relay; macOS shows its own confirmation.
+- **Status line:** hovering a link replaces the status URL with `→ target`;
+  leaving the link restores the page URL.
 - **Site permissions:** camera/microphone requests show a native Allow/Block
   alert naming the origin; ordinary tabs remember the choice across launches
   (Settings → Privacy → Forget clears it), private tabs ask every time.
