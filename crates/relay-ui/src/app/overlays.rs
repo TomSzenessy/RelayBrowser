@@ -904,6 +904,131 @@ impl RelayApp {
         )
     }
 
+    pub(super) fn render_site_card(&self, host: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let prefs = self.store.as_ref().and_then(|s| s.site_pref(host).ok()).unwrap_or_default();
+        let policy = self.hub.agent_policy_for_host(host);
+        let zoom = (prefs.zoom * 100.0).round() as i32;
+        let forget_camera = host.to_string();
+        let forget_mic = host.to_string();
+        let permission = |kind: i64| match self.media_permissions.get(&(host.to_string(), kind)) {
+            Some(true) => "Allowed",
+            Some(false) => "Blocked",
+            None => "Ask",
+        };
+        let button = |id: &'static str, label: String, active: bool| {
+            div()
+                .id(id)
+                .px_2()
+                .py_1()
+                .rounded(px(5.))
+                .bg(if active { t.active } else { t.well })
+                .text_size(px(11.))
+                .text_color(if active { t.text } else { t.muted })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .child(SharedString::from(label))
+        };
+        let row = |label: &'static str, control: gpui::AnyElement| {
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .py_1p5()
+                .child(div().text_size(px(12.)).text_color(t.text).child(label))
+                .child(control)
+        };
+        div().absolute().top_0().left_0().size_full().bg(t.scrim).flex().justify_end().pt(px(44.)).pr(px(10.)).child(
+            div()
+                .id("site-card")
+                .w(px(340.))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_4()
+                .rounded(px(12.))
+                .bg(t.raised)
+                .shadow_lg()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.close_site_card();
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().flex().flex_col().child(div().text_size(px(14.)).text_color(t.text).child(SharedString::from(host.to_string()))).child(div().text_size(px(10.)).text_color(t.muted).child("Site settings")))
+                        .child(
+                            div()
+                                .id("site-close")
+                                .px_2()
+                                .cursor_pointer()
+                                .text_color(t.muted)
+                                .hover(|s| s.text_color(t.text))
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    app.close_site_card();
+                                    cx.notify();
+                                }))
+                                .child("×"),
+                        ),
+                )
+                .child(
+                    row(
+                        "Zoom",
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(button("site-zoom-out", "−".into(), false).on_click(cx.listener(|app, _, _, cx| { app.zoom(-1); cx.notify(); })))
+                            .child(div().w(px(38.)).text_size(px(11.)).text_color(t.text).child(SharedString::from(format!("{zoom}%"))))
+                            .child(button("site-zoom-in", "+".into(), false).on_click(cx.listener(|app, _, _, cx| { app.zoom(1); cx.notify(); })))
+                            .child(button("site-zoom-reset", "Reset".into(), zoom == 100).on_click(cx.listener(|app, _, _, cx| { app.zoom(0); cx.notify(); })))
+                            .into_any_element(),
+                    ),
+                )
+                .child(row(
+                    "Blocking",
+                    button("site-blocking", if prefs.blocking_off { "Off".into() } else { "On".into() }, prefs.blocking_off)
+                        .on_click(cx.listener(|app, _, _, cx| { app.toggle_site_blocking(); cx.notify(); }))
+                        .into_any_element(),
+                ))
+                .child(row(
+                    "Agents",
+                    button("site-agents", policy.label().to_string(), policy != relay_bridge::AgentPolicy::default())
+                        .on_click(cx.listener(|app, _, _, cx| { app.cycle_agent_policy(cx); cx.notify(); }))
+                        .into_any_element(),
+                ))
+                .child(row(
+                    "Compatibility",
+                    button("site-compat", if prefs.compat_mode { "Safari UA".into() } else { "Default".into() }, prefs.compat_mode)
+                        .on_click(cx.listener(|app, _, _, cx| { app.toggle_compat_mode(); cx.notify(); }))
+                        .into_any_element(),
+                ))
+                .child(row(
+                    "Camera",
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_size(px(11.)).text_color(t.muted).child(permission(0)))
+                        .child(button("site-forget-camera", "Forget".into(), false).on_click(cx.listener(move |app, _, _, cx| app.forget_host_permissions(&forget_camera, cx))))
+                        .into_any_element(),
+                ))
+                .child(row(
+                    "Microphone",
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_size(px(11.)).text_color(t.muted).child(permission(1)))
+                        .child(button("site-forget-mic", "Forget".into(), false).on_click(cx.listener(move |app, _, _, cx| app.forget_host_permissions(&forget_mic, cx))))
+                        .into_any_element(),
+                )),
+        )
+    }
+
     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let btn = |id: &'static str, label: SharedString, danger: bool| {

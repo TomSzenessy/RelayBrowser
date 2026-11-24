@@ -1374,6 +1374,13 @@ impl RelayApp {
             let hover = active.and_then(|x| x.hover_url.clone());
             (url, hover, h.tabs().count(), h.tabs().filter(|x| x.sleeping).count(), h.tabs().filter(|x| x.owner == Owner::Agent).count())
         };
+        let site_host = crate::clean_url::host_of(&url);
+        let status_text = match (&self.hints, &self.toast) {
+            // Native web views cover GPUI overlays, so hint status lives here.
+            (Some(h), _) => format!("Link hints: type a label{} · Esc cancels", if h.typed.is_empty() { String::new() } else { format!(" ({})", h.typed.to_uppercase()) }),
+            (None, Some((m, _))) => m.clone(),
+            (None, None) => hover.map(|h| format!("→ {h}")).unwrap_or(url),
+        };
         let mut right = if total == 1 { "1 tab".to_string() } else { format!("{total} tabs") };
         if asleep > 0 {
             right.push_str(&format!(" · {asleep} asleep"));
@@ -1413,12 +1420,23 @@ impl RelayApp {
                         .child("» Tabs"),
                 )
             })
-            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(match (&self.hints, &self.toast) {
-                // Native web views cover GPUI overlays, so hint status lives here.
-                (Some(h), _) => format!("Link hints: type a label{} · Esc cancels", if h.typed.is_empty() { String::new() } else { format!(" ({})", h.typed.to_uppercase()) }),
-                (None, Some((m, _))) => m.clone(),
-                (None, None) => hover.map(|h| format!("→ {h}")).unwrap_or(url),
-            })))
+            .child(
+                div()
+                    .id("status-site")
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when(!site_host.is_empty(), |d| d.cursor_pointer().hover(|s| s.text_color(t.text)))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        if !site_host.is_empty() {
+                            app.open_site_card(site_host.clone());
+                            cx.notify();
+                        }
+                    }))
+                    .child(SharedString::from(status_text)),
+            )
             .child(SharedString::from(right))
     }
 }

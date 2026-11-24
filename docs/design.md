@@ -99,6 +99,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   to open http and https links with Relay; macOS shows its own confirmation.
 - **Status line:** hovering a link replaces the status URL with `→ target`;
   leaving the link restores the page URL.
+- **Site card:** clicking the status-bar URL/host opens a compact panel with
+  per-site zoom (in/out/reset), blocking, agent policy, compatibility mode, and
+  camera/microphone choices with Forget. Esc or an outside click closes it.
 - **Site permissions:** camera/microphone requests show a native Allow/Block
   alert naming the origin; ordinary tabs remember the choice across launches
   (Settings → Privacy → Forget clears it), private tabs ask every time.

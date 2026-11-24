@@ -346,6 +346,8 @@ pub struct RelayApp {
     show_address_bar: bool,
     /// Vertical strip shows only site icons in a narrow rail.
     tab_icons_only: bool,
+    /// Host whose Site Card is open.
+    site_card: Option<String>,
     /// Bookmarks bar shows only site icons.
     bookmarks_icons_only: bool,
     /// Bookmarks bar appears only on the new-tab page.
@@ -626,6 +628,7 @@ impl RelayApp {
             show_bookmarks_bar,
             show_address_bar,
             tab_icons_only,
+            site_card: None,
             bookmarks_icons_only,
             bookmarks_new_tab_only,
             always_show_close,
@@ -1340,6 +1343,12 @@ impl RelayApp {
 
     fn activate(&mut self, tab: TabId) {
         self.tab_menu = None;
+        if self.site_card.is_some() {
+            let host = self.hub.lock().tab(tab).map(|t| crate::clean_url::host_of(&t.url)).unwrap_or_default();
+            if self.site_card.as_deref() != Some(host.as_str()) {
+                self.site_card = None;
+            }
+        }
         if let Some(space) = self.hub.lock().tab_space(tab).map(str::to_string) {
             if self.hub.lock().current_space() != space {
                 self.hub.update(|h| h.set_current_space(&space));
@@ -2001,6 +2010,23 @@ impl RelayApp {
         self.group_prompt = None;
         self.space_prompt = Some(SpacePrompt { value: self.hub.lock().current_space().to_string(), confirm_delete: false });
         self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn open_site_card(&mut self, host: String) {
+        self.site_card = Some(host);
+        self.web.borrow().focus_shell();
+    }
+
+    fn close_site_card(&mut self) {
+        self.site_card = None;
+        self.focus_active_page();
+    }
+
+    fn forget_host_permissions(&mut self, host: &str, cx: &mut Context<Self>) {
+        self.media_permissions.retain(|(h, _), _| h != host);
+        self.persist_media_permissions();
+        self.toast(format!("Forgot permissions for {host}"));
         cx.notify();
     }
 
@@ -2740,6 +2766,12 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.site_card.is_some() && k.key.as_str() == "escape" {
+            self.close_site_card();
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.space_prompt.is_some() {
             match k.key.as_str() {
                 "escape" => self.close_space_prompt(),
@@ -3624,6 +3656,9 @@ impl Render for RelayApp {
         }
         if let Some(prompt) = &self.space_prompt {
             root = root.child(self.render_space_prompt(prompt, cx));
+        }
+        if let Some(host) = &self.site_card {
+            root = root.child(self.render_site_card(host, cx));
         }
         if self.settings_open {
             root = root.child(self.render_settings(cx));
