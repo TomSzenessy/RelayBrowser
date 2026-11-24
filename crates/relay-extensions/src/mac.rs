@@ -115,6 +115,40 @@ pub fn extension_popup(controller: &Retained<WKWebExtensionController>, uid: &st
     None
 }
 
+const AI_SERVICE: &str = "Relay AI";
+
+fn ai_account(profile: Option<&str>) -> String {
+    profile.filter(|p| !p.is_empty()).unwrap_or("Default").to_string()
+}
+
+/// Store the user's OpenAI-compatible API key in the login Keychain. The key
+/// never enters settings, the profile database, or logs.
+pub fn save_ai_key(profile: Option<&str>, key: &str) -> Result<(), crate::login::SaveFailure> {
+    use security_framework::passwords::set_generic_password;
+    if key.trim().is_empty() {
+        return Err(crate::login::SaveFailure::InvalidItem);
+    }
+    set_generic_password(AI_SERVICE, &ai_account(profile), key.trim().as_bytes()).map_err(failure_from)
+}
+
+pub fn read_ai_key(profile: Option<&str>) -> Result<Option<String>, crate::login::SaveFailure> {
+    use security_framework::passwords::get_generic_password;
+    match get_generic_password(AI_SERVICE, &ai_account(profile)) {
+        Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| crate::login::SaveFailure::InvalidItem),
+        Err(e) if e.code() == -25300 => Ok(None),
+        Err(e) => Err(failure_from(e)),
+    }
+}
+
+pub fn delete_ai_key(profile: Option<&str>) -> Result<(), crate::login::SaveFailure> {
+    use security_framework::passwords::delete_generic_password;
+    match delete_generic_password(AI_SERVICE, &ai_account(profile)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.code() == -25300 => Ok(()),
+        Err(e) => Err(failure_from(e)),
+    }
+}
+
 /// Result of a Keychain import; never contains secrets.
 #[derive(Debug, Default, PartialEq)]
 pub struct KeychainImport {

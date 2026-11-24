@@ -1,6 +1,7 @@
 //! Daily-driver plumbing: Chrome migration, extension packaging and loading,
 //! Chrome API shims, and the local SQLite profile store.
 
+pub mod ai;
 pub mod bookmarks_html;
 pub mod chrome_import;
 pub mod safari;

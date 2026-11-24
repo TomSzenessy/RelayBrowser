@@ -1061,6 +1061,109 @@ impl RelayApp {
         )
     }
 
+    pub(super) fn render_ai_chat(&self, chat: &AiChat, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mut messages = div().id("ai-messages").flex().flex_col().gap_2().px_4().py_3().max_h(px(330.)).overflow_y_scroll();
+        if chat.messages.is_empty() {
+            messages = messages.child(div().text_size(px(12.)).text_color(t.muted).child("Ask about the current page. The URL and title are sent to your configured AI endpoint; the page body is not."));
+        }
+        for (user, text) in &chat.messages {
+            messages = messages.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .rounded(px(7.))
+                    .when(*user, |d| d.bg(t.well))
+                    .child(div().text_size(px(9.)).text_color(t.muted).child(if *user { "YOU" } else { "AI" }))
+                    .child(div().text_size(px(12.)).text_color(t.text).child(SharedString::from(text.clone()))),
+            );
+        }
+        if chat.busy {
+            messages = messages.child(div().text_size(px(11.)).text_color(t.muted).child("Thinking…"));
+        }
+        if let Some(error) = &chat.error {
+            messages = messages.child(div().text_size(px(11.)).text_color(t.error).child(SharedString::from(error.clone())));
+        }
+        let send = div()
+            .id("ai-send")
+            .px_3()
+            .py_1p5()
+            .rounded(px(6.))
+            .bg(t.accent)
+            .text_size(px(12.))
+            .text_color(gpui::rgb(0xffffff))
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.9))
+            .on_click(cx.listener(|app, _, _, cx| app.send_ai(cx)))
+            .child("Send");
+        let input = div()
+            .flex_1()
+            .min_w_0()
+            .h(px(34.))
+            .px_3()
+            .flex()
+            .items_center()
+            .rounded(px(7.))
+            .bg(t.well)
+            .text_size(px(12.))
+            .text_color(if chat.input.is_empty() { t.muted } else { t.text })
+            .child(SharedString::from(if chat.input.is_empty() { "Ask a question…".to_string() } else { chat.input.clone() }))
+            .child(div().ml_0p5().text_color(t.accent).child("▏"));
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(70.)).bg(t.scrim).child(
+            div()
+                .id("ai-chat")
+                .w(px(600.))
+                .flex()
+                .flex_col()
+                .rounded(px(12.))
+                .bg(t.raised)
+                .shadow_lg()
+                .overflow_hidden()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.close_ai_chat();
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px_4()
+                        .py_3()
+                        .child(div().text_size(px(15.)).text_color(t.text).child("Ask AI"))
+                        .child(
+                            div()
+                                .id("ai-close")
+                                .px_2()
+                                .cursor_pointer()
+                                .text_color(t.muted)
+                                .hover(|s| s.text_color(t.text))
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    app.close_ai_chat();
+                                    cx.notify();
+                                }))
+                                .child("×"),
+                        ),
+                )
+                .child(messages)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_4()
+                        .py_3()
+                        .border_t_1()
+                        .border_color(t.well)
+                        .child(input)
+                        .child(send),
+                )
+                .child(div().px_4().pb_3().text_size(px(9.)).text_color(t.muted).child("↩ sends · esc closes · key stays in the login Keychain")),
+        )
+    }
+
     pub(super) fn render_site_card(&self, host: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let prefs = self.store.as_ref().and_then(|s| s.site_pref(host).ok()).unwrap_or_default();
@@ -2375,6 +2478,54 @@ impl RelayApp {
                     .gap_4()
                     .child(div().text_size(px(16.)).text_color(t.text).child("Shortcuts"))
                     .child(card(sc_card))
+                    .into_any_element()
+            }
+            SettingsTab::Ai => {
+                let field = |id: &'static str, label: &'static str, value: SharedString, focus: u8, hint: &'static str| {
+                    div()
+                        .id(id)
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .px_4()
+                        .py_3()
+                        .cursor_text()
+                        .when(self.ai_focus == focus, |d| d.bg(t.active))
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            app.ai_focus = focus;
+                            cx.notify();
+                        }))
+                        .child(div().flex().flex_col().gap_0p5().child(div().text_size(px(13.)).text_color(t.text).child(label)).child(div().text_size(px(10.)).text_color(t.muted).child(hint)))
+                        .child(div().max_w(px(360.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(11.)).font_family("Menlo").text_color(t.text).child(value))
+                };
+                let key_value = if !self.ai_key_draft.is_empty() {
+                    "•••••••• (press Return to save)".to_string()
+                } else if self.ai_has_key {
+                    "Stored in the login Keychain".to_string()
+                } else {
+                    "Not set".to_string()
+                };
+                let save_btn = btn("settings-ai-save", "Save".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.save_ai_settings(cx)))
+                    .into_any_element();
+                let ask_btn = btn("settings-ai-ask", "Ask about this page…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.open_ai_chat(cx)))
+                    .into_any_element();
+                let content = div()
+                    .flex()
+                    .flex_col()
+                    .child(field("settings-ai-endpoint", "Endpoint", SharedString::from(self.ai_endpoint.clone()), 0, "OpenAI-compatible base URL"))
+                    .child(field("settings-ai-model", "Model", SharedString::from(self.ai_model.clone()), 1, "Model name sent to the endpoint"))
+                    .child(field("settings-ai-key", "API key", SharedString::from(key_value), 2, "Saved only in the macOS Keychain; never in settings or logs"))
+                    .child(div().flex().items_center().justify_end().gap_2().px_4().py_3().child(save_btn).child(ask_btn));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("AI (OpenAI-compatible)"))
+                    .child(card(content))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("Tab moves between fields, Return saves. Asking sends the current URL, title, and your question to the endpoint; the page body is not sent."))
                     .into_any_element()
             }
             SettingsTab::About => {

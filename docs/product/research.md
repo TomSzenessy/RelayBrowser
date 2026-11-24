@@ -11,7 +11,7 @@ map is checked against that table; the shell-write row covers plan/apply for
 theme, allowlisted settings, shortcuts, sidebar, a start-page note, hashed
 audit, and action-id/duplicate-key validation; the Downloads row covers
 cancel/retry and native byte progress. The owner pass of 2026-11-24 (#189)
-adds ten Settings pages, case-sensitive find with ⌘G, Export as PDF, download folder/ask-where plus a folder picker, Chrome-family/Safari imports, an inline extension install field, options opener, action popup, and icon toolbar, an optional address bar with inline palette completion, system media keys, MRU Ctrl+Tab switching, named profiles with isolated data/login stores, folder/iCloud Drive sync, opt-in Handoff, bookmark rename/move and HTML import/export, 140 ms modal fades, backup/merge-restore, an icons-only tab rail, named/renamable/deletable spaces, a bookmarks bar with icon-only/new-tab modes, a hovered-link status, a per-site card, persisted camera/microphone choices with a Forget control, hideable bottom bar, default zoom,
+adds eleven Settings pages, case-sensitive find with ⌘G, Export as PDF, download folder/ask-where plus a folder picker, Chrome-family/Safari imports, an inline extension install field, options opener, action popup, and icon toolbar, an optional address bar with inline palette completion, system media keys, MRU Ctrl+Tab switching, named profiles with isolated data/login stores, folder/iCloud Drive sync, opt-in Handoff, bookmark rename/move and HTML import/export, 140 ms modal fades, an OpenAI-compatible AI chat with a Keychain key, backup/merge-restore, an icons-only tab rail, named/renamable/deletable spaces, a bookmarks bar with icon-only/new-tab modes, a hovered-link status, a per-site card, persisted camera/microphone choices with a Forget control, hideable bottom bar, default zoom,
 cookie-banner and site-data controls, tab mute, scoped saved-login records,
 SVG/ICO favicons, and a true default-browser path; the matrix records which
 remain Mac-observation or Apple-entitlement gates. These sources
@@ -93,7 +93,7 @@ honest gap list; Mac visual/runtime verification remains pending for UI rows.
 | Tabs: side/top, fold, close, pin | yes | yes (`↔`/`⌘S`/`×`/pin) | visual review on a Mac |
 | Split / find / ad block / CMP rules | yes | yes (`⌘\`/`⌘F`/EasyList+CMP) | visual review on a Mac |
 | New tab: home grid, recents, apps | home bookmark grid | start page with recent/frequent/apps/bookmarks/note | visual review on a Mac |
-| Custom hotkeys | full Settings › Shortcuts | 59-action table + Settings editor + live native menus | Mac key-equivalent check |
+| Custom hotkeys | full Settings › Shortcuts | 60-action table + Settings editor + live native menus | Mac key-equivalent check |
 | Collapsible side column | yes, drag resize | Agent + native Rust Inspector (detail drawers + cURL) | drag resize |
 | History / bookmarks / downloads panels | three panels | `⌘Y`/`⇧⌘B` Library + `⇧⌘J` Downloads panel (progress/cancel/retry) | VoiceOver (#64) |
 | Reading mode / PiP | yes | yes (`⇧⌘R` inert overlay / `⇧⌘P` PiP) | Mac video observation |

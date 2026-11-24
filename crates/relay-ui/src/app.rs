@@ -58,6 +58,7 @@ actions!(
         Find,
         ToggleFloatVideo,
         ToggleFloatPanel,
+        AskAi,
         FindNext,
         FindPrevious,
         ZoomIn,
@@ -178,6 +179,14 @@ struct SpacePrompt {
     confirm_delete: bool,
 }
 
+/// A minimal chat with the configured OpenAI-compatible endpoint.
+struct AiChat {
+    messages: Vec<(bool, String)>,
+    input: String,
+    busy: bool,
+    error: Option<String>,
+}
+
 /// The modal that names a profile or picks an existing one.
 struct ProfilePrompt {
     value: String,
@@ -235,11 +244,12 @@ pub(super) enum SettingsTab {
     Extensions,
     Agents,
     Shortcuts,
+    Ai,
     About,
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [SettingsTab; 10] = [
+    pub(super) const ALL: [SettingsTab; 11] = [
         SettingsTab::General,
         SettingsTab::Appearance,
         SettingsTab::Tabs,
@@ -249,6 +259,7 @@ impl SettingsTab {
         SettingsTab::Extensions,
         SettingsTab::Agents,
         SettingsTab::Shortcuts,
+        SettingsTab::Ai,
         SettingsTab::About,
     ];
 
@@ -263,6 +274,7 @@ impl SettingsTab {
             SettingsTab::Extensions => "Extensions",
             SettingsTab::Agents => "Agents & MCP",
             SettingsTab::Shortcuts => "Shortcuts",
+            SettingsTab::Ai => "AI",
             SettingsTab::About => "About",
         }
     }
@@ -361,6 +373,12 @@ pub struct RelayApp {
     sync_folder: String,
     /// Advertise the active page for Handoff (opt-in).
     handoff: bool,
+    ai_endpoint: String,
+    ai_model: String,
+    ai_key_draft: String,
+    ai_focus: u8,
+    ai_has_key: bool,
+    ai_chat: Option<AiChat>,
     last_handoff: Option<String>,
     last_sync: Instant,
     last_ext_icons: Instant,
@@ -570,6 +588,15 @@ impl RelayApp {
         let show_address_bar = setting_on("address_bar");
         let tab_icons_only = setting_on("tab_icons_only");
         let handoff = setting_on("handoff");
+        let ai_endpoint = store
+            .as_ref()
+            .and_then(|s| s.setting("ai_endpoint").ok().flatten())
+            .unwrap_or_else(|| relay_extensions::ai::DEFAULT_ENDPOINT.to_string());
+        let ai_model = store
+            .as_ref()
+            .and_then(|s| s.setting("ai_model").ok().flatten())
+            .unwrap_or_else(|| relay_extensions::ai::DEFAULT_MODEL.to_string());
+        let ai_has_key = ai_key(store.as_ref()).is_some();
         let extension_toolbar = setting_enabled(store.as_ref().and_then(|s| s.setting("extension_toolbar").ok().flatten()).as_deref());
         let sync_folder = store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default();
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
@@ -658,6 +685,12 @@ impl RelayApp {
             ext_icons: HashMap::new(),
             sync_folder,
             handoff,
+            ai_endpoint,
+            ai_model,
+            ai_key_draft: String::new(),
+            ai_focus: 0,
+            ai_has_key,
+            ai_chat: None,
             last_handoff: None,
             last_sync: Instant::now(),
             last_ext_icons: Instant::now(),
@@ -2134,6 +2167,111 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn save_ai_settings(&mut self, cx: &mut Context<Self>) {
+        let Some(endpoint) = relay_extensions::ai::normalize_endpoint(&self.ai_endpoint) else {
+            self.toast("AI endpoint must be an http(s) URL");
+            cx.notify();
+            return;
+        };
+        self.ai_endpoint = endpoint;
+        self.ai_model = self.ai_model.trim().to_string();
+        if self.ai_model.is_empty() {
+            self.ai_model = relay_extensions::ai::DEFAULT_MODEL.to_string();
+        }
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("ai_endpoint", &self.ai_endpoint);
+            let _ = store.set_setting("ai_model", &self.ai_model);
+        }
+        if !self.ai_key_draft.trim().is_empty() {
+            #[cfg(target_os = "macos")]
+            match {
+                let profile = std::env::var("RELAY_PROFILE").ok();
+                relay_extensions::mac::save_ai_key(profile.as_deref(), &self.ai_key_draft)
+            } {
+                Ok(()) => {
+                    self.ai_has_key = true;
+                    self.ai_key_draft.clear();
+                    self.toast("AI key saved to the login Keychain");
+                }
+                Err(failure) => self.toast(format!("Could not save the AI key: {failure:?}")),
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                self.toast("Saving an AI key needs macOS; set OPENAI_API_KEY");
+            }
+        } else {
+            self.toast("AI settings saved");
+        }
+        cx.notify();
+    }
+
+    fn open_ai_chat(&mut self, cx: &mut Context<Self>) {
+        if !self.ai_has_key {
+            self.settings_open = true;
+            self.settings_tab = SettingsTab::Ai;
+            self.toast("Set an AI API key in Settings → AI");
+            cx.notify();
+            return;
+        }
+        self.settings_open = false;
+        self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None });
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_ai_chat(&mut self) {
+        self.ai_chat = None;
+        self.focus_active_page();
+    }
+
+    fn send_ai(&mut self, cx: &mut Context<Self>) {
+        let prompt = self.ai_chat.as_ref().map(|c| c.input.trim().to_string()).unwrap_or_default();
+        if prompt.is_empty() || self.ai_chat.as_ref().is_some_and(|c| c.busy) {
+            return;
+        }
+        let (url, title) = self
+            .active()
+            .and_then(|id| self.hub.lock().tab(id).map(|t| (t.url.clone(), t.title.clone())))
+            .unwrap_or_default();
+        let Some(key) = ai_key(self.store.as_ref()) else {
+            if let Some(chat) = self.ai_chat.as_mut() {
+                chat.error = Some("No API key; set one in Settings → AI".into());
+            }
+            cx.notify();
+            return;
+        };
+        let Some(config) = ai_config(&self.ai_endpoint, &self.ai_model) else {
+            if let Some(chat) = self.ai_chat.as_mut() {
+                chat.error = Some("AI endpoint must be an http(s) URL".into());
+            }
+            cx.notify();
+            return;
+        };
+        let Some(chat) = self.ai_chat.as_mut() else { return };
+        chat.input.clear();
+        chat.messages.push((true, prompt.clone()));
+        chat.busy = true;
+        chat.error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { relay_extensions::ai::complete(&config, &key, &url, &title, &prompt) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if let Some(chat) = app.ai_chat.as_mut() {
+                    chat.busy = false;
+                    match result {
+                        Ok(answer) => chat.messages.push((false, answer)),
+                        Err(e) => chat.error = Some(e),
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn open_profile_prompt(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.profile_prompt = Some(ProfilePrompt { value: String::new() });
@@ -2979,6 +3117,7 @@ impl RelayApp {
             Command::ToggleSiteBlocking => self.toggle_site_blocking(),
             Command::ToggleCompatMode => self.toggle_compat_mode(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
+            Command::AskAi => self.open_ai_chat(cx),
             Command::DuplicateTab => {
                 if let Some(url) = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())) {
                     self.open_url(url, true);
@@ -3181,6 +3320,29 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.ai_chat.is_some() {
+            match k.key.as_str() {
+                "escape" => self.close_ai_chat(),
+                "enter" => self.send_ai(cx),
+                "backspace" => {
+                    if let Some(chat) = self.ai_chat.as_mut() {
+                        chat.input.pop();
+                    }
+                }
+                _ => {
+                    if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                        if let Some(chat) = self.ai_chat.as_mut() {
+                            if chat.input.chars().count() < 2000 {
+                                chat.input.push_str(c);
+                            }
+                        }
+                    }
+                }
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.profile_prompt.is_some() {
             match k.key.as_str() {
                 "escape" => self.close_profile_prompt(),
@@ -3462,6 +3624,31 @@ impl RelayApp {
         if self.settings_open {
             match k.key.as_str() {
                 "escape" => self.close_settings(),
+                _ if self.settings_tab == SettingsTab::Ai => match k.key.as_str() {
+                    "enter" => self.save_ai_settings(cx),
+                    "tab" => self.ai_focus = (self.ai_focus + 1) % 3,
+                    "backspace" => match self.ai_focus {
+                        0 => {
+                            self.ai_endpoint.pop();
+                        }
+                        1 => {
+                            self.ai_model.pop();
+                        }
+                        _ => {
+                            self.ai_key_draft.pop();
+                        }
+                    },
+                    _ => {
+                        if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                            match self.ai_focus {
+                                0 if self.ai_endpoint.chars().count() < 300 => self.ai_endpoint.push_str(c),
+                                1 if self.ai_model.chars().count() < 100 => self.ai_model.push_str(c),
+                                2 if self.ai_key_draft.chars().count() < 400 => self.ai_key_draft.push_str(c),
+                                _ => {}
+                            }
+                        }
+                    }
+                },
                 _ if self.settings_tab == SettingsTab::Extensions => match k.key.as_str() {
                     "enter" => self.install_extension_from_input(cx),
                     "backspace" => {
@@ -4049,6 +4236,9 @@ impl Render for RelayApp {
             .on_action(cx.listener(|app, _: &ToggleFloatPanel, _, cx| {
                 app.toggle_float_panel(cx);
             }))
+            .on_action(cx.listener(|app, _: &AskAi, _, cx| {
+                app.open_ai_chat(cx);
+            }))
             .on_action(cx.listener(|app, _: &ShowDownloads, _, cx| {
                 app.open_downloads(cx);
             }))
@@ -4135,6 +4325,9 @@ impl Render for RelayApp {
         }
         if let Some(prompt) = &self.space_prompt {
             root = root.child(self.render_space_prompt(prompt, cx));
+        }
+        if let Some(chat) = &self.ai_chat {
+            root = root.child(self.render_ai_chat(chat, cx));
         }
         if let Some(prompt) = &self.profile_prompt {
             root = root.child(self.render_profile_prompt(prompt, cx));
@@ -4287,6 +4480,29 @@ pub(crate) fn fade_in(panel: gpui::Div, id: &'static str) -> impl IntoElement {
 /// iCloud Drive's Relay folder under a home directory.
 pub(crate) fn icloud_relay_dir(home: &std::path::Path) -> std::path::PathBuf {
     home.join("Library/Mobile Documents/com~apple~CloudDocs/Relay")
+}
+
+#[cfg(target_os = "macos")]
+fn ai_key(store: Option<&Store>) -> Option<String> {
+    let profile = std::env::var("RELAY_PROFILE").ok();
+    match relay_extensions::mac::read_ai_key(profile.as_deref()) {
+        Ok(Some(key)) => Some(key),
+        Ok(None) => std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.trim().is_empty()),
+        Err(_) => None,
+    }
+    .filter(|_| store.is_some() || std::env::var("OPENAI_API_KEY").is_ok())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ai_key(_store: Option<&Store>) -> Option<String> {
+    std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.trim().is_empty())
+}
+
+pub(crate) fn ai_config(endpoint: &str, model: &str) -> Option<relay_extensions::ai::AiConfig> {
+    Some(relay_extensions::ai::AiConfig {
+        endpoint: relay_extensions::ai::normalize_endpoint(endpoint)?,
+        model: model.trim().to_string(),
+    })
 }
 
 /// Only ordinary http(s) browser tabs are advertised through Handoff.

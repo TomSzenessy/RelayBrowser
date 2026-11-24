@@ -88,6 +88,7 @@ command_table! {
     DuplicateTab => "Duplicate Tab", None;
     MuteTab => "Mute / Unmute Tab", None;
     SleepTab => "Sleep Tab", None;
+    AskAi => "Ask AI", Some(ActionId::AskAi);
     ToggleBookmark => "Bookmark This Page", Some(ActionId::ToggleBookmark);
     TogglePin => "Pin / Unpin Tab", Some(ActionId::TogglePin);
     Find => "Find in Page", Some(ActionId::Find);
@@ -826,7 +827,7 @@ mod tests {
         assert_eq!(Command::NewTab.action(), Some(crate::keymap::ActionId::NewTab));
         assert_eq!(Command::Settings.action(), Some(crate::keymap::ActionId::ToggleSettings));
         assert_eq!(Command::ImportChrome.action(), None);
-        assert_eq!(Command::ALL.iter().filter(|c| c.action().is_some()).count(), 30);
+        assert_eq!(Command::ALL.iter().filter(|c| c.action().is_some()).count(), 31);
     }
 
     #[test]
@@ -850,8 +851,8 @@ mod tests {
                 None => assert_eq!(command.keys(), "", "palette-only {command:?} must not advertise a shortcut"),
             }
         }
-        assert_eq!(Command::ALL.len(), 42);
-        assert_eq!(mapped, 30, "30 commands run a keymap action; 9 are palette-only");
+        assert_eq!(Command::ALL.len(), 43);
+        assert_eq!(mapped, 31, "31 commands run a keymap action; 12 are palette-only");
     }
 
     #[test]
@@ -943,7 +944,7 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 42);
+        assert_eq!(Command::ALL.len(), 43);
         for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents, Command::CycleAgentPolicy, Command::CycleTheme, Command::CycleAccent, Command::ToggleReader, Command::TogglePictureInPicture, Command::ShowDownloads] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());

@@ -133,6 +133,14 @@ fn mru_cycle_wraps_and_falls_back_to_the_first() {
 }
 
 #[test]
+fn ai_config_requires_an_http_endpoint_and_keeps_the_model() {
+    let cfg = ai_config("https://api.test/v1/", "gpt-test").unwrap();
+    assert_eq!(cfg.endpoint, "https://api.test/v1");
+    assert_eq!(cfg.model, "gpt-test");
+    assert!(ai_config("file:///etc/passwd", "m").is_none());
+}
+
+#[test]
 fn icloud_sync_lives_under_the_cloud_docs_folder() {
     let dir = icloud_relay_dir(std::path::Path::new("/Users/me"));
     assert_eq!(dir, std::path::Path::new("/Users/me/Library/Mobile Documents/com~apple~CloudDocs/Relay"));

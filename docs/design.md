@@ -34,6 +34,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   the strip to a thin, clickable rail (14 pt at the side, 10 pt at the top)
   that brings it back; the edge and folded state persist in `tabs_position`
   and `tabs_folded`.
+- **AI:** Settings → AI stores an OpenAI-compatible endpoint/model and an API
+  key in the login Keychain. ⌘⇧A opens a chat that sends only the current URL,
+  title, and question, then shows the reply; Esc closes.
 - **Motion:** palette, Settings, and Library fade in over 140 ms with
   ease-out-quint; no other transitions are animated yet.
 - **Palette:** also exposes duplicate, mute, and sleep tab commands.
@@ -149,7 +152,7 @@ Appearance is System (follow macOS), Light, or Dark; the accent is Blue
 (default), Purple, Green, or Orange. `theme::Theme::for_choice` applies the
 accent's light/dark pair, and every accent is checked at 3:1 against the
 surface. Settings → Appearance changes it live and stores `theme`/`accent`. The
-Settings rail has ten pages: General, Appearance, Tabs, Browsing, Passwords,
+Settings rail has eleven pages: General, Appearance, Tabs, Browsing, Passwords,
 Privacy, Extensions, Agents, Shortcuts, and About. Every row is a surface on
 the background, not a boxed cell; only the groups' spacing separates them.
 Tabs also offers site-icon/letter badges, compact rows, a bookmarks bar, and
@@ -195,6 +198,7 @@ and displayed shortcuts cannot drift either.
 | ⌘F | Find in page |
 | ⌘⇧F | Float video |
 | ⌘⌥⇧F | Float video in panel |
+| ⌘⇧A | Ask AI |
 | ⌘G | Find next |
 | ⌘⇧G | Find previous |
 | ⌘= | Zoom in |
