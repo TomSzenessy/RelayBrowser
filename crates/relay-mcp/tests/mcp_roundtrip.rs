@@ -598,6 +598,8 @@ async fn read_markdown_and_nav_tools_obey_policy_and_stop() {
     assert!(rows.iter().any(|r| r.tool == "go_forward" && r.outcome == "ok"));
     assert!(rows.iter().any(|r| r.tool == "reload" && r.outcome == "ok"));
     assert!(rows.iter().any(|r| r.tool == "scroll_into_view" && r.outcome == "ok"));
+    assert!(rows.iter().any(|r| r.tool == "go_forward" && r.outcome == "error"), "refused go_forward must audit as error");
+    assert!(rows.iter().any(|r| r.tool == "reload" && r.outcome == "error"), "refused reload must audit as error");
 
     let _ = client.cancel().await;
     server_task.abort();

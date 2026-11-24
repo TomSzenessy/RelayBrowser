@@ -502,6 +502,10 @@ fn op_tool(op: &Op) -> &'static str {
     }
 }
 
+fn audit_outcome(result: &Result<CallToolResult, ErrorData>) -> &'static str {
+    if matches!(result, Ok(r) if !r.is_error.unwrap_or(false)) { "ok" } else { "error" }
+}
+
 #[tool_router]
 impl RelayMcp {
     #[tool(description = "Plan a bounded shell change and return a one-time id plus a human diff; no state changes yet. Read shell_settings, shell_shortcuts, shell_start_page, shell_sidebar, or shell_apps first. Accepts theme, accent, ordered start sections, allowlisted settings, a sidebar target, and one small text widget; no HTML/JS/URLs or raw colours. Requires Agent shell changes or a per-client grant.")]
@@ -854,7 +858,7 @@ impl RelayMcp {
             self.browser.go_back(tab);
             self.after_load(tab, before).await
         }.await);
-        self.audit("go_back", &host, a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("go_back", &host, a.tab_id, audit_outcome(&result));
         result
     }
 
@@ -878,7 +882,7 @@ impl RelayMcp {
             self.browser.go_forward(tab);
             self.after_load(tab, before).await
         }.await);
-        self.audit("go_forward", &host, a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("go_forward", &host, a.tab_id, audit_outcome(&result));
         result
     }
 
@@ -902,7 +906,7 @@ impl RelayMcp {
             self.browser.reload(tab);
             self.after_load(tab, before).await
         }.await);
-        self.audit("reload", &host, a.tab_id, if result.is_ok() { "ok" } else { "error" });
+        self.audit("reload", &host, a.tab_id, audit_outcome(&result));
         result
     }
 
