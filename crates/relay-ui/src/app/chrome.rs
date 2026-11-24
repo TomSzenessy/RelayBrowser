@@ -721,6 +721,51 @@ impl RelayApp {
         )
     }
 
+    /// An optional one-line address bar above the page. Clicking it opens the
+    /// full palette with the URL selected, so typing replaces the address
+    /// without a second shortcut.
+    pub(super) fn render_address_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let url = self
+            .active()
+            .and_then(|id| self.hub.lock().tab(id).map(|tab| tab.url.clone()))
+            .unwrap_or_default();
+        let secure = url.starts_with("https://");
+        let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(&url);
+        let (host, path) = match rest.split_once('/') {
+            Some((h, p)) => (h.to_string(), format!("/{p}")),
+            None => (rest.to_string(), String::new()),
+        };
+        let target = url.clone();
+        div()
+            .id("address-bar")
+            .h(px(26.))
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .bg(t.surface)
+            .text_size(px(11.))
+            .cursor_pointer()
+            .on_click(cx.listener(move |app, _, _, cx| {
+                if target.is_empty() {
+                    app.open_palette(None, false);
+                } else {
+                    app.open_palette(Some(target.clone()), false);
+                    if let Some(palette) = app.palette.as_mut() {
+                        palette.select_all();
+                    }
+                }
+                cx.notify();
+            }))
+            .child(div().text_size(px(10.)).text_color(if secure { t.accent } else { t.warn }).child(if secure { "🔒" } else { "⚠" }))
+            .child(div().text_color(t.text).child(SharedString::from(host)))
+            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(t.muted).child(SharedString::from(path)))
+            .child(div().text_size(px(10.)).text_color(t.muted).child("⌘L"))
+            .into_any_element()
+    }
+
     /// The optional bookmarks bar: saved pages as one quiet row under the
     /// tab strip. Off by default; Settings → Tabs turns it on.
     pub(super) fn render_bookmarks_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {

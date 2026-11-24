@@ -1120,6 +1120,15 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let address_sw = switch("settings-address-bar", self.show_address_bar, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.show_address_bar = !app.show_address_bar;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("address_bar", if app.show_address_bar { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let bottom_sw = switch("settings-bottom-bar", self.show_bottom_bar, false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.toggle_bottom_bar();
@@ -1134,6 +1143,7 @@ impl RelayApp {
                     .child(row("Tab strip position", Some("Move tabs between Left, Top, and Right (⇧⌘S)"), strip_seg.into_any_element()))
                     .child(row("Show tab strip", Some("Hide to maximize page area; ⌘S toggles anytime"), strip_visible))
                     .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw))
+                    .child(row("Always show the address bar", Some("One quiet URL line above the page; click it to edit in ⌘K"), address_sw))
                     .child(row("Show the bottom bar", Some("URL, tab count and agent state; hide it for a quieter page (⌘⌥B)"), bottom_sw));
                 div()
                     .flex()

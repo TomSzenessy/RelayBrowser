@@ -326,6 +326,8 @@ pub struct RelayApp {
     compact_tabs: bool,
     /// A row of saved pages under the tab strip (off by default).
     show_bookmarks_bar: bool,
+    /// Always show a one-line address bar above the page.
+    show_address_bar: bool,
     /// Keep every tab's close button visible instead of hover/active only.
     always_show_close: bool,
     /// Cached bookmarks for that bar; refreshed with the start page.
@@ -513,6 +515,7 @@ impl RelayApp {
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
         let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
         let show_bookmarks_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bookmarks_bar").ok().flatten()).as_deref());
+        let show_address_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("address_bar").ok().flatten()).as_deref());
         let collapsed_groups = store
             .as_ref()
             .and_then(|s| s.setting("collapsed_groups").ok().flatten())
@@ -571,6 +574,7 @@ impl RelayApp {
             tab_glyphs,
             compact_tabs,
             show_bookmarks_bar,
+            show_address_bar,
             always_show_close,
             bookmarks_bar: vec![],
             default_zoom,
@@ -2837,6 +2841,7 @@ impl RelayApp {
             "tab_glyphs" => self.tab_glyphs = setting_enabled(Some(value)),
             "compact_tabs" => self.compact_tabs = setting_enabled(Some(value)),
             "bookmarks_bar" => self.show_bookmarks_bar = setting_enabled(Some(value)),
+            "address_bar" => self.show_address_bar = setting_enabled(Some(value)),
             "always_show_close" => self.always_show_close = setting_enabled(Some(value)),
             "default_zoom" => {
                 if let Ok(z) = value.parse::<f64>() {
@@ -3074,6 +3079,9 @@ impl Render for RelayApp {
             div().flex_1().h_full().bg(t.page).into_any_element()
         } else {
             let mut column = div().flex_1().h_full().flex().flex_col().overflow_hidden();
+            if self.show_address_bar && !self.app_mode {
+                column = column.child(self.render_address_bar(cx));
+            }
             if self.show_bookmarks_bar && !self.app_mode {
                 column = column.child(self.render_bookmarks_bar(cx));
             }
