@@ -217,6 +217,8 @@ Behaviour that is not a single action:
 - **Tab bar:** `×` closes (hover/active), a middle click closes, `♪` marks
   playing audio, `pin` a pinned tab, and `zz` a sleeping one. Pinned tabs sit
   at the top, never auto-sleep, and ⌘W sleeps them instead of closing.
+- **Reopen:** ⌘⇧T reopens the newest closed http(s) tab; the stack is capped
+  at 50 so a long session cannot grow it without bound.
 - **Esc** closes the palette, Settings, or link hints.
 - **Settings → Agent shell changes:** off by default; a global switch or
   per-client grant under Connected agents or the Agent sidebar lets an agent

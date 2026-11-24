@@ -1336,6 +1336,12 @@ impl RelayApp {
         let last = self.hub.lock().tabs().count() <= 1;
         if let Some(t) = self.hub.update(|h| h.close_tab(tab)) {
             if !t.private && t.url.starts_with("http") {
+                // Reopen history is a convenience, not a log; older entries
+                // fall off so a long session cannot grow it without bound.
+                const MAX_CLOSED: usize = 50;
+                if self.closed.len() >= MAX_CLOSED {
+                    self.closed.remove(0);
+                }
                 self.closed.push(t.url);
             }
         }
