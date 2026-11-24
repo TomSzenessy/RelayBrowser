@@ -1,7 +1,7 @@
 # Login fill and save: security design
 
 <!-- index: design | Login offer/fill/save design, Keychain storage, redaction, and open owner decisions | Before implementing password fill/save or reviewing its security. -->
-<!-- covers: crates/relay-extensions/src/login.rs crates/relay-extensions/src/mac.rs -->
+<!-- covers: crates/relay-extensions/src/login.rs crates/relay-extensions/src/mac.rs crates/relay-webkit/src/mac.rs crates/relay-ui/src/web.rs -->
 
 Status: **implemented (native macOS Keychain + isolated `WKContentWorld` path).**
 The pure model in
@@ -419,16 +419,11 @@ model only refuses the unsafe direction.
   API so the native writer/fill code can use it; it is not a memory boundary.
   Any future code that calls it must be reviewed, and it must never feed a log
   or serialization path.
-- **No independent security review yet.** `.security/config.json` still records
-  the pending reviewer; #57 must not merge as a complete fix before that
-  review.
+- **Review status.** An independent critic reviewed #57; its blockers (live-origin check at fill, prompt clearing on tab switch/sleep, stale docs) are fixed. Residuals are tracked as issues (default-ON offers, Replace/Keep prompt, Relay marker on Keychain items, https gate on offer, gesture window granularity, zeroizing passwords, macOS interactive evidence).
 
-## Why this cannot be auto-merged as a full fix
+## Implementation scope
 
-This change lands the pure decision model and its tests, which are safe without
-the owner's security decisions. It does **not** implement the feature: no
-native isolated-world helper, no capture/fill call, no save prompt, no Keychain
-write or delete, no Settings UI, and no macOS evidence. The decisions in the
-table above change the security boundary, so a full implementation needs the
-owner's review and a macOS artifact. The PR for this record says `Part of #57`,
-not a closing reference.
+The feature is implemented: native Keychain list/read/save/delete, isolated
+`relay.login` world capture and fill, trusted-gesture gating, live-origin check
+at fill, save/decline banners, and Settings toggle plus delete. Private tabs
+never capture or offer. Real-Mac interactive evidence is still owed.

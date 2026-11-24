@@ -1046,6 +1046,12 @@ impl Engine {
 
     /// Fill a login form in the isolated `relay.login` content world using
     /// `NSDictionary` arguments (never interpolating the password into JS source).
+    /// Live native URL of `tab` (never page-supplied).
+    pub fn current_url(&self, tab: TabId) -> Option<String> {
+        let t = self.tabs.get(&tab)?;
+        unsafe { t.view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string())
+    }
+
     pub fn fill_login(&self, tab: TabId, form_idx: usize, username: &str, password: &str) {
         let Some(t) = self.tabs.get(&tab) else { return };
         let world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), self.mtm) };
@@ -1271,6 +1277,7 @@ impl Engine {
 
     /// Snapshot, remember URL + scroll, then destroy the WKWebView (0 MB).
     pub fn sleep(&mut self, tab: TabId, scroll: (f64, f64)) {
+        self.drop_pending_login(tab);
         let Some(t) = self.tabs.remove(&tab) else { return };
         self.uccs.borrow_mut().retain(|u| !std::ptr::eq::<WKUserContentController>(&**u, &*t.ucc));
         let url = unsafe { t.view.URL() }.and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default();

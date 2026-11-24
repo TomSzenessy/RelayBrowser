@@ -39,7 +39,7 @@ RelayMcp ──Browser::eval/navigate──▶ ChannelBrowser ──▶ UI drain
 ### Credential path
 
 Passwords enter Relay only through `relay import-passwords` (CSV to Keychain)
-or, if issue #57 is approved and implemented, the native login path. The pure
+or, through the native login path (#57, implemented), the native login path. The pure
 model in `relay-extensions/src/login.rs` owns origin binding, candidate
 matching, explicit fill gating, the save/decline state, and redacted secrets;
 it never serializes a password. No bridge message, DOM snapshot, MCP tool, or

@@ -258,6 +258,11 @@ mod imp {
         /// `relay.login` content world. Password never leaves `WebHost`.
         pub fn fill_login(&self, tab: TabId, url: &str, form_idx: usize, username: &str, path: &str) -> Result<(), String> {
             let origin = relay_extensions::login::Origin::parse(url).map_err(|e| e.to_string())?;
+            // D3: bind to the live native origin at fill time, not the focus-time URL.
+            let live = self.engine.current_url(tab).and_then(|u| relay_extensions::login::Origin::parse(&u).ok());
+            if live.as_ref() != Some(&origin) {
+                return Err("The page changed; fill cancelled".into());
+            }
             let pw = relay_extensions::mac::read_login_password(&origin, username, path)
                 .map_err(|_| "Could not read login from Keychain".to_string())?;
             self.engine.fill_login(tab, form_idx, username, pw.expose());

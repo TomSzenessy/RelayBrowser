@@ -1055,6 +1055,13 @@ impl RelayApp {
         if self.login_fill_prompt.as_ref().is_some_and(|(t, _, _, _)| *t != tab) {
             self.login_fill_prompt = None;
         }
+        if let Some((t, _, _)) = self.login_save_prompt.as_ref() {
+            if *t != tab {
+                let t = *t;
+                self.login_save_prompt = None;
+                self.web.borrow().decline_save_login(t);
+            }
+        }
         // Hints belong to the tab they were drawn on; do not leave them armed
         // for the next tab (Esc would then focus the old page).
         if let Some(h) = self.hints.take() {
