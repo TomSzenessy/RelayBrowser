@@ -9,7 +9,7 @@ use crate::downloads::{download_destination_in, folder as default_download_folde
 use crate::sleep::{restore_scroll_script, SleptTab};
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject};
+use objc2::runtime::{AnyClass, AnyObject, Bool, NSObject, ProtocolObject, Sel};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
@@ -32,12 +32,13 @@ use objc2_web_kit::{
 };
 use relay_bridge::{Cookie, SharedHub, TabId, BRIDGE_JS};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const HANDLER: &str = "relay";
@@ -234,6 +235,59 @@ struct FloatInfo {
     src: String,
     poster: String,
     title: String,
+}
+
+static RECEIVED_HANDOFF: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+
+fn handoff_queue() -> &'static Mutex<VecDeque<String>> {
+    RECEIVED_HANDOFF.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+/// Drain one URL delivered by Handoff/`continueUserActivity`.
+pub fn take_received_handoff() -> Option<String> {
+    handoff_queue().lock().ok()?.pop_front()
+}
+
+/// GPUI owns NSApplication's delegate; add the optional Handoff method to that
+/// class once. We only consume the URL and let the shell open a tab.
+unsafe extern "C" fn continue_handoff(
+    _this: *mut AnyObject,
+    _cmd: Sel,
+    _app: *mut NSApplication,
+    activity: *mut NSUserActivity,
+    _restoration: *mut AnyObject,
+) -> Bool {
+    if let Some(activity) = unsafe { activity.as_ref() } {
+        if let Some(url) = activity.webpageURL().and_then(|u| u.absoluteString()).map(|s| s.to_string()) {
+            if url.starts_with("http://") || url.starts_with("https://") {
+                if let Ok(mut queue) = handoff_queue().lock() {
+                    if queue.len() < 8 {
+                        queue.push_back(url);
+                    }
+                }
+            }
+        }
+    }
+    Bool::YES
+}
+
+fn install_handoff_receiver() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let app = NSApplication::sharedApplication(mtm);
+        let Some(delegate) = app.delegate() else { return };
+        let class = unsafe { objc2::ffi::object_getClass(Retained::as_ptr(&delegate) as *const AnyObject) };
+        if class.is_null() {
+            return;
+        }
+        let sel = sel!(application:continueUserActivity:restorationHandler:);
+        let types = c"c@:@@@?".as_ptr();
+        let imp = <unsafe extern "C" fn(*mut AnyObject, Sel, *mut NSApplication, *mut NSUserActivity, *mut AnyObject) -> Bool as objc2::runtime::MethodImplementation>::__imp(continue_handoff);
+        unsafe {
+            objc2::ffi::class_addMethod(class as *const _ as *mut AnyClass, sel, imp, types);
+        }
+    });
 }
 
 /// Things the engine needs the shell to do. Never carries passwords.
@@ -1130,6 +1184,7 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(mtm: MainThreadMarker, hub: SharedHub, events: impl Fn(EngineEvent) + 'static) -> Self {
+        install_handoff_receiver();
         let media_key = Arc::new(AtomicU8::new(0));
         let media_targets = install_media_keys(media_key.clone());
         Self {

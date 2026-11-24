@@ -324,6 +324,11 @@ mod imp {
             self.engine.set_default_browser();
         }
 
+        /// A URL delivered by Handoff, if any.
+        pub fn take_handoff(&self) -> Option<String> {
+            relay_webkit::mac::take_received_handoff()
+        }
+
         /// Seed remembered camera/mic decisions at startup.
         pub fn set_media_permissions(&mut self, entries: Vec<(String, i64, bool)>) {
             self.engine.set_media_permissions(entries);
@@ -454,6 +459,7 @@ mod imp {
         pub fn clear_media_permissions(&mut self) {}
         pub fn set_downloads(&mut self, _dir: std::path::PathBuf, _ask: bool) {}
         pub fn set_handoff(&mut self, _url: Option<&str>, _title: &str) {}
+        pub fn take_handoff(&self) -> Option<String> { None }
         pub fn toggle_float_panel(&mut self, _tab: TabId) {}
         pub fn extension_options_url(&self, _id: &str) -> Option<String> { None }
         pub fn open_extension_popup(&mut self, _id: &str) -> bool { false }

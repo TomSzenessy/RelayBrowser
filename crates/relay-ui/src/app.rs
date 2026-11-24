@@ -1156,6 +1156,11 @@ impl RelayApp {
             self.title_cache = (u64::MAX, String::new());
             cx.notify();
         }
+        let handoff = self.web.borrow().take_handoff();
+        if let Some(url) = handoff {
+            self.open_url(url, true);
+            self.toast("Opened Handoff link");
+        }
         self.drain_ai_stream(cx);
         self.maybe_send_ai(cx);
         self.web.borrow_mut().poll_float_panel();

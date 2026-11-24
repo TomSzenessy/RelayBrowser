@@ -263,7 +263,8 @@ Behaviour that is not a single action:
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
 - **Handoff:** Settings → Privacy can advertise ordinary http(s) tabs through
   `NSUserActivity` (off by default); private tabs and app windows never
-  advertise. A Relay receiver on another device is not implemented.
+  advertise. Relay also adds `application:continueUserActivity:` to the app
+  delegate at runtime and opens an incoming http(s) URL in a new tab.
 - **Folder sync:** Settings → General can point at a Dropbox/iCloud folder;
   launch merges the folder's profile file (local settings win) and the app
   rewrites it immediately and every minute. **Sync now** merges on demand and
