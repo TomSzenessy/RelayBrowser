@@ -32,8 +32,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   tabs always sleep on ⌘W until explicitly unpinned (`⌘⌥P`).
 - **Tab strip:** a vertical list of title rows with status dots, an optional
   54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
-  group: a heading with a colour dot, name, count, and collapse chevron; the
-  tab menu moves a tab in or out, and ⌥⌘[ / ⌥⌘] fold or unfold every group. The active tab and the
+  group: a subtly tinted heading with a colour dot, name, count, and collapse chevron; the
+  tab menu moves a tab in or out and lets the user choose a curated WCAG AA group colour
+  (or Default), right-clicking a group heading renames/recolours/merges the whole group,
+  and ⌥⌘[ / ⌥⌘] fold or unfold every group. The active tab and the
   row under the pointer show `×` (a middle click closes too). The user's tabs
   come first, then an "Agent" group header with tinted rows for agent-owned
   tabs. Asleep tabs are dimmed. A tab waiting for a human shows ⚠. `⌘S` folds

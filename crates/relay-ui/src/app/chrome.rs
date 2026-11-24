@@ -40,13 +40,6 @@ fn monogram_icon(url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// Deterministic group dot colour; names are local UI data, not theme tokens.
-fn group_color(name: &str) -> u32 {
-    const COLORS: [u32; 6] = [0x4c6ef5, 0x7950f2, 0x12b886, 0xfd7e14, 0xe64980, 0x40c057];
-    let hash = name.bytes().fold(0usize, |acc, b| acc.wrapping_mul(31).wrapping_add(b as usize));
-    COLORS[hash % COLORS.len()]
-}
-
 impl RelayApp {
     pub(super) fn site_icon(&self, url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
         match host_of(url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone()) {
@@ -460,11 +453,15 @@ impl RelayApp {
         )
     }
 
-    /// A heading for one named group: chevron, colour dot, name, and count.
+    /// A heading for one named group: chevron, colour dot, tinted heading, name, and count.
+    /// Left click folds/unfolds; right click opens the group name & colour prompt.
     fn group_header(&self, name: &str, count: usize, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
+        let dark = t.background.l < 0.5;
         let collapsed = self.collapsed_groups.contains(name);
+        let color = resolve_group_color(&self.group_colors, name);
         let owned = name.to_string();
+        let edit_name = name.to_string();
         div()
             .id(SharedString::from(format!("group-{name}")))
             .flex()
@@ -473,14 +470,18 @@ impl RelayApp {
             .h(px(24.))
             .px_2()
             .rounded(px(5.))
+            .bg(color.tint(dark))
             .when(!vertical, |d| d.max_w(px(190.)))
             .cursor_pointer()
             .hover(|s| s.bg(t.hover))
             .on_click(cx.listener(move |app, _, _, cx| {
                 app.toggle_group_collapsed(&owned, cx);
             }))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |app, _, _, cx| {
+                app.open_group_edit_prompt(&edit_name, cx);
+            }))
             .child(div().text_size(px(10.)).text_color(t.muted).child(if collapsed { "▸" } else { "▾" }))
-            .child(div().size(px(7.)).rounded_full().bg(gpui::rgb(group_color(name))))
+            .child(div().size(px(7.)).rounded_full().bg(color.dot(dark)))
             .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(11.)).text_color(t.text).child(SharedString::from(name.to_string())))
             .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(count.to_string())))
             .into_any_element()

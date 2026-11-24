@@ -701,3 +701,61 @@ fn multi_tab_close_confirmation_and_last_tab_quit_rules() {
         .collect();
     assert!(others.is_empty(), "pinned tabs remain protected from bulk close");
 }
+
+#[test]
+fn group_colors_persist_restore_and_fall_back_on_unknown_values() {
+    let store = Store::in_memory().unwrap();
+    let mut colors = std::collections::BTreeMap::new();
+    colors.insert("Work".to_string(), theme::GroupColor::Teal);
+    colors.insert("Docs".to_string(), theme::GroupColor::Pink);
+    store.set_setting("group_colors", &serialize_group_colors(&colors)).unwrap();
+
+    let loaded = parse_group_colors(store.setting("group_colors").unwrap().as_deref());
+    assert_eq!(loaded.get("Work"), Some(&theme::GroupColor::Teal));
+    assert_eq!(loaded.get("Docs"), Some(&theme::GroupColor::Pink));
+    assert_eq!(resolve_group_color(&loaded, "Work"), theme::GroupColor::Teal);
+
+    // Negative: unknown/deleted colour falls back deterministically without losing the group.
+    let corrupted = parse_group_colors(Some(r#"{"Work":"neon","Docs":"orange","Empty":""}"#));
+    assert!(!corrupted.contains_key("Work"));
+    assert_eq!(corrupted.get("Docs"), Some(&theme::GroupColor::Orange));
+    assert_eq!(resolve_group_color(&corrupted, "Work"), theme::GroupColor::for_group_name("Work"));
+    assert!(parse_group_colors(Some("not-json")).is_empty());
+}
+
+#[test]
+fn group_color_rename_and_merge_are_deterministic() {
+    let mut colors = std::collections::BTreeMap::new();
+    colors.insert("Work".to_string(), theme::GroupColor::Green);
+    colors.insert("Archive".to_string(), theme::GroupColor::Purple);
+
+    // Renaming Work -> Projects with no new override carries Work's colour.
+    apply_group_color_change(&mut colors, Some("Work"), Some("Projects"), None, false);
+    assert!(!colors.contains_key("Work"));
+    assert_eq!(colors.get("Projects"), Some(&theme::GroupColor::Green));
+
+    // Merging Projects -> Archive with no override keeps Archive's existing colour.
+    apply_group_color_change(&mut colors, Some("Projects"), Some("Archive"), None, false);
+    assert!(!colors.contains_key("Projects"));
+    assert_eq!(colors.get("Archive"), Some(&theme::GroupColor::Purple));
+
+    // Choosing Default on the same group clears its override.
+    apply_group_color_change(&mut colors, Some("Archive"), Some("Archive"), None, false);
+    assert!(!colors.contains_key("Archive"));
+
+    // Explicit colour choice always wins and hub::rename_group merges tabs cleanly.
+    apply_group_color_change(&mut colors, Some("Archive"), Some("Focus"), Some(theme::GroupColor::Orange), false);
+    assert_eq!(colors.get("Focus"), Some(&theme::GroupColor::Orange));
+
+    let hub = SharedHub::new();
+    let (a, b) = hub.update(|h| {
+        let a = h.create_tab("https://a.example/", Owner::User);
+        let b = h.create_tab("https://b.example/", Owner::User);
+        h.set_tab_group(a, Some("Old"));
+        h.set_tab_group(b, Some("Old"));
+        (a, b)
+    });
+    assert_eq!(hub.update(|h| h.rename_group("Old", Some("New"))), 2);
+    assert_eq!(hub.lock().tab(a).unwrap().group.as_deref(), Some("New"));
+    assert_eq!(hub.lock().tab(b).unwrap().group.as_deref(), Some("New"));
+}

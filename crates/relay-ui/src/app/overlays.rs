@@ -958,7 +958,9 @@ impl RelayApp {
 
     pub(super) fn render_group_prompt(&self, prompt: &GroupPrompt, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let current = self.hub.lock().tab(prompt.tab).and_then(|tab| tab.group.clone());
+        let dark = t.background.l < 0.5;
+        let is_edit_group = prompt.tab.is_none();
+        let current = prompt.original_group.clone();
         let groups = self.hub.lock().tab_groups();
         let mut chips = div().flex().flex_wrap().gap_1();
         for name in &groups {
@@ -966,35 +968,96 @@ impl RelayApp {
                 continue;
             }
             let target = name.clone();
+            let chip_color = resolve_group_color(&self.group_colors, name);
             chips = chips.child(
                 div()
                     .id(SharedString::from(format!("group-pick-{name}")))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
                     .px_2()
                     .py_1()
                     .rounded(px(6.))
-                    .bg(t.background)
+                    .bg(chip_color.tint(dark))
                     .text_size(px(11.))
                     .text_color(t.text)
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
                     .on_click(cx.listener(move |app, _, _, cx| {
-                        if let Some(prompt) = &app.group_prompt {
-                            app.hub.update(|h| h.set_tab_group(prompt.tab, Some(&target)));
+                        if let Some(prompt) = app.group_prompt.as_mut() {
+                            prompt.value = target.clone();
+                            prompt.color = app.group_colors.get(&target).copied();
                         }
-                        app.group_prompt = None;
-                        app.toast(format!("Moved tab to {target}"));
-                        app.focus_active_page();
-                        cx.notify();
+                        app.save_group_prompt(cx);
                     }))
+                    .child(div().size(px(6.)).rounded_full().bg(chip_color.dot(dark)))
                     .child(SharedString::from(name.clone())),
             );
         }
+        let mut color_row = div().flex().flex_wrap().items_center().gap_1p5().child(
+            div()
+                .id("group-color-default")
+                .px_2()
+                .py_1()
+                .rounded(px(6.))
+                .bg(if prompt.color.is_none() { t.active } else { t.well })
+                .text_size(px(11.))
+                .text_color(if prompt.color.is_none() { t.text } else { t.muted })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover).text_color(t.text))
+                .on_click(cx.listener(|app, _, _, cx| {
+                    if let Some(p) = app.group_prompt.as_mut() {
+                        p.color = None;
+                    }
+                    cx.notify();
+                }))
+                .child("Default"),
+        );
+        for color in theme::GroupColor::ALL {
+            let active = prompt.color == Some(color);
+            color_row = color_row.child(
+                div()
+                    .id(SharedString::from(format!("group-color-{}", color.as_str())))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .rounded(px(6.))
+                    .bg(if active { color.tint(dark) } else { t.well })
+                    .when(active, |d| d.border_1().border_color(color.dot(dark)))
+                    .text_size(px(11.))
+                    .text_color(if active { t.text } else { t.muted })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        if let Some(p) = app.group_prompt.as_mut() {
+                            p.color = Some(color);
+                        }
+                        cx.notify();
+                    }))
+                    .child(div().size(px(8.)).rounded_full().bg(color.dot(dark)))
+                    .child(color.label()),
+            );
+        }
         let text = if prompt.value.is_empty() { "Group name".to_string() } else { prompt.value.clone() };
-        let commit_label = if current.is_some() && prompt.value.trim().is_empty() { "Remove" } else { "Move" };
+        let title_text = if is_edit_group { "Edit tab group" } else { "Move tab to a group" };
+        let subtitle_text = if is_edit_group {
+            "Rename, recolour, or merge this group. Clearing the name ungroups its tabs."
+        } else {
+            "Name it, pick a colour, or choose an existing group. Clearing the name removes it."
+        };
+        let commit_label = if current.is_some() && prompt.value.trim().is_empty() {
+            if is_edit_group { "Ungroup" } else { "Remove" }
+        } else if is_edit_group {
+            "Save"
+        } else {
+            "Move"
+        };
         div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(120.)).bg(t.scrim).child(
             div()
                 .id("group-prompt")
-                .w(px(380.))
+                .w(px(420.))
                 .flex()
                 .flex_col()
                 .gap_3()
@@ -1006,8 +1069,8 @@ impl RelayApp {
                     app.close_group_prompt();
                     cx.notify();
                 }))
-                .child(div().text_size(px(15.)).text_color(t.text).child("Move tab to a group"))
-                .child(div().text_size(px(11.)).text_color(t.muted).child("Name it, or pick an existing group. Clearing the name removes it."))
+                .child(div().text_size(px(15.)).text_color(t.text).child(title_text))
+                .child(div().text_size(px(11.)).text_color(t.muted).child(subtitle_text))
                 .child(
                     div()
                         .h(px(34.))
@@ -1021,6 +1084,8 @@ impl RelayApp {
                         .child(SharedString::from(text))
                         .child(div().ml_0p5().text_color(t.accent).child("▏")),
                 )
+                .child(div().text_size(px(10.)).text_color(t.muted).child("COLOUR"))
+                .child(color_row)
                 .when(!groups.is_empty(), |d| d.child(div().text_size(px(10.)).text_color(t.muted).child("EXISTING GROUPS")).child(chips))
                 .child(
                     div()

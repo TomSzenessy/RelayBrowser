@@ -109,6 +109,100 @@ impl AccentChoice {
     }
 }
 
+/// Curated tab-group colours. Every swatch is tested for WCAG AA contrast:
+/// `dot` against `surface` (>= 3:1) and `text`/`muted` on alpha-blended `tint`
+/// over `surface` (>= 4.5:1) in both light and dark themes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GroupColor {
+    Blue,
+    Purple,
+    Teal,
+    Green,
+    Orange,
+    Pink,
+}
+
+impl GroupColor {
+    pub const ALL: [GroupColor; 6] = [Self::Blue, Self::Purple, Self::Teal, Self::Green, Self::Orange, Self::Pink];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "blue" => Some(Self::Blue),
+            "purple" => Some(Self::Purple),
+            "teal" => Some(Self::Teal),
+            "green" => Some(Self::Green),
+            "orange" => Some(Self::Orange),
+            "pink" => Some(Self::Pink),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Purple => "purple",
+            Self::Teal => "teal",
+            Self::Green => "green",
+            Self::Orange => "orange",
+            Self::Pink => "pink",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Blue => "Blue",
+            Self::Purple => "Purple",
+            Self::Teal => "Teal",
+            Self::Green => "Green",
+            Self::Orange => "Orange",
+            Self::Pink => "Pink",
+        }
+    }
+
+    /// Deterministic fallback colour for a group without an explicit choice.
+    pub fn for_group_name(name: &str) -> Self {
+        let hash = name.bytes().fold(0usize, |acc, b| acc.wrapping_mul(31).wrapping_add(b as usize));
+        Self::ALL[hash % Self::ALL.len()]
+    }
+
+    pub fn dot(self, dark: bool) -> Hsla {
+        let hex = match (self, dark) {
+            (Self::Blue, true) => 0x5b8cff,
+            (Self::Blue, false) => 0x2f6bff,
+            (Self::Purple, true) => 0xb07cff,
+            (Self::Purple, false) => 0x7a3cff,
+            (Self::Teal, true) => 0x3bc9db,
+            (Self::Teal, false) => 0x0c8599,
+            (Self::Green, true) => 0x4ecb8d,
+            (Self::Green, false) => 0x1f7a4d,
+            (Self::Orange, true) => 0xffb84d,
+            (Self::Orange, false) => 0xa35f00,
+            (Self::Pink, true) => 0xf783ac,
+            (Self::Pink, false) => 0xc2255c,
+        };
+        rgb(hex).into()
+    }
+
+    /// Subtle heading background tint over `surface` (keeps AA text contrast).
+    pub fn tint(self, dark: bool) -> Hsla {
+        let hex = match (self, dark) {
+            (Self::Blue, true) => 0x5b8cff1a,
+            (Self::Blue, false) => 0x2f6bff14,
+            (Self::Purple, true) => 0xb07cff1a,
+            (Self::Purple, false) => 0x7a3cff14,
+            (Self::Teal, true) => 0x3bc9db18,
+            (Self::Teal, false) => 0x0c859914,
+            (Self::Green, true) => 0x4ecb8d18,
+            (Self::Green, false) => 0x1f7a4d14,
+            (Self::Orange, true) => 0xffb84d18,
+            (Self::Orange, false) => 0xa35f0014,
+            (Self::Pink, true) => 0xf783ac1a,
+            (Self::Pink, false) => 0xc2255c14,
+        };
+        rgba(hex).into()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {
     pub background: Hsla,
@@ -291,6 +385,36 @@ mod tests {
         }
         for value in ["magenta", "#ff00ff", "orange,blue"] {
             assert_eq!(AccentChoice::parse(value), None, "{value}");
+            assert_eq!(GroupColor::parse(value), None, "{value}");
+        }
+    }
+
+    fn blend_over(fg: Hsla, bg: Hsla) -> Hsla {
+        let f = fg.to_rgb();
+        let b = bg.to_rgb();
+        let a = fg.a.clamp(0.0, 1.0);
+        gpui::Rgba {
+            r: f.r * a + b.r * (1.0 - a),
+            g: f.g * a + b.g * (1.0 - a),
+            b: f.b * a + b.b * (1.0 - a),
+            a: 1.0,
+        }
+        .into()
+    }
+
+    #[test]
+    fn every_group_color_meets_wcag_aa_on_surface() {
+        for (mode, dark, theme) in [("dark", true, Theme::dark()), ("light", false, Theme::light())] {
+            for color in GroupColor::ALL {
+                assert_eq!(GroupColor::parse(color.as_str()), Some(color));
+                let dot_ratio = contrast_ratio(color.dot(dark), theme.surface);
+                assert!(dot_ratio >= 3.0, "{mode} {color:?} dot contrast {dot_ratio:.2}:1 < 3.0");
+                let bg = blend_over(color.tint(dark), theme.surface);
+                let text_ratio = contrast_ratio(theme.text, bg);
+                let muted_ratio = contrast_ratio(theme.muted, bg);
+                assert!(text_ratio >= 4.5, "{mode} {color:?} text/tint contrast {text_ratio:.2}:1 < 4.5");
+                assert!(muted_ratio >= 4.5, "{mode} {color:?} muted/tint contrast {muted_ratio:.2}:1 < 4.5");
+            }
         }
     }
 }

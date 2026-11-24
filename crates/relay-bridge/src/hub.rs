@@ -1092,6 +1092,21 @@ impl Hub {
         Some(t.group.clone())
     }
 
+    /// Rename every tab in `old` to `new` (or ungroup them if `new` is empty).
+    /// Renaming into an existing group merges the two groups.
+    pub fn rename_group(&mut self, old: &str, new: Option<&str>) -> usize {
+        let Some(old) = normalize_group_name(old) else { return 0 };
+        let target = new.and_then(normalize_group_name);
+        let mut moved = 0;
+        for tab in self.tabs.values_mut() {
+            if tab.group.as_deref() == Some(old.as_str()) {
+                tab.group = target.clone();
+                moved += 1;
+            }
+        }
+        moved
+    }
+
     /// Group names in first-tab display order, each once.
     pub fn tab_groups(&self) -> Vec<String> {
         let mut seen = HashSet::new();

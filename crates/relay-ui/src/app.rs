@@ -10,7 +10,7 @@ use crate::mcp_config;
 use crate::palette::{self, Command, Item, Palette, Sources};
 use crate::startpage::{Section, StartItem, StartPage};
 use crate::tabstrip;
-use crate::theme::{AccentChoice, Theme, ThemeChoice};
+use crate::theme::{self, AccentChoice, Theme, ThemeChoice};
 use crate::web::{EditAction, WebEvent, WebHost};
 use crate::webapp;
 use gpui::{
@@ -168,10 +168,12 @@ struct ShortcutEditor {
     query: String,
 }
 
-/// The small modal that names a tab group.
+/// The small modal that names/colours a tab group (for one tab, or an entire group when `tab` is None).
 struct GroupPrompt {
-    tab: TabId,
+    tab: Option<TabId>,
+    original_group: Option<String>,
     value: String,
+    color: Option<theme::GroupColor>,
 }
 
 /// The small modal that names or picks a space.
@@ -403,6 +405,8 @@ pub struct RelayApp {
     space_prompt: Option<SpacePrompt>,
     /// Group headings folded by the user; persisted as `collapsed_groups`.
     collapsed_groups: HashSet<String>,
+    /// User-chosen colours per group name; persisted as `group_colors` JSON.
+    group_colors: std::collections::BTreeMap<String, theme::GroupColor>,
     /// Remembered camera/mic decisions: `(host, kind)` → allowed.
     media_permissions: HashMap<(String, i64), bool>,
     /// Displayed download folder and whether each file asks first.
@@ -695,6 +699,7 @@ impl RelayApp {
             .and_then(|s| s.setting("collapsed_groups").ok().flatten())
             .map(|raw| collapsed_group_names(Some(&raw)))
             .unwrap_or_default();
+        let group_colors = parse_group_colors(store.as_ref().and_then(|s| s.setting("group_colors").ok().flatten()).as_deref());
         let media_permissions = store
             .as_ref()
             .and_then(|s| s.setting("media_permissions").ok().flatten())
@@ -754,6 +759,7 @@ impl RelayApp {
             group_prompt: None,
             space_prompt: None,
             collapsed_groups,
+            group_colors,
             media_permissions,
             downloads_dir: downloads_dir.to_string_lossy().into_owned(),
             downloads_ask,
@@ -2306,8 +2312,27 @@ impl RelayApp {
     }
 
     fn open_group_prompt(&mut self, tab: TabId, cx: &mut Context<Self>) {
-        let current = self.hub.lock().tab(tab).and_then(|t| t.group.clone()).unwrap_or_default();
-        self.group_prompt = Some(GroupPrompt { tab, value: current });
+        let current = self.hub.lock().tab(tab).and_then(|t| t.group.clone());
+        let color = current.as_deref().and_then(|g| self.group_colors.get(g).copied());
+        self.group_prompt = Some(GroupPrompt {
+            tab: Some(tab),
+            original_group: current.clone(),
+            value: current.unwrap_or_default(),
+            color,
+        });
+        self.tab_menu = None;
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    pub(super) fn open_group_edit_prompt(&mut self, name: &str, cx: &mut Context<Self>) {
+        let color = self.group_colors.get(name).copied();
+        self.group_prompt = Some(GroupPrompt {
+            tab: None,
+            original_group: Some(name.to_string()),
+            value: name.to_string(),
+            color,
+        });
         self.tab_menu = None;
         self.web.borrow().focus_shell();
         cx.notify();
@@ -2800,13 +2825,53 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn persist_group_colors(&self) {
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("group_colors", &serialize_group_colors(&self.group_colors));
+        }
+    }
+
     fn save_group_prompt(&mut self, cx: &mut Context<Self>) {
         let Some(prompt) = self.group_prompt.take() else { return };
         let group = relay_bridge::hub::normalize_group_name(&prompt.value);
-        self.hub.update(|h| h.set_tab_group(prompt.tab, group.as_deref()));
-        match &group {
-            Some(name) => self.toast(format!("Moved tab to {name}")),
-            None => self.toast("Removed tab from its group"),
+        match prompt.tab {
+            Some(tab) => {
+                self.hub.update(|h| h.set_tab_group(tab, group.as_deref()));
+                let old_still_used = prompt
+                    .original_group
+                    .as_deref()
+                    .is_some_and(|old| self.hub.lock().tab_groups().iter().any(|g| g == old));
+                apply_group_color_change(
+                    &mut self.group_colors,
+                    prompt.original_group.as_deref(),
+                    group.as_deref(),
+                    prompt.color,
+                    old_still_used,
+                );
+                self.persist_group_colors();
+                match &group {
+                    Some(name) => self.toast(format!("Moved tab to {name}")),
+                    None => self.toast("Removed tab from its group"),
+                }
+            }
+            None => {
+                if let Some(old) = prompt.original_group.as_deref() {
+                    let moved = self.hub.update(|h| h.rename_group(old, group.as_deref()));
+                    if self.collapsed_groups.remove(old) {
+                        if let Some(target) = &group {
+                            self.collapsed_groups.insert(target.clone());
+                        }
+                        self.persist_collapsed_groups();
+                    }
+                    apply_group_color_change(&mut self.group_colors, Some(old), group.as_deref(), prompt.color, false);
+                    self.persist_group_colors();
+                    match &group {
+                        Some(name) if name == old => self.toast(format!("Updated group {name}")),
+                        Some(name) => self.toast(format!("Renamed group to {name} ({moved} tabs)")),
+                        None => self.toast(format!("Ungrouped {moved} tabs")),
+                    }
+                }
+            }
         }
         self.focus_active_page();
         cx.notify();
@@ -4998,6 +5063,65 @@ pub(crate) fn encode_media_permissions(map: &HashMap<(String, i64), bool>) -> St
 
 pub(crate) fn collapsed_group_names(raw: Option<&str>) -> HashSet<String> {
     raw.unwrap_or("").split(',').map(str::trim).filter(|g| !g.is_empty()).map(str::to_string).collect()
+}
+
+/// Parse persisted `group_colors` JSON (`{"Group": "teal"}`). Unknown or
+/// deleted colour names are dropped so groups fall back to their deterministic
+/// colour without losing the group.
+pub(crate) fn parse_group_colors(raw: Option<&str>) -> std::collections::BTreeMap<String, theme::GroupColor> {
+    let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
+        return std::collections::BTreeMap::new();
+    };
+    let Ok(map) = serde_json::from_str::<std::collections::BTreeMap<String, String>>(raw) else {
+        return std::collections::BTreeMap::new();
+    };
+    let mut out = std::collections::BTreeMap::new();
+    for (name, color_name) in map {
+        if let (Some(norm), Some(color)) = (relay_bridge::hub::normalize_group_name(&name), theme::GroupColor::parse(&color_name)) {
+            out.insert(norm, color);
+        }
+    }
+    out
+}
+
+pub(crate) fn serialize_group_colors(colors: &std::collections::BTreeMap<String, theme::GroupColor>) -> String {
+    let raw: std::collections::BTreeMap<&str, &str> = colors.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    serde_json::to_string(&raw).unwrap_or_else(|_| "{}".into())
+}
+
+pub(crate) fn resolve_group_color(colors: &std::collections::BTreeMap<String, theme::GroupColor>, name: &str) -> theme::GroupColor {
+    colors.get(name).copied().unwrap_or_else(|| theme::GroupColor::for_group_name(name))
+}
+
+/// Update `colors` when a group is created, recoloured, renamed, or merged.
+/// - Explicit `chosen` colour always wins for `new_group`.
+/// - Choosing Default (`chosen = None`) on the same group clears its override.
+/// - Renaming/merging `old -> new` with no new override keeps `new`'s existing
+///   colour if present (merge target wins deterministically), else carries `old`'s.
+pub(crate) fn apply_group_color_change(
+    colors: &mut std::collections::BTreeMap<String, theme::GroupColor>,
+    old_group: Option<&str>,
+    new_group: Option<&str>,
+    chosen: Option<theme::GroupColor>,
+    old_still_used: bool,
+) {
+    let old_color = old_group.and_then(|old| colors.get(old).copied());
+    if let Some(target) = new_group {
+        if let Some(c) = chosen {
+            colors.insert(target.to_string(), c);
+        } else if old_group == Some(target) {
+            colors.remove(target);
+        } else if !colors.contains_key(target) {
+            if let Some(c) = old_color {
+                colors.insert(target.to_string(), c);
+            }
+        }
+    }
+    if let Some(old) = old_group {
+        if !old_still_used && new_group != Some(old) {
+            colors.remove(old);
+        }
+    }
 }
 
 /// Opt-in switches are off when the key is absent, unlike toggles that have

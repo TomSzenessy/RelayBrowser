@@ -525,6 +525,12 @@ cancellable confirmation modal), and `tab_switch_order` (`mru` default or `strip
 order for ⌃Tab / ⌃⇧Tab and the visual switcher ⌘⌥T). Pinned-tab close behavior is
 unchanged by these preferences.
 
+Tab groups carry an optional curated colour (`group_colors` JSON map in settings)
+selected from the group prompt or by right-clicking a group heading. Every swatch
+is checked for WCAG AA contrast (dot ≥ 3:1 and heading text/muted on tinted
+surface ≥ 4.5:1) in `theme.rs`; unknown or deleted colours fall back to the
+deterministic name hash without losing the group.
+
 ## Session restore
 
 With `restore_session` on (the default; `relay config set restore_session off`),
