@@ -36,6 +36,7 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   and `tabs_folded`.
 - **Motion:** palette, Settings, and Library fade in over 140 ms with
   ease-out-quint; no other transitions are animated yet.
+- **Palette:** also exposes duplicate, mute, and sleep tab commands.
 - **Palette:** one input with ranked rows (open tabs, history, bookmarks,
   commands). The first row is always "Open <typed URL>" or "Search <query>".
   The query is a real text input: GPUI's platform handler supplies IME

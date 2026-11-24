@@ -85,6 +85,9 @@ command_table! {
     CopyCleanUrl => "Copy Clean URL", Some(ActionId::CopyCleanUrl);
     CopyMarkdown => "Copy Page as Markdown", Some(ActionId::CopyMarkdown);
     CloseDuplicateTabs => "Close Duplicate Tabs", None;
+    DuplicateTab => "Duplicate Tab", None;
+    MuteTab => "Mute / Unmute Tab", None;
+    SleepTab => "Sleep Tab", None;
     ToggleBookmark => "Bookmark This Page", Some(ActionId::ToggleBookmark);
     TogglePin => "Pin / Unpin Tab", Some(ActionId::TogglePin);
     Find => "Find in Page", Some(ActionId::Find);
@@ -847,7 +850,7 @@ mod tests {
                 None => assert_eq!(command.keys(), "", "palette-only {command:?} must not advertise a shortcut"),
             }
         }
-        assert_eq!(Command::ALL.len(), 39);
+        assert_eq!(Command::ALL.len(), 42);
         assert_eq!(mapped, 30, "30 commands run a keymap action; 9 are palette-only");
     }
 
@@ -866,8 +869,15 @@ mod tests {
     fn commands_without_a_shortcut_are_representable() {
         let palette_only: Vec<Command> =
             Command::ALL.iter().copied().filter(|command| command.action().is_none()).collect();
-        assert_eq!(palette_only.len(), 9);
-        for command in [Command::ImportChrome, Command::CopyMcpSetup, Command::CloseDuplicateTabs] {
+        assert_eq!(palette_only.len(), 12);
+        for command in [
+            Command::ImportChrome,
+            Command::CopyMcpSetup,
+            Command::CloseDuplicateTabs,
+            Command::DuplicateTab,
+            Command::MuteTab,
+            Command::SleepTab,
+        ] {
             assert!(palette_only.contains(&command), "{command:?} is palette-only");
             assert_eq!(command.keys(), "", "{command:?} shows no key");
             assert!(!command.title().is_empty());
@@ -933,7 +943,7 @@ mod tests {
 
     #[test]
     fn new_commands_are_registered() {
-        assert_eq!(Command::ALL.len(), 39);
+        assert_eq!(Command::ALL.len(), 42);
         for c in [Command::CopyCleanUrl, Command::CopyMarkdown, Command::CloseDuplicateTabs, Command::ToggleBookmark, Command::TogglePin, Command::Find, Command::ZoomIn, Command::ZoomOut, Command::ZoomReset, Command::ToggleTabStrip, Command::NextTabPlacement, Command::InstallWebApp, Command::RemoveWebApp, Command::ShowHistory, Command::ShowBookmarks, Command::ToggleAgents, Command::CycleAgentPolicy, Command::CycleTheme, Command::CycleAccent, Command::ToggleReader, Command::TogglePictureInPicture, Command::ShowDownloads] {
             assert!(Command::ALL.contains(&c));
             assert!(!c.title().is_empty());

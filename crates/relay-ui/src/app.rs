@@ -2979,6 +2979,21 @@ impl RelayApp {
             Command::ToggleSiteBlocking => self.toggle_site_blocking(),
             Command::ToggleCompatMode => self.toggle_compat_mode(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
+            Command::DuplicateTab => {
+                if let Some(url) = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())) {
+                    self.open_url(url, true);
+                }
+            }
+            Command::MuteTab => {
+                if let Some(tab) = self.active() {
+                    self.toggle_mute(tab);
+                }
+            }
+            Command::SleepTab => {
+                if let Some(tab) = self.active() {
+                    self.sleep_tab_now(tab, cx);
+                }
+            }
             Command::ToggleTabStrip => self.toggle_tab_strip(cx),
             Command::NextTabPlacement => self.rotate_tab_strip(cx),
             Command::InstallWebApp => self.install_web_app(cx),

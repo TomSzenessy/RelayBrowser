@@ -1506,8 +1506,6 @@ impl RelayApp {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn monogram_letters_have_white_contrast() {
         fn luminance(rgb: u32) -> f64 {
