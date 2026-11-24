@@ -2,6 +2,17 @@
 
 use super::*;
 
+/// Shorten the home prefix for display in Settings.
+fn app_downloads_label(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if !home.is_empty() {
+        if let Some(rest) = path.strip_prefix(&home) {
+            return format!("~{rest}");
+        }
+    }
+    path.to_string()
+}
+
 impl RelayApp {
     pub(super) fn render_library(&self, lib: &Library, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
@@ -1001,6 +1012,28 @@ impl RelayApp {
                     }))
                     .into_any_element();
                 general_card = general_card.child(row("Default browser", Some("Open http and https links from other apps in Relay"), default_btn));
+                let ask_downloads_sw = switch("settings-downloads-ask", self.downloads_ask, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.downloads_ask = !app.downloads_ask;
+                        app.persist_downloads();
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("downloads_ask", if app.downloads_ask { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let downloads_path = div()
+                    .max_w(px(300.))
+                    .text_size(px(10.))
+                    .font_family("Menlo")
+                    .text_color(t.muted)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(SharedString::from(app_downloads_label(&self.downloads_dir)))
+                    .into_any_element();
+                general_card = general_card.child(row("Downloads folder", Some("Set with relay config set downloads_dir PATH"), downloads_path));
+                general_card = general_card.child(row("Ask where to save each file", Some("Show a save panel for every download"), ask_downloads_sw));
                 let sections = self.start_sections();
                 for (id, section) in [
                     ("settings-start-recent", Section::Recent),

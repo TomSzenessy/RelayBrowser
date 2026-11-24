@@ -326,6 +326,11 @@ mod imp {
             self.engine.set_media_permissions(entries);
         }
 
+        /// Choose the download directory and whether each file asks first.
+        pub fn set_downloads(&mut self, dir: std::path::PathBuf, ask: bool) {
+            self.engine.set_downloads(dir, ask);
+        }
+
         /// Forget every remembered camera/mic decision in this process.
         pub fn clear_media_permissions(&mut self) {
             self.engine.set_media_permissions(Vec::new());
@@ -410,6 +415,7 @@ mod imp {
         pub fn set_default_browser(&self) {}
         pub fn set_media_permissions(&mut self, _entries: Vec<(String, i64, bool)>) {}
         pub fn clear_media_permissions(&mut self) {}
+        pub fn set_downloads(&mut self, _dir: std::path::PathBuf, _ask: bool) {}
         pub fn export_pdf(&self, _tab: TabId) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
             Ok(false)

@@ -63,9 +63,13 @@ pub fn folder() -> PathBuf {
 /// Create the download folder and return the sanitized filename plus the
 /// collision-free absolute path the delegate should save to.
 pub fn download_destination(suggested: &str) -> (String, String) {
-    let dir = folder();
-    let _ = std::fs::create_dir_all(&dir);
-    let (filename, path) = destination(&dir, suggested, Path::exists);
+    download_destination_in(&folder(), suggested)
+}
+
+/// The same, under a caller-chosen directory (Settings → General).
+pub fn download_destination_in(dir: &Path, suggested: &str) -> (String, String) {
+    let _ = std::fs::create_dir_all(dir);
+    let (filename, path) = destination(dir, suggested, Path::exists);
     (filename, path.to_string_lossy().into_owned())
 }
 
@@ -75,6 +79,15 @@ mod tests {
 
     fn name(suggested: &str) -> String {
         safe_filename(suggested)
+    }
+
+    #[test]
+    fn a_chosen_directory_keeps_the_same_safety_rules() {
+        let dir = std::env::temp_dir().join(format!("relay-downloads-{}", std::process::id()));
+        let (name, path) = download_destination_in(&dir, "../../etc/passwd");
+        assert_eq!(name, "passwd");
+        assert_eq!(Path::new(&path).parent(), Some(dir.as_path()));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

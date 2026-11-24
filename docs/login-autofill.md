@@ -57,8 +57,9 @@ is an owner decision or a later issue, not an implicit part of #57.
 - Keychain failures distinguish **Denied** (user cancel/auth/interaction) from
   **Unavailable**; a denied read is not retried against another path and the
   banner says "Keychain access was denied" rather than a generic failure. Find's
-  case mode, PDF export, media keys, camera/microphone prompts (including their
-  persisted choices), and the native find callback are unrelated to this path.
+  case mode, PDF export, media keys, download destinations, camera/microphone
+  prompts (including their persisted choices), and the native find callback are
+  unrelated to this path.
 - Relay records the logins it writes (host, user, path) in the profile. The
   Settings list, fill offers, and Delete act only on those records, so another
   browser's Keychain items are never offered or destroyed. A second save for

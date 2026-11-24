@@ -273,11 +273,19 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
         }
         "blocking" | "mcp" | "restore_session" | "tabs_folded" | "bottom_bar" | "autofill_logins" | "login_offers" | "login_fill"
-        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close" => match trimmed.to_ascii_lowercase().as_str() {
+        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
+        | "downloads_ask" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
             _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
         },
+        "downloads_dir" => {
+            let path = trimmed;
+            if path.is_empty() || (!path.starts_with('/') && !path.starts_with("~/") && path != "~") {
+                bail!("invalid downloads_dir {value:?}: use an absolute path or ~/... directory");
+            }
+            Ok(path.to_string())
+        }
         "default_zoom" => {
             let zoom: f64 = trimmed.parse().with_context(|| format!("invalid default_zoom {value:?}: expected 0.5..=3.0"))?;
             if !(0.5..=3.0).contains(&zoom) {
@@ -312,7 +320,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, default_zoom)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
     }
 }
 
@@ -345,6 +353,8 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("address_bar = {}", setting("address_bar", "off"));
             println!("bookmarks_icons_only = {}", setting("bookmarks_icons_only", "off"));
             println!("bookmarks_new_tab_only = {}", setting("bookmarks_new_tab_only", "off"));
+            println!("downloads_ask = {}", setting("downloads_ask", "off"));
+            println!("downloads_dir = {}", setting("downloads_dir", ""));
             println!("always_show_close = {}", setting("always_show_close", "off"));
             println!("bangs = {}", cfg.bangs);
             println!("start_sections = {}", cfg.start_sections);
@@ -365,16 +375,20 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
                 "tabs_position" => println!("{}", store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).unwrap_or_else(|| "left".into())),
                 "bottom_bar" => println!("{}", store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "on".into())),
-                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close" => {
+                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
+        | "downloads_ask" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
                 }
                 "compact_tabs" => println!("{}", store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).unwrap_or_else(|| "off".into())),
+                "downloads_dir" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting("downloads_dir").ok().flatten()).unwrap_or_default())
+                }
                 "default_zoom" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting("default_zoom").ok().flatten()).unwrap_or_else(|| "1.00".into()))
                 }
                 "bangs" => println!("{}", cfg.bangs),
                 "start_sections" => println!("{}", cfg.start_sections),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, default_zoom)"),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
             }
             Ok(())
         }

@@ -5,7 +5,7 @@
 //! VERIFY-ON-MAC: type-checked for aarch64-apple-darwin on Linux; behaviour is
 //! verified only by running the app on macOS (see docs/verification.md).
 
-use crate::downloads::download_destination;
+use crate::downloads::{download_destination_in, folder as default_download_folder};
 use crate::sleep::{restore_scroll_script, SleptTab};
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -254,6 +254,9 @@ struct DownloadIvars {
     id: u64,
     path: RefCell<Option<String>>,
     download: RefCell<Option<Retained<WKDownload>>>,
+    mtm: MainThreadMarker,
+    dir: Rc<RefCell<std::path::PathBuf>>,
+    ask: Rc<Cell<bool>>,
 }
 
 define_class!(
@@ -275,7 +278,31 @@ define_class!(
             suggested_filename: &NSString,
             completion_handler: &block2::DynBlock<dyn Fn(*mut NSURL)>,
         ) {
-            let (filename, path) = download_destination(&suggested_filename.to_string());
+            let suggested = suggested_filename.to_string();
+            let dir = self.ivars().dir.borrow().clone();
+            if self.ivars().ask.get() {
+                let panel = NSSavePanel::savePanel(self.ivars().mtm);
+                panel.setNameFieldStringValue(&NSString::from_str(&crate::downloads::safe_filename(&suggested)));
+                panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(&dir.to_string_lossy()))));
+                if panel.runModal() == NSModalResponseOK {
+                    if let Some(url) = panel.URL() {
+                        if let Some(path) = url.path().map(|p| p.to_string()) {
+                            let filename = std::path::Path::new(&path)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| crate::downloads::safe_filename(&suggested));
+                            self.ivars().hub.update(|h| h.set_download_destination(self.ivars().id, &filename, &path));
+                            *self.ivars().path.borrow_mut() = Some(path);
+                            completion_handler.call((Retained::as_ptr(&url) as *mut NSURL,));
+                            return;
+                        }
+                    }
+                }
+                self.ivars().hub.update(|h| h.fail_download(self.ivars().id, "Download cancelled"));
+                completion_handler.call((std::ptr::null_mut(),));
+                return;
+            }
+            let (filename, path) = download_destination_in(&dir, &suggested);
             *self.ivars().path.borrow_mut() = Some(path.clone());
             self.ivars().hub.update(|h| h.set_download_destination(self.ivars().id, &filename, &path));
             let url = NSURL::fileURLWithPath(&NSString::from_str(&path));
@@ -467,6 +494,8 @@ pub struct HandlerIvars {
     private: bool,
     /// `(host, capture kind)` → allowed, shared across ordinary tabs.
     media_permissions: Rc<RefCell<HashMap<(String, i64), bool>>>,
+    downloads_dir: Rc<RefCell<std::path::PathBuf>>,
+    downloads_ask: Rc<Cell<bool>>,
 }
 
 define_class!(
@@ -559,6 +588,9 @@ define_class!(
                     id,
                     path: RefCell::new(None),
                     download: RefCell::new(unsafe { Retained::retain(download as *const WKDownload as *mut WKDownload) }),
+                    mtm,
+                    dir: self.ivars().downloads_dir.clone(),
+                    ask: self.ivars().downloads_ask.clone(),
                 },
             );
             unsafe { download.setDelegate(Some(ProtocolObject::from_ref(&*handler))) };
@@ -1074,6 +1106,8 @@ pub struct Engine {
     _media_targets: Vec<Retained<AnyObject>>,
     /// Session-level camera/microphone decisions for ordinary tabs.
     media_permissions: Rc<RefCell<HashMap<(String, i64), bool>>>,
+    downloads_dir: Rc<RefCell<std::path::PathBuf>>,
+    downloads_ask: Rc<Cell<bool>>,
 }
 
 impl Engine {
@@ -1100,6 +1134,8 @@ impl Engine {
             media_key,
             _media_targets: media_targets,
             media_permissions: Rc::default(),
+            downloads_dir: Rc::new(RefCell::new(default_download_folder())),
+            downloads_ask: Rc::new(Cell::new(false)),
         }
     }
 
@@ -1113,6 +1149,12 @@ impl Engine {
         unsafe {
             store.removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done);
         }
+    }
+
+    /// Choose where downloads go and whether each one asks first.
+    pub fn set_downloads(&mut self, dir: std::path::PathBuf, ask: bool) {
+        *self.downloads_dir.borrow_mut() = dir;
+        self.downloads_ask.set(ask);
     }
 
     /// Replace the remembered camera/mic decisions at startup.
@@ -1264,6 +1306,8 @@ impl Engine {
                 login_nonce: login_nonce.clone(),
                 private,
                 media_permissions: self.media_permissions.clone(),
+                downloads_dir: self.downloads_dir.clone(),
+                downloads_ask: self.downloads_ask.clone(),
             },
         );
         let login_handler = LoginHandler::new(

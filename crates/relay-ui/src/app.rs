@@ -303,6 +303,9 @@ pub struct RelayApp {
     collapsed_groups: HashSet<String>,
     /// Remembered camera/mic decisions: `(host, kind)` → allowed.
     media_permissions: HashMap<(String, i64), bool>,
+    /// Displayed download folder and whether each file asks first.
+    downloads_dir: String,
+    downloads_ask: bool,
     settings_open: bool,
     settings_tab: SettingsTab,
     settings_dropdown: Option<SettingsDropdown>,
@@ -543,6 +546,9 @@ impl RelayApp {
             .map(|raw| parse_media_permissions(&raw))
             .unwrap_or_default();
         web.set_media_permissions(media_permissions.iter().map(|((host, kind), granted)| (host.clone(), *kind, *granted)).collect());
+        let downloads_dir = download_dir_setting(store.as_ref().and_then(|s| s.setting("downloads_dir").ok().flatten()).as_deref());
+        let downloads_ask = setting_opt_in(store.as_ref().and_then(|s| s.setting("downloads_ask").ok().flatten()).as_deref());
+        web.set_downloads(downloads_dir.clone(), downloads_ask);
         let always_show_close = setting_on("always_show_close");
         let default_zoom = store
             .as_ref()
@@ -584,6 +590,8 @@ impl RelayApp {
             group_prompt: None,
             collapsed_groups,
             media_permissions,
+            downloads_dir: downloads_dir.to_string_lossy().into_owned(),
+            downloads_ask,
             settings_open: false,
             settings_tab: SettingsTab::General,
             settings_dropdown: None,
@@ -2001,6 +2009,12 @@ impl RelayApp {
         }
         self.persist_collapsed_groups();
         cx.notify();
+    }
+
+    fn persist_downloads(&self) {
+        let ask = self.downloads_ask;
+        let dir = std::path::PathBuf::from(&self.downloads_dir);
+        self.web.borrow_mut().set_downloads(dir, ask);
     }
 
     fn persist_media_permissions(&self) {
@@ -3568,6 +3582,22 @@ fn human_bytes(bytes: u64) -> String {
 
 /// Parse the comma-separated `collapsed_groups` setting. Names cannot contain
 /// commas (the hub normalizer maps them to spaces), so splitting is stable.
+/// Expand `~/...` and fall back to `~/Downloads/Relay` for an empty/invalid
+/// setting.
+pub(crate) fn download_dir_setting(raw: Option<&str>) -> std::path::PathBuf {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("."));
+    let default = relay_webkit::downloads::folder();
+    let Some(raw) = raw.map(str::trim).filter(|v| !v.is_empty()) else { return default };
+    if raw == "~" {
+        return home;
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        return home.join(rest);
+    }
+    let path = std::path::PathBuf::from(raw);
+    if path.is_absolute() { path } else { default }
+}
+
 /// `host|kind|1;host|kind|0`. Hosts cannot contain `|`; kind is WebKit's
 /// capture enum (0 camera, 1 microphone, 2 both).
 pub(crate) fn parse_media_permissions(raw: &str) -> HashMap<(String, i64), bool> {

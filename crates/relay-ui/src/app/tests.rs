@@ -110,6 +110,17 @@ fn byte_size_reads_naturally() {
 }
 
 #[test]
+fn download_directory_setting_expands_home_and_rejects_relative() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    assert_eq!(download_dir_setting(Some("/tmp/relay-downloads")), std::path::PathBuf::from("/tmp/relay-downloads"));
+    if !home.is_empty() {
+        assert_eq!(download_dir_setting(Some("~/Downloads/Relay")), std::path::PathBuf::from(&home).join("Downloads/Relay"));
+    }
+    assert_eq!(download_dir_setting(Some("relative/path")), relay_webkit::downloads::folder());
+    assert_eq!(download_dir_setting(None), relay_webkit::downloads::folder());
+}
+
+#[test]
 fn media_permissions_round_trip_and_skip_bad_entries() {
     let parsed = parse_media_permissions("a.test|0|1;b.test|1|0;bad;c.test|x|1;d.test|0|2");
     assert_eq!(parsed.len(), 2);
