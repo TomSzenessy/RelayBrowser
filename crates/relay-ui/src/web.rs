@@ -35,6 +35,8 @@ pub enum WebEvent {
     LoginFilled { tab: TabId, ok: bool },
     /// Cookies and site data were removed from the default store.
     SiteDataCleared,
+    /// LaunchServices answered a default-browser request.
+    DefaultBrowserSet { ok: bool, error: Option<String> },
     /// Native-verified post-submit login save offer (never carries secrets).
     LoginSaveOffer { tab: TabId, url: String, username: String },
 }
@@ -70,6 +72,7 @@ mod imp {
                     EngineEvent::LoginFocus { tab, url, form_idx } => WebEvent::LoginFocus { tab, url, form_idx },
                     EngineEvent::LoginFilled { tab, ok } => WebEvent::LoginFilled { tab, ok },
                     EngineEvent::SiteDataCleared => WebEvent::SiteDataCleared,
+                    EngineEvent::DefaultBrowserSet { ok, error } => WebEvent::DefaultBrowserSet { ok, error },
                     EngineEvent::LoginSaveOffer { tab, url, username } => WebEvent::LoginSaveOffer { tab, url, username },
                 })
             });
@@ -285,7 +288,7 @@ mod imp {
                 origin,
                 username.clone(),
                 &path,
-                relay_extensions::login::Password::new(password),
+                relay_extensions::login::Password::new(password.as_str()),
             );
             relay_extensions::mac::save_login(&captured).map_err(|_| "Could not save login to Keychain".to_string())?;
             Ok(username)
@@ -304,6 +307,11 @@ mod imp {
         /// Remove cookies, cache, and local storage for every site.
         pub fn clear_site_data(&self) {
             self.engine.clear_site_data();
+        }
+
+        /// Ask macOS to make Relay the handler for http(s) links.
+        pub fn set_default_browser(&self) {
+            self.engine.set_default_browser();
         }
 
         pub fn delete_saved_login(&self, url: &str, username: &str, path: &str) -> Result<bool, String> {
@@ -377,6 +385,7 @@ mod imp {
         pub fn decline_save_login(&self, _tab: TabId) {}
         pub fn set_login_capture(&mut self, _enabled: bool) {}
         pub fn clear_site_data(&self) {}
+        pub fn set_default_browser(&self) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
             Ok(false)
         }

@@ -10,7 +10,11 @@ pending Mac input-source check; the shortcut row notes the documented keyboard
 map is checked against that table; the shell-write row covers plan/apply for
 theme, allowlisted settings, shortcuts, sidebar, a start-page note, hashed
 audit, and action-id/duplicate-key validation; the Downloads row covers
-cancel/retry and native byte progress. These sources
+cancel/retry and native byte progress. The owner pass of 2026-11-24 (#189)
+adds ten Settings pages, a bookmarks bar, hideable bottom bar, default zoom,
+cookie-banner and site-data controls, tab mute, scoped saved-login records,
+SVG/ICO favicons, and a true default-browser path; the matrix records which
+remain Mac-observation or Apple-entitlement gates. These sources
 come from the owner's brief (2026-11-22) plus the primary docs
 for the APIs Relay uses. The owner named the three GitHub projects and asked
 for Search's daily-driver feel in particular. What Relay borrowed from Search

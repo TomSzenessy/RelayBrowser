@@ -15,7 +15,7 @@ frontends read it: the native Inspector and the local MCP server.
 | `relay-webkit` | Content-blocker compiler (EasyList subset → WebKit JSON), tab-sleep policy, download naming policy (`downloads.rs`); `mac.rs`: `Engine` creating one `WKWebView` per awake tab with the bridge injected, rule lists, cookies, snapshots, the Web Inspector fallback | policy portable, engine macOS |
 | `relay-extensions` | Chrome importer (Bookmarks JSON, History SQLite, extension ids, password CSV), CRX3 download and unpack, manifest compatibility report, SQLite profile `Store`; `login.rs`: pure origin, candidate, fill, and save/decline model with redacted, zeroized secrets; `mac.rs`: WKWebExtension loading, Keychain import | importer portable, loaders macOS |
 | `relay-mcp` | `RelayMcp` (rmcp 3.x tool router), user-only Unix socket server, `relay mcp` stdio proxy | portable (Unix) |
-| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (native menu bar, tab strip with close buttons/agent group/fold/move plus explicit Left/Top/Right items, panes and split, ⌘K palette, a ten-tab Settings overlay (General, Appearance, Tabs, Browsing, Passwords, Privacy, Extensions, Agents, Shortcuts, About), Inspector with console/network filters, link hints, a hideable status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping, web app install/remove). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `tabstrip.rs`: placement/fold logic. `startpage.rs`: new-tab sections and rows. `webapp.rs`: manifest validation, same-site start URLs, a signed/registered `.app` bundle writer whose launcher resolves Relay at launch. `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: shading tokens (background/surface/raised/well) from [`design.md`](./design.md) with WCAG AA contrast tests; the chrome uses surfaces and shadows instead of 1 px outlines. `main.rs`: the CLI (`mcp`, `--app`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
+| `relay-ui` | The `relay` binary. `app.rs`: the GPUI shell (native menu bar, tab strip with close buttons/agent group/fold/move plus explicit Left/Top/Right items, panes and split, ⌘K palette, a ten-tab Settings overlay (General, Appearance, Tabs, Browsing, Passwords, Privacy, Extensions, Agents, Shortcuts, About), an optional bookmarks bar, a default-browser request through LaunchServices, LaunchServices website-data clearing, and per-tab media mute, Inspector with console/network filters, link hints, a hideable status bar, a 16 ms pump draining MCP requests, WebKit events and hub changes, history recording, tab sleeping, web app install/remove). `web.rs`: `WebHost` over the `Engine` (a no-op off-Mac). `tabstrip.rs`: placement/fold logic. `startpage.rs`: new-tab sections and rows. `webapp.rs`: manifest validation, same-site start URLs, a signed/registered `.app` bundle writer whose launcher resolves Relay at launch. `palette.rs`, `inspector.rs`: tested view logic. `theme.rs`: shading tokens (background/surface/raised/well) from [`design.md`](./design.md) with WCAG AA contrast tests; the chrome uses surfaces and shadows instead of 1 px outlines. `main.rs`: the CLI (`mcp`, `--app`, `import-chrome`, `import-passwords`, `install-extension`, `compile-rules`, `config`, `export`, `clear-data`, `doctor`) | GPUI everywhere; WebKit only on macOS. Linux shows a placeholder pane |
 
 ## Data flow
 
@@ -39,11 +39,13 @@ RelayMcp ──Browser::eval/navigate──▶ ChannelBrowser ──▶ UI drain
 ### Credential path
 
 Passwords enter Relay only through `relay import-passwords` (CSV to Keychain)
-or through the native login path (#57, implemented; hardened in #186). The pure
-model in `relay-extensions/src/login.rs` owns origin binding, candidate
-matching, explicit fill gating, the save/decline state, and redacted secrets;
-it never serializes a password. No bridge message, DOM snapshot, MCP tool, or
-audit row may carry one. The design and open owner decisions are in
+or through the native login path (#57, implemented; hardening continues in
+#186). The pure model in `relay-extensions/src/login.rs` owns origin binding,
+candidate matching, and redacted secrets; the native handler applies the
+explicit fill click and the save/decline choice. The richer `FillOffer` /
+`FormSave` state machine is unit-tested design and is not wired into the
+runtime yet. No bridge message, DOM snapshot, MCP tool, or audit row may carry
+a password. The design and open owner decisions are in
 [`login-autofill.md`](./login-autofill.md).
 
 ## Shell loop
@@ -584,7 +586,7 @@ modules the palette calls before its normal URL/search item:
 
 Six layers, cheapest first:
 
-1. **Portable tests** (`cargo test --workspace`, 248 test functions) run anywhere: protocol, hub,
+1. **Portable tests** (`cargo test --workspace`, 265 test functions) run anywhere: protocol, hub,
    MCP round-trip with a real client, Chrome import, CRX, content rules, sleep,
    palette, inspector filters, hints, WCAG AA theme contrast, key bindings, and
    CLI subcommands (`doctor`, `config`, `export`, `clear-data`). The stdio

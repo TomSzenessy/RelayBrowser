@@ -256,7 +256,8 @@ pub struct RelayApp {
     theme: Theme,
     theme_choice: ThemeChoice,
     accent_choice: AccentChoice,
-    last_web_dark: Option<bool>,
+    /// `None` = inheritance has not been applied; `Some(None)` = System.
+    last_web_dark: Option<Option<bool>>,
     /// Decoded tab icons by host. `None` means the last attempt failed; a new
     /// load retries once instead of retrying every frame.
     favicons: HashMap<String, Option<Arc<Image>>>,
@@ -466,8 +467,14 @@ impl RelayApp {
             .and_then(|s| s.setting("accent").ok().flatten())
             .and_then(|v| AccentChoice::parse(&v))
             .unwrap_or_default();
-        let web_dark = theme_choice.is_dark(window.appearance());
-        web.set_appearance(Some(web_dark));
+        // System passes `None` so WebKit follows the Mac itself; Light/Dark
+        // force the matching site appearance.
+        let web_dark = match theme_choice {
+            ThemeChoice::System => None,
+            ThemeChoice::Light => Some(false),
+            ThemeChoice::Dark => Some(true),
+        };
+        web.set_appearance(web_dark);
         let keymap = Keymap::from_setting(store.as_ref().and_then(|s| s.setting("keybindings").ok().flatten()).as_deref());
         let show_tab_numbers = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_numbers").ok().flatten()).as_deref());
         // `login_offers` is the older combined switch; new profiles use the
@@ -479,7 +486,12 @@ impl RelayApp {
         let login_save_enabled = setting_enabled(
             store.as_ref().and_then(|s| s.setting("login_save").ok().flatten()).as_deref().or(legacy_offers.as_deref()),
         );
-        let autofill_logins = setting_enabled(store.as_ref().and_then(|s| s.setting("autofill_logins").ok().flatten()).as_deref());
+        // Explicit click is the default; automatic fill is an opt-in.
+        let autofill_logins = store
+            .as_ref()
+            .and_then(|s| s.setting("autofill_logins").ok().flatten())
+            .as_deref()
+            .is_some_and(|v| setting_enabled(Some(v)));
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
         let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
         let show_bookmarks_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bookmarks_bar").ok().flatten()).as_deref());
@@ -755,7 +767,21 @@ impl RelayApp {
                 }
                 WebEvent::LoginFocus { tab, url, form_idx } => {
                     if self.login_fill_enabled {
-                        let candidates = self.web.borrow().list_login_candidates(&url);
+                        // Only offer logins Relay wrote itself. Safari's or
+                        // another manager's Keychain items are not ours to
+                        // fill or delete.
+                        let managed: HashSet<(String, String)> = self
+                            .store
+                            .as_ref()
+                            .and_then(|s| {
+                                let origin = relay_extensions::login::Origin::parse(&url).ok()?;
+                                s.saved_logins(origin.host()).ok()
+                            })
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect();
+                        let candidates: Vec<(String, String)> =
+                            self.web.borrow().list_login_candidates(&url).into_iter().filter(|c| managed.contains(c)).collect();
                         if !candidates.is_empty() {
                             // One saved login is the common case: fill it now
                             // (the focus was a real native gesture) instead of
@@ -780,6 +806,13 @@ impl RelayApp {
                 WebEvent::SiteDataCleared => {
                     self.confirm_clear_site_data = false;
                     self.toast("Cookies and site data cleared");
+                }
+                WebEvent::DefaultBrowserSet { ok, error } => {
+                    self.toast(if ok {
+                        "Relay is now the default browser".to_string()
+                    } else {
+                        format!("Could not set the default browser: {}", error.unwrap_or_else(|| "macOS refused".into()))
+                    });
                 }
                 WebEvent::LoginSaveOffer { tab, url, username } => {
                     let origin_key = relay_extensions::login::Origin::parse(&url).ok().map(|o| o.to_string());
@@ -869,6 +902,14 @@ impl RelayApp {
             }
         }
         for tab in loads {
+            // A new document invalidates any fill/save offer from the old one.
+            if self.login_fill_prompt.as_ref().is_some_and(|(t, _, _, _)| *t == tab) {
+                self.login_fill_prompt = None;
+            }
+            if self.login_save_prompt.as_ref().is_some_and(|(t, _, _)| *t == tab) {
+                self.login_save_prompt = None;
+                self.web.borrow().decline_save_login(tab);
+            }
             self.web.borrow_mut().after_load(tab);
             self.apply_site_prefs(tab);
         }
@@ -1510,7 +1551,13 @@ impl RelayApp {
                             if let Some(store) = &app.store {
                                 let _ = store.record_extension(&id, &name, &version, &dir);
                             }
-                            app.web.borrow().load_extension(&dir, &id, |_| {});
+                            let errors = app.ext_errors.clone();
+                            let label = name.clone();
+                            app.web.borrow().load_extension(&dir, &id, move |r| {
+                                if let Err(e) = r {
+                                    errors.borrow_mut().push(format!("{label}: {e}"));
+                                }
+                            });
                             app.toast(format!("Installed {name} {version}"));
                         }
                         Err(e) => app.toast(format!("Extension install failed: {e}")),
@@ -1595,7 +1642,13 @@ impl RelayApp {
                                 if let Some(store) = &app.store {
                                     let _ = store.record_extension(&id, &name, &version, &dir);
                                 }
-                                app.web.borrow().load_extension(&dir, &id, |_| {});
+                                let errors = app.ext_errors.clone();
+                                let label = name.clone();
+                                app.web.borrow().load_extension(&dir, &id, move |r| {
+                                    if let Err(e) = r {
+                                        errors.borrow_mut().push(format!("{label}: {e}"));
+                                    }
+                                });
                                 ok_count += 1;
                             }
                             Err(_) => fail_count += 1,
@@ -1649,7 +1702,7 @@ impl RelayApp {
         self.web.borrow_mut().apply(BrowserRequest::Eval { tab, script });
         self.toast("Reading the web app manifest…");
         cx.spawn(async move |this, cx| {
-            let reply = futures_timeout(rx, Duration::from_secs(8), cx).await;
+            let reply = futures_timeout(rx, Duration::from_secs(15), cx).await;
             let _ = this.update(cx, |app, cx| {
                 app.finish_install(reply, page_url);
                 cx.notify();
@@ -2850,10 +2903,14 @@ impl Render for RelayApp {
         if self.palette.is_some() && !self.focus.is_focused(window) {
             window.focus(&self.focus);
         }
-        let web_dark = self.theme_choice.is_dark(window.appearance());
+        let web_dark = match self.theme_choice {
+            ThemeChoice::System => None,
+            ThemeChoice::Light => Some(false),
+            ThemeChoice::Dark => Some(true),
+        };
         if self.last_web_dark != Some(web_dark) {
             self.last_web_dark = Some(web_dark);
-            self.web.borrow_mut().set_appearance(Some(web_dark));
+            self.web.borrow_mut().set_appearance(web_dark);
         }
         self.theme = Theme::for_choice(window.appearance(), self.theme_choice, self.accent_choice);
         let title = if self.title_cache.0 == self.seen_version {
@@ -3105,6 +3162,11 @@ impl Render for RelayApp {
         // ⌘S as the only way back.
         if show_strip && self.strip.folded && !overlay_open && !self.app_mode {
             root = root.child(self.render_folded_strip(cx));
+        }
+        if self.strip.placement == tabstrip::Placement::Top && self.tab_menu.is_some() && !overlay_open {
+            if let Some(menu) = self.render_floating_tab_menu(cx) {
+                root = root.child(menu);
+            }
         }
         if let Some(f) = &self.find {
             root = root.child(self.render_find(f));

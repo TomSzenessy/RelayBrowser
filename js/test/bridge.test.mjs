@@ -16,6 +16,8 @@ const ORIGIN = "https://shop.relay.test";
 
 const PAGE = `<!doctype html><html><head><title>Checkout</title></head><body>
   <h1>Your cart</h1>
+  <video id="v" muted></video>
+  <audio id="a"></audio>
   <form id="f" onsubmit="event.preventDefault(); window.submitted = true">
     <input id="email" type="email" placeholder="Email">
     <input id="pw" type="password" value="hunter2">
@@ -620,4 +622,19 @@ test("fetch body capture stops at the bridge cap", async () => {
   assert.ok(entry.response_body.length <= 4100, `body capped, got ${entry.response_body.length}`);
   assert.match(entry.response_body, /…$/);
   await p.close();
+});
+
+test("mute flips every media element and reports the count", async () => {
+  const run = cmd => page.evaluate(s => eval(s), `window.__relay.exec(${JSON.stringify(cmd)}), void 0`)
+    .then(() => until(m => m.kind === "result" && m.id === cmd.id)).then(r => r.hit);
+  assert.equal(await page.evaluate(() => document.getElementById("v").muted), true);
+  const on = await run({ id: 300, op: "mute" });
+  assert.equal(on.ok, true, on.error);
+  assert.equal(on.value, 2);
+  assert.equal(await page.evaluate(() => document.getElementById("v").muted), false);
+  assert.equal(await page.evaluate(() => document.getElementById("a").muted), false);
+  const off = await run({ id: 301, op: "mute", muted: true });
+  assert.equal(off.ok, true, off.error);
+  assert.equal(await page.evaluate(() => document.getElementById("v").muted), true);
+  assert.equal(await page.evaluate(() => document.getElementById("a").muted), true);
 });

@@ -124,7 +124,7 @@ pub fn list_logins(origin: &crate::login::Origin) -> Vec<crate::login::SavedLogi
     let Ok(results) = ItemSearchOptions::new()
         .class(ItemClass::internet_password())
         .load_attributes(true)
-        .limit(Limit::All)
+        .limit(Limit::Max(256))
         .search()
     else {
         return Vec::new();

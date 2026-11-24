@@ -171,7 +171,7 @@ so `sidePanel.open` currently rejects.
 
 `js/test/bridge.test.mjs` runs the real script in Playwright 1.65's WebKit build
 with routed fake pages. It covers the DOM ids, console, fetch/XHR, mutation
-patches, commands, async `web_app` manifest/icon and `favicon` reads and their failure
-reasons, 2FA detection, link hints and hotkey forwarding, and bridge
+patches, commands, async `web_app` manifest/icon and `favicon` reads (PNG/SVG/ICO
+and their failure reasons), `mute`, 2FA detection, link hints and hotkey forwarding, and bridge
 immutability, and pipes every message through `relay-bridge`'s
 `examples/validate.rs`.

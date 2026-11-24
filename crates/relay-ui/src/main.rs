@@ -174,6 +174,9 @@ fn doctor() -> anyhow::Result<()> {
     };
     println!("mcp socket: {} — {socket_state}", socket.display());
 
+    println!("crash log: {}", home.join("logs/panic.log").display());
+    #[cfg(target_os = "macos")]
+    println!("passkeys: only in a Developer ID build signed with Apple's web-browser entitlement (docs/passkeys.md)");
     let db = home.join("profile.sqlite");
     if db.exists() {
         match Store::open(&db) {
@@ -607,6 +610,15 @@ fn import_passwords(file: Option<&str>) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
         let r = relay_extensions::mac::import_passwords(&creds);
+        if let Ok(store) = open_store() {
+            for c in &creds {
+                if let Ok((origin, path)) = relay_extensions::login::Origin::parse_with_path(&c.url) {
+                    // Recorded so Settings only lists/deletes logins Relay
+                    // itself wrote, never another app's Keychain items.
+                    let _ = store.record_saved_login(origin.host(), &c.username, &path, 0);
+                }
+            }
+        }
         println!("Saved {} of {} logins to the login Keychain.", r.saved, creds.len());
         for f in &r.failed {
             println!("  ! {f}");
@@ -694,7 +706,32 @@ fn run_browser(initial_url: Option<String>, app_mode: bool, app_name: Option<Str
     let initial_search = cfg.search;
 
     let window_title = app_name.clone().unwrap_or_else(|| "Relay".to_string());
-    Application::new().run(move |cx| {
+    let application = Application::new();
+    if !app_mode {
+        // LaunchServices sends links from other apps here once Relay is the
+        // default browser, instead of passing them on argv.
+        let hub_open = hub.clone();
+        let browser_open = shell_requests.clone();
+        let search = initial_search.clone();
+        application.on_open_urls(move |urls| {
+            for raw in urls {
+                let url = match palette::resolve(&raw, &search) {
+                    palette::Item::Open(u) | palette::Item::Search { url: u, .. } => u,
+                    _ => raw,
+                };
+                if !webapp::is_http_url(&url) {
+                    continue;
+                }
+                let tab = hub_open.update(|h| {
+                    let id = h.create_tab(&url, Owner::User);
+                    h.set_active(id);
+                    id
+                });
+                relay_bridge::Browser::open(&browser_open, tab, &url);
+            }
+        });
+    }
+    application.run(move |cx| {
         cx.bind_keys(app::key_bindings());
         let bounds = if app_mode {
             Bounds::centered(None, size(px(980.), px(760.)), cx)

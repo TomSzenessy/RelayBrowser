@@ -71,6 +71,13 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 - **Bookmarks bar:** off by default; Settings → Tabs turns on a 24 pt row of
   saved pages under the strip. Each row is a site icon and title, click to
   open; ⌘D adds the current page.
+- **Default browser:** Settings → General → Make default asks LaunchServices
+  to open http and https links with Relay; macOS shows its own confirmation.
+- **Privacy:** Settings → Privacy hides consent banners with the blocker's CMP
+  selectors, and Clear cookies & site data needs a second click because it
+  signs out of every site.
+- **Browsing:** Settings → Browsing sets the default page zoom for sites that
+  have no saved zoom; per-site ⌘=/⌘- still wins.
 - **Tab context menu:** pin, duplicate, mute/unmute, sleep, close others, and
   close, with no outline around the menu. AppKit checks menu key
   equivalents before the first responder, so they work while WKWebView has
@@ -184,9 +191,10 @@ Behaviour that is not a single action:
 - **Paused agents:** ⇧⌘. pauses or resumes every agent tool call and shows a
   tinted banner with Resume. A CAPTCHA/2FA challenge on the active page shows a
   separate "Agent is waiting for you" banner with Continue.
-  Login offers (#57) use a bottom banner above the status bar, outside the page
-  pane so the native web view never covers it: "Fill" (confirm per account) and
-  "Save password?" (Save / Not now), see [login-autofill.md](./login-autofill.md).
+- **Login offers:** a banner above the status bar, outside the page pane so
+  the native web view never covers it, lists one button per saved account and
+  a "Save password?" offer (Save/Replace / Not now). The list and Delete only
+  cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
 - **Tab bar:** `×` closes (hover/active), a middle click closes, `♪` marks
   playing audio, `pin` a pinned tab, and `zz` a sleeping one. Pinned tabs sit
   at the top, never auto-sleep, and ⌘W sleeps them instead of closing.

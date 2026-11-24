@@ -884,6 +884,18 @@ impl RelayApp {
                     }))
                     .into_any_element();
                 general_card = general_card.child(row("Chrome bookmarks & history", Some("Import from your local Chrome profile"), import_btn));
+                let default_btn = btn("settings-default-browser", "Make default".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        if app.web.borrow().renders_pages() {
+                            app.web.borrow().set_default_browser();
+                            app.toast("Asking macOS to make Relay the default browser…");
+                        } else {
+                            app.toast("Setting the default browser needs macOS");
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                general_card = general_card.child(row("Default browser", Some("Open http and https links from other apps in Relay"), default_btn));
                 let sections = self.start_sections();
                 for (id, section) in [
                     ("settings-start-recent", Section::Recent),
@@ -1194,7 +1206,7 @@ impl RelayApp {
                     .flex()
                     .flex_col()
                     .child(row("Fill saved sign-ins", Some("Show a Keychain login when a sign-in field gets focus; the password never reaches an agent"), fill_sw))
-                    .child(row("Fill a single saved login automatically", Some("No second click when exactly one login is saved for the site"), auto_sw))
+                    .child(row("Fill a single saved login automatically", Some("Off by default: no second click when exactly one login is saved for the site"), auto_sw))
                     .child(row("Offer to save passwords", Some("After a successful sign-in, offer the macOS Keychain"), save_sw))
                     .child(row("Saved logins", Some("Delete a saved login for the site you are on, under Privacy"), manage))
                     .child(row("Passkeys", Some("Apple grants the browser credential entitlement to signed browsers; this ad-hoc build does not have it yet"), passkeys))
@@ -1281,7 +1293,22 @@ impl RelayApp {
                 let saved_here = if active_url.is_empty() {
                     vec![]
                 } else {
-                    self.web.borrow().list_login_candidates(&active_url)
+                    let managed: std::collections::HashSet<(String, String)> = self
+                        .store
+                        .as_ref()
+                        .and_then(|s| {
+                            let origin = relay_extensions::login::Origin::parse(&active_url).ok()?;
+                            s.saved_logins(origin.host()).ok()
+                        })
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
+                    self.web
+                        .borrow()
+                        .list_login_candidates(&active_url)
+                        .into_iter()
+                        .filter(|c| managed.contains(c))
+                        .collect()
                 };
                 let mut col = div()
                     .flex()
@@ -1317,7 +1344,14 @@ impl RelayApp {
                                         .on_click(cx.listener(move |app, _, _, cx| {
                                             let res = app.web.borrow().delete_saved_login(&url_del, &u_del, &p_del);
                                             match res {
-                                                Ok(true) => app.toast("Deleted login from Keychain"),
+                                                Ok(true) => {
+                                                    if let Some(store) = &app.store {
+                                                        if let Ok((origin, _)) = relay_extensions::login::Origin::parse_with_path(&url_del) {
+                                                            let _ = store.forget_saved_login(origin.host(), &u_del, &p_del);
+                                                        }
+                                                    }
+                                                    app.toast("Deleted login from Keychain")
+                                                }
                                                 Ok(false) => app.toast("Login not found in Keychain"),
                                                 Err(e) => app.toast(e),
                                             }
@@ -1364,7 +1398,7 @@ impl RelayApp {
                     .flex()
                     .flex_col()
                     .child(row("Import Chrome extensions", Some("Fetches your Chrome extensions via CRX3 and loads them in WebKit (macOS 15.4+)"), import_ext_btn))
-                    .child(row("Install from Chrome Web Store", Some("Copy any CWS URL or 32-char extension ID, then click Install"), paste_ext_btn))
+                    .child(row("Install from Chrome Web Store", Some("Copy any CWS URL or 32-char ID, then Install; this grants every requested permission and host pattern"), paste_ext_btn))
                     .child(row("Browse Chrome Web Store", Some("Find extensions, copy their URL, and install directly"), store_btn));
                 let mut list_card = div().flex().flex_col();
                 if installed.is_empty() {
@@ -1381,6 +1415,10 @@ impl RelayApp {
                         let id = ext.id.clone();
                         let path = ext.path.clone();
                         let enabled = ext.enabled;
+                        let grants = relay_extensions::manifest::Manifest::read(std::path::Path::new(&path))
+                            .ok()
+                            .map(|m| m.permission_report().lines().join(" · "))
+                            .unwrap_or_default();
                         let rm_id = id.clone();
                         let en_id = id.clone();
                         let en_sw = switch_dyn(SharedString::from(format!("ext-en-{id}")), enabled, false)
@@ -1410,7 +1448,10 @@ impl RelayApp {
                                         .flex_1()
                                         .min_w_0()
                                         .child(div().text_size(px(13.)).text_color(t.text).child(SharedString::from(ext.name)))
-                                        .child(div().text_size(px(10.)).text_color(t.muted).font_family("Menlo").overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(format!("{} · v{}", id, ext.version)))),
+                                        .child(div().text_size(px(10.)).text_color(t.muted).font_family("Menlo").overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(format!("{} · v{}", id, ext.version))))
+                                        .when(!grants.is_empty(), |d| {
+                                            d.child(div().text_size(px(10.)).text_color(t.muted).overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(grants)))
+                                        }),
                                 )
                                 .child(div().flex().items_center().gap_3().child(en_sw).child(
                                     div()

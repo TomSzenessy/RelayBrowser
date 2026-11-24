@@ -16,9 +16,10 @@ use objc2_app_kit::{
     NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPasteboard, NSPasteboardTypeString,
     NSPrintInfo, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
+use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{
-    NSArray, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize, NSString, NSURL,
-    NSURLRequest, NSURLResponse,
+    NSArray, NSBundle, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize,
+    NSString, NSURL, NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKContentWorld, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKFrameInfo,
@@ -189,6 +190,8 @@ pub enum EngineEvent {
     LoginFilled { tab: TabId, ok: bool },
     /// The default website data store finished removing cookies/cache.
     SiteDataCleared,
+    /// The system answered a request to make Relay the default browser.
+    DefaultBrowserSet { ok: bool, error: Option<String> },
     /// A trusted login submit succeeded on the same origin; offer to save
     /// `username` (the password remains strictly inside `Engine`).
     LoginSaveOffer { tab: TabId, url: String, username: String },
@@ -266,14 +269,8 @@ impl DownloadHandler {
 struct PendingCapture {
     url: String,
     username: String,
-    password: String,
-}
-
-impl Drop for PendingCapture {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-        self.password.zeroize();
-    }
+    /// Wiped on drop even when this capture is dropped without saving.
+    password: zeroize::Zeroizing<String>,
 }
 
 impl std::fmt::Debug for PendingCapture {
@@ -362,7 +359,7 @@ define_class!(
                             .objectForKey(user_key.as_ref())
                             .and_then(|v| v.downcast_ref::<NSString>().map(|s| s.to_string()))
                             .unwrap_or_default();
-                        pending.borrow_mut().insert(tab, PendingCapture { url: url.clone(), username, password: pw });
+                        pending.borrow_mut().insert(tab, PendingCapture { url: url.clone(), username, password: zeroize::Zeroizing::new(pw) });
                     });
                     unsafe {
                         view.callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
@@ -394,6 +391,8 @@ pub struct HandlerIvars {
     downloads: RefCell<HashMap<u64, Retained<DownloadHandler>>>,
     pending_captures: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
     offered_logins: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
+    /// HTTP status of the current main-frame response, for the save gate.
+    last_status: Rc<Cell<Option<i64>>>,
 }
 
 define_class!(
@@ -440,7 +439,7 @@ define_class!(
             if unsafe { response.isForMainFrame() } {
                 let raw = unsafe { response.response() };
                 if let Some(http) = raw.downcast_ref::<objc2_foundation::NSHTTPURLResponse>() {
-                    self.ivars().last_status.set(Some(i64::from(unsafe { http.statusCode() })));
+                    self.ivars().last_status.set(Some(http.statusCode() as i64));
                 }
             }
             let policy = if unsafe { response.canShowMIMEType() } {
@@ -919,8 +918,6 @@ pub struct Engine {
     offered_logins: Rc<RefCell<HashMap<TabId, PendingCapture>>>,
     /// Shared with every login handler; see `set_login_capture`.
     login_capture: Rc<Cell<bool>>,
-    /// HTTP status of the current main-frame response, for the save gate.
-    last_status: Rc<Cell<Option<i64>>>,
 }
 
 impl Engine {
@@ -953,6 +950,25 @@ impl Engine {
         let done = RcBlock::new(move || events(EngineEvent::SiteDataCleared));
         unsafe {
             store.removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done);
+        }
+    }
+
+    /// Ask LaunchServices to open http(s) links with Relay. macOS shows its
+    /// own confirmation; the reply is reported through `EngineEvent`.
+    pub fn set_default_browser(&self) {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let app = NSBundle::mainBundle().bundleURL();
+        for scheme in ["http", "https"] {
+            let events = self.events.clone();
+            let done = RcBlock::new(move |err: *mut NSError| {
+                let error = unsafe { err.as_ref() }.map(|e| e.localizedDescription().to_string());
+                events(EngineEvent::DefaultBrowserSet { ok: error.is_none(), error });
+            });
+            workspace.setDefaultApplicationAtURL_toOpenURLsWithScheme_completionHandler(
+                &app,
+                &NSString::from_str(scheme),
+                Some(&done),
+            );
         }
     }
 
@@ -1198,7 +1214,7 @@ impl Engine {
 
     /// Pop the confirmed pending login `(url, username, password)` for `tab` so
     /// `WebHost` can write it directly to the Keychain and drop it immediately.
-    pub fn take_pending_login(&self, tab: TabId) -> Option<(String, String, String)> {
+    pub fn take_pending_login(&self, tab: TabId) -> Option<(String, String, zeroize::Zeroizing<String>)> {
         self.offered_logins
             .borrow_mut()
             .remove(&tab)

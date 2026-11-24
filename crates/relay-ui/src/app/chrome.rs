@@ -4,15 +4,16 @@ use super::*;
 
 /// Deterministic letter-monogram fallback badge when a host has no cached favicon.
 fn monogram_icon(url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
+    // Dark enough for white 9-10 px text at WCAG AA (4.5:1).
     const PALETTE: [u32; 8] = [
-        0x4c6ef5, // indigo
-        0x7950f2, // violet
-        0x12b886, // teal
-        0x228be6, // blue
-        0xfa5252, // coral
-        0xfd7e14, // orange
-        0xe64980, // rose
-        0x40c057, // green
+        0x1e3a8a, // indigo
+        0x4c1d95, // violet
+        0x065f46, // emerald
+        0x1e40af, // blue
+        0x7f1d1d, // red
+        0x7c2d12, // orange
+        0x831843, // rose
+        0x14532d, // green
     ];
     let host = host_of(url).unwrap_or_default();
     let clean_host = host.strip_prefix("www.").unwrap_or(&host);
@@ -334,6 +335,31 @@ impl RelayApp {
                 cx.notify();
             })))
             .into_any_element()
+    }
+
+    /// A right-clicked tab in the horizontal strip has no column to grow in;
+    /// paint its menu as a floating panel over the page instead.
+    pub(super) fn render_floating_tab_menu(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = self.theme;
+        let id = self.tab_menu?;
+        let pinned = self.hub.lock().tab(id)?.pinned;
+        Some(
+            div()
+                .id("floating-tab-menu")
+                .absolute()
+                .top(px(42.))
+                .left(px(82.))
+                .w(px(220.))
+                .rounded(px(9.))
+                .bg(t.raised)
+                .shadow_lg()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.tab_menu = None;
+                    cx.notify();
+                }))
+                .child(self.tab_context_menu(id, pinned, cx))
+                .into_any_element(),
+        )
     }
 
     fn tab_row(
@@ -1083,7 +1109,16 @@ impl RelayApp {
         let origin_str = relay_extensions::login::Origin::parse(url).map(|o| o.to_string()).unwrap_or_default();
         let host = host_of(url).unwrap_or_else(|| "this site".to_string());
         let user_c = username.clone();
+        let url_c = url.clone();
         let display_user = if username.is_empty() { "this account" } else { username.as_str() };
+        let existing = self
+            .store
+            .as_ref()
+            .and_then(|s| {
+                let (origin, path) = relay_extensions::login::Origin::parse_with_path(url).ok()?;
+                s.has_saved_login(origin.host(), username, &path).ok()
+            })
+            .unwrap_or(false);
         Some(
             div()
                 .id("login-save-banner")
@@ -1111,12 +1146,19 @@ impl RelayApp {
                             let res = app.web.borrow().accept_save_login(tab);
                             app.login_save_prompt = None;
                             match res {
-                                Ok(_) => app.toast("Saved login to macOS Keychain"),
+                                Ok(saved_user) => {
+                                    if let Some(store) = &app.store {
+                                        if let Ok((origin, path)) = relay_extensions::login::Origin::parse_with_path(&url_c) {
+                                            let _ = store.record_saved_login(origin.host(), &saved_user, &path, now_unix());
+                                        }
+                                    }
+                                    app.toast("Saved login to macOS Keychain")
+                                }
                                 Err(e) => app.toast(e),
                             }
                             cx.notify();
                         }))
-                        .child("Save"),
+                        .child(if existing { "Replace" } else { "Save" }),
                 )
                 .child(
                     div()
@@ -1194,5 +1236,26 @@ impl RelayApp {
                 (None, None) => url,
             })))
             .child(SharedString::from(right))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monogram_letters_have_white_contrast() {
+        fn luminance(rgb: u32) -> f64 {
+            let channel = |v: u32| {
+                let c = (v & 0xff) as f64 / 255.0;
+                if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+            };
+            // The palette constants are 0xRRGGBB, not 0xAARRGGBB.
+            0.2126 * channel(rgb >> 16) + 0.7152 * channel(rgb >> 8) + 0.0722 * channel(rgb)
+        }
+        for color in [0x1e3a8a, 0x4c1d95, 0x065f46, 0x1e40af, 0x7f1d1d, 0x7c2d12, 0x831843, 0x14532d] {
+            let ratio = 1.05 / (luminance(color) + 0.05);
+            assert!(ratio >= 4.5, "{color:#08x} has white contrast {ratio:.2}:1");
+        }
     }
 }

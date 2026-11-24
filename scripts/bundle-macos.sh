@@ -39,6 +39,13 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.3</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>dev.relay.browser.url</string>
+      <key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array>
+    </dict>
+  </array>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <!-- A browser must reach plain-http sites; WebKit still enforces TLS rules for apps. -->

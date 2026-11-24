@@ -32,7 +32,8 @@ is an owner decision or a later issue, not an implicit part of #57.
 ### Owner pass (#189)
 
 - `Settings → Passwords` has independent **Fill saved sign-ins**, **Fill a
-  single saved login automatically**, and **Offer to save passwords** switches.
+  single saved login automatically** (off by default; a click is the explicit
+  consent in the default build), and **Offer to save passwords** switches.
   The older `login_offers` key still sets both, so an existing profile keeps
   its choice.
 - A form-less SPA is filled through `formIdx = -1`, which now reaches the
@@ -44,7 +45,14 @@ is an owner decision or a later issue, not an implicit part of #57.
   are zeroized when a `Password`/`PendingCapture` is dropped.
 - A save offer requires a main-frame 2xx response in addition to the same
   origin, so an error page that still renders a form cannot ask to store the
-  posted password.
+  posted password. The response status is tracked in the native handler, not
+  read from the page.
+- Relay records the logins it writes (host, user, path) in the profile. The
+  Settings list, fill offers, and Delete act only on those records, so another
+  browser's Keychain items are never offered or destroyed. A second save for
+  the same record is labelled **Replace**.
+- Clearing cookies/site data and asking to be the default browser go through
+  the same native delegate; neither touches the credential path.
 
 ## Assets and trust boundaries
 
@@ -93,7 +101,7 @@ dependency):
    and an `NSDictionary<NSString, AnyObject>` of arguments. The password is an
    argument, never interpolated into JavaScript source; this avoids both
    script-injection escaping bugs and source strings in crash logs.
-3. A per-navigation random nonce (from `SecRandomCopyBytes`) plus a native form
+3. The live origin read from the WKWebView at fill time plus a native form
    key are arguments to the helper. The helper rejects a mismatched form or
    navigation, so a stale native call cannot fill a new document.
 4. Capture returns the username/password in the completion handler directly to
@@ -163,7 +171,7 @@ prompt:
 
 1. **Trusted submit.** After a native-trusted submit/click within a login form,
    the isolated-world helper reads the username and password into native
-   memory. The native form key (tab, navigation nonce, random form nonce) is
+   memory. The native form key is the tab and the form index the page reported;
    recorded. An untrusted or cross-origin form action is not captured.
 2. **Success heuristic.** The prompt is armed only when all of these hold:
    - the main frame committed a new document;
@@ -270,7 +278,7 @@ leak:
 1. **No page-reachable API.** The fill helper lives in an isolated content
    world and is invoked only by native `callAsyncJavaScript`; the bridge/MCP
    have no login operation.
-2. **Native trust token.** The native layer passes a per-navigation nonce and
+2. **Native trust check.** The native layer passes the form index and checks
    form key; the helper rejects stale or missing values. Rust's
    `FillOffer::open` and `FormSave::capture` refuse `Gesture::Synthetic` and
    `trusted: false`, including a synthetic focus, submit, or `requestSubmit()`.
@@ -316,7 +324,7 @@ capture, and no Keychain read.
                       trusted native key/mouse
                                 │
 page form ──focus/submit──▶ WebKit engine ──callAsyncJavaScript──▶ isolated world
-                                │  (arguments: nonce, form key, secret)     │
+                                │  (arguments: form index, user, secret)     │
                                 │◀──────── completion handler ─────────────┘
                                 │
                      captured login (native memory only)

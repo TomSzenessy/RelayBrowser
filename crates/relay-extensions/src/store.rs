@@ -170,7 +170,10 @@ impl Store {
                  id INTEGER PRIMARY KEY, tool TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
                  tab INTEGER, outcome TEXT NOT NULL, at INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS mcp_clients(
-                 name TEXT PRIMARY KEY, last_seen INTEGER NOT NULL, granted INTEGER NOT NULL DEFAULT 0);",
+                 name TEXT PRIMARY KEY, last_seen INTEGER NOT NULL, granted INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS saved_logins(
+                 host TEXT NOT NULL, username TEXT NOT NULL, path TEXT NOT NULL,
+                 created_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(host, username, path));",
         )?;
         let v: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get::<_, String>(0))
@@ -529,6 +532,44 @@ impl Store {
     pub fn set_extension_enabled(&self, id: &str, enabled: bool) -> Result<bool, Error> {
         let changed = self.conn.execute("UPDATE extensions SET enabled = ?2 WHERE id = ?1", params![id, i64::from(enabled)])?;
         Ok(changed > 0)
+    }
+
+    /// Remember a login Relay itself wrote to the Keychain. Only these rows
+    /// are listed and deleted in Settings, so importing or browsing another
+    /// app's Keychain items can never offer a destructive action here.
+    pub fn record_saved_login(&self, host: &str, username: &str, path: &str, at: i64) -> Result<(), Error> {
+        self.conn.execute(
+            "INSERT INTO saved_logins(host, username, path, created_at) VALUES(?1, ?2, ?3, ?4)
+             ON CONFLICT(host, username, path) DO UPDATE SET created_at=?4",
+            params![host, username, path, at],
+        )?;
+        Ok(())
+    }
+
+    pub fn saved_logins(&self, host: &str) -> Result<Vec<(String, String)>, Error> {
+        let mut stmt = self.conn.prepare("SELECT username, path FROM saved_logins WHERE host = ?1 ORDER BY username")?;
+        let rows = stmt.query_map([host], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn has_saved_login(&self, host: &str, username: &str, path: &str) -> Result<bool, Error> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM saved_logins WHERE host=?1 AND username=?2 AND path=?3",
+                params![host, username, path],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn forget_saved_login(&self, host: &str, username: &str, path: &str) -> Result<(), Error> {
+        self.conn.execute(
+            "DELETE FROM saved_logins WHERE host=?1 AND username=?2 AND path=?3",
+            params![host, username, path],
+        )?;
+        Ok(())
     }
 
     pub fn remove_extension(&self, id: &str) -> Result<bool, Error> {
@@ -974,6 +1015,21 @@ mod tests {
         assert!(!s.set_extension_enabled("missing", false).unwrap());
         assert!(s.remove_extension("ext2").unwrap());
         assert_eq!(s.extensions().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn saved_logins_are_explicit_records_not_keychain_enumeration() {
+        let s = Store::in_memory().unwrap();
+        assert!(s.saved_logins("example.test").unwrap().is_empty());
+        assert!(!s.has_saved_login("example.test", "me", "/login").unwrap());
+        s.record_saved_login("example.test", "me", "/login", 10).unwrap();
+        assert_eq!(s.saved_logins("example.test").unwrap(), vec![("me".into(), "/login".into())]);
+        assert!(s.has_saved_login("example.test", "me", "/login").unwrap());
+        assert!(!s.has_saved_login("example.test", "other", "/login").unwrap());
+        s.record_saved_login("example.test", "me", "/login", 20).unwrap();
+        assert_eq!(s.saved_logins("example.test").unwrap().len(), 1, "upsert");
+        s.forget_saved_login("example.test", "me", "/login").unwrap();
+        assert!(!s.has_saved_login("example.test", "me", "/login").unwrap());
     }
 
     fn tab(url: &str, active: bool) -> SessionTab {

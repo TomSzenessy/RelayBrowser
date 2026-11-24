@@ -299,6 +299,13 @@ mod tests {
         assert!(!op.mutates());
         let s = Command { id: 6, op }.to_script();
         assert!(s.contains(r#""op":"favicon""#), "{s}");
+        let op: Op = serde_json::from_str(r#"{"op":"mute"}"#).unwrap();
+        assert_eq!(op, Op::Mute { muted: None });
+        assert!(op.mutates());
+        let op: Op = serde_json::from_str(r#"{"op":"mute","muted":true}"#).unwrap();
+        assert_eq!(op, Op::Mute { muted: Some(true) });
+        let s = Command { id: 7, op }.to_script();
+        assert!(s.contains(r#""op":"mute""#), "{s}");
     }
 
     #[test]
