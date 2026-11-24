@@ -155,6 +155,9 @@ impl RelayApp {
                     grid = grid.child(self.pin_tile(tab, active, badge_for(tab.id), cx));
                 }
                 bar = bar.child(grid);
+                if let Some(menu_id) = self.tab_menu.filter(|id| pinned.iter().any(|p| p.id == *id)) {
+                    bar = bar.child(self.tab_context_menu(menu_id, true, cx));
+                }
             }
             // Subtle divider + Clear button between pinned favorites and loose tabs.
             if !pinned.is_empty() || !loose.is_empty() {
@@ -261,6 +264,10 @@ impl RelayApp {
                 app.close_tab(id, cx);
                 cx.notify();
             }))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |app, _, _, cx| {
+                app.tab_menu = if app.tab_menu == Some(id) { None } else { Some(id) };
+                cx.notify();
+            }))
             .child(self.site_icon(&tab.url, &tab.title, 16.))
             .when(tab.playing_audio, |d| {
                 d.child(div().absolute().bottom(px(2.)).right(px(3.)).text_size(px(9.)).text_color(t.accent).child("♪"))
@@ -280,6 +287,54 @@ impl RelayApp {
                         .child(SharedString::from(n.to_string())),
                 )
             })
+            .into_any_element()
+    }
+
+    fn tab_context_menu(&self, id: TabId, pinned: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let item = |suffix: &'static str, label: &'static str, danger: bool| {
+            div()
+                .id(SharedString::from(format!("tab-menu-{id}-{suffix}")))
+                .px_2()
+                .py_1()
+                .rounded(px(4.))
+                .text_size(px(11.))
+                .text_color(if danger { t.error } else { t.text })
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child(label)
+        };
+        div()
+            .id(("tab-ctx-menu", id as usize))
+            .mx_1()
+            .my_0p5()
+            .p_1()
+            .rounded(px(6.))
+            .bg(t.background)
+            .border_1()
+            .border_color(t.border)
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(item("pin", if pinned { "Unpin Tab" } else { "Pin to Favorites" }, false).on_click(cx.listener(move |app, _, _, cx| {
+                app.toggle_pin_for(id);
+                cx.notify();
+            })))
+            .child(item("dup", "Duplicate Tab", false).on_click(cx.listener(move |app, _, _, cx| {
+                app.duplicate_tab(id);
+                cx.notify();
+            })))
+            .child(item("sleep", "Sleep Tab", false).on_click(cx.listener(move |app, _, _, cx| {
+                app.sleep_tab_now(id, cx);
+            })))
+            .child(item("others", "Close Other Tabs", false).on_click(cx.listener(move |app, _, _, cx| {
+                app.close_other_tabs(id, cx);
+                cx.notify();
+            })))
+            .child(item("close", "Close Tab", true).on_click(cx.listener(move |app, _, _, cx| {
+                app.close_tab(id, cx);
+                cx.notify();
+            })))
             .into_any_element()
     }
 
@@ -323,6 +378,10 @@ impl RelayApp {
             .on_mouse_down(MouseButton::Middle, cx.listener(move |app, _, _, cx| {
                 app.close_tab(id, cx);
                 cx.notify();
+            }))
+            .on_mouse_down(MouseButton::Right, cx.listener(move |app, _, _, cx| {
+                app.tab_menu = if app.tab_menu == Some(id) { None } else { Some(id) };
+                cx.notify();
             }));
         if let Some(n) = shortcut_num {
             row = row.child(
@@ -353,6 +412,17 @@ impl RelayApp {
         if is_active {
             row = row.bg(t.active);
         }
+        if tab.private {
+            row = row.child(
+                div()
+                    .px_1()
+                    .rounded(px(3.))
+                    .bg(t.agent_bg)
+                    .text_size(px(9.))
+                    .text_color(t.agent)
+                    .child("Private"),
+            );
+        }
         if tab.challenge.is_some() {
             row = row.child(div().text_color(t.warn).child("⚠"));
         }
@@ -365,7 +435,7 @@ impl RelayApp {
         if tab.sleeping {
             row = row.child(div().text_color(t.muted).text_size(px(10.)).child("zz"));
         }
-        row.child(
+        let row = row.child(
             div()
                 .id(("close-tab", id as usize))
                 .w(px(18.))
@@ -387,8 +457,12 @@ impl RelayApp {
                     cx.notify();
                 }))
                 .child("×"),
-        )
-        .into_any_element()
+        );
+        if vertical && self.tab_menu == Some(id) {
+            div().flex().flex_col().child(row).child(self.tab_context_menu(id, tab.pinned, cx)).into_any_element()
+        } else {
+            row.into_any_element()
+        }
     }
 
     fn new_tab_button(&self, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {

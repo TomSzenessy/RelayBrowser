@@ -101,6 +101,9 @@ mod imp {
                 BrowserRequest::Open { tab, url } => {
                     self.engine.create(tab, &url);
                 }
+                BrowserRequest::OpenPrivate { tab, url } => {
+                    self.engine.create_with_privacy(tab, &url, true);
+                }
                 BrowserRequest::Navigate { tab, url } => {
                     self.wake(tab);
                     self.engine.navigate(tab, &url)
@@ -113,6 +116,7 @@ mod imp {
                 BrowserRequest::Eval { tab, script } => self.engine.eval(tab, &script),
                 BrowserRequest::RefreshCookies(tab) => self.engine.refresh_cookies(tab),
                 BrowserRequest::OpenWebInspector(tab) => self.engine.open_web_inspector(tab),
+                BrowserRequest::Print(tab) => self.engine.print(tab),
                 BrowserRequest::Screenshot { tab, done } => self.engine.screenshot(tab, done),
                 BrowserRequest::CancelDownload { tab, id } => self.engine.cancel_download(tab, id),
             }

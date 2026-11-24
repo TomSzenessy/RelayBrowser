@@ -48,3 +48,5 @@ agent-policy|secondary-alt-a
 reading-mode|secondary-shift-r
 picture-in-picture|secondary-shift-p
 downloads|secondary-shift-j
+new-private-tab|secondary-shift-n
+print|secondary-p

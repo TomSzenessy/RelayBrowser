@@ -419,6 +419,7 @@ pub struct TabView {
     pub challenge: Option<Challenge>,
     pub playing_audio: bool,
     pub pinned: bool,
+    pub private: bool,
 }
 
 /// Everything known about one tab.
@@ -439,6 +440,7 @@ pub struct TabState {
     pub load_seq: u64,
     pub last_active_at: Instant,
     pub pinned: bool,
+    pub private: bool,
     pub playing_audio: bool,
     pub sleeping: bool,
     /// Why the last navigation failed (WebKit's message), cleared on reload.
@@ -468,6 +470,7 @@ impl TabState {
             load_seq: 0,
             last_active_at: Instant::now(),
             pinned: false,
+            private: false,
             playing_audio: false,
             sleeping: false,
             load_error: None,
@@ -802,6 +805,16 @@ impl Hub {
         id
     }
 
+    /// Create an ephemeral private tab: uses a non-persistent WebKit data store,
+    /// is excluded from history/session persistence, and is hidden from MCP tools.
+    pub fn create_private_tab(&mut self, url: &str) -> TabId {
+        let id = self.create_tab(url, Owner::User);
+        if let Some(t) = self.tabs.get_mut(&id) {
+            t.private = true;
+        }
+        id
+    }
+
     pub fn close_tab(&mut self, id: TabId) -> Option<TabState> {
         let t = self.tabs.remove(&id)?;
         let pos = self.order.iter().position(|x| *x == id);
@@ -936,6 +949,7 @@ impl Hub {
                 challenge: t.challenge,
                 playing_audio: t.playing_audio,
                 pinned: t.pinned,
+                private: t.private,
             })
             .collect()
     }

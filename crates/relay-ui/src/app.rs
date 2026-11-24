@@ -87,6 +87,8 @@ actions!(
         ToggleReader,
         TogglePictureInPicture,
         ShowDownloads,
+        NewPrivateTab,
+        Print,
     ]
 );
 
@@ -257,6 +259,10 @@ pub struct RelayApp {
     palette_metrics: Rc<RefCell<Option<PaletteTextMetrics>>>,
     /// ⌘T opens the palette for a new tab; ⌘K/⌘L target the current tab.
     palette_new_tab: bool,
+    /// ⌘⇧N opens the palette for a new ephemeral private tab.
+    palette_private_tab: bool,
+    /// Tab currently showing its inline right-click context menu in the tab strip.
+    tab_menu: Option<TabId>,
     settings_open: bool,
     settings_tab: SettingsTab,
     settings_dropdown: Option<SettingsDropdown>,
@@ -439,6 +445,8 @@ impl RelayApp {
             palette_input_active: false,
             palette_metrics: Rc::default(),
             palette_new_tab: false,
+            palette_private_tab: false,
+            tab_menu: None,
             settings_open: false,
             settings_tab: SettingsTab::General,
             settings_dropdown: None,
@@ -700,9 +708,11 @@ impl RelayApp {
                 }
                 match visit_decision(t.load_seq, &t.title, rec) {
                     VisitDecision::Record => {
-                        if let (Some(store), Owner::User) = (&self.store, t.owner) {
-                            let _ = store.record_visit(&t.url, &t.title, now_unix());
-                            visited = true;
+                        if !t.private {
+                            if let (Some(store), Owner::User) = (&self.store, t.owner) {
+                                let _ = store.record_visit(&t.url, &t.title, now_unix());
+                                visited = true;
+                            }
                         }
                         self.recorded.insert(t.id, RecordedVisit { load_seq: t.load_seq, title: t.title.clone() });
                     }
@@ -944,7 +954,69 @@ impl RelayApp {
         }
     }
 
+    fn open_private_url(&mut self, url: String) {
+        let tab = self.hub.update(|h| {
+            let id = h.create_private_tab(&url);
+            h.set_active(id);
+            id
+        });
+        self.web.borrow_mut().apply(BrowserRequest::OpenPrivate { tab, url });
+        self.focus_pending = Some(tab);
+        self.try_focus_pending();
+        self.toast("Private tab (no history, no cookies saved, hidden from agents)");
+    }
+
+    pub(super) fn duplicate_tab(&mut self, tab: TabId) {
+        let info = self.hub.lock().tab(tab).map(|t| (t.url.clone(), t.private));
+        if let Some((url, private)) = info {
+            if private {
+                self.open_private_url(url);
+            } else {
+                self.open_url(url, true);
+            }
+        }
+        self.tab_menu = None;
+    }
+
+    pub(super) fn sleep_tab_now(&mut self, tab: TabId, cx: &mut Context<Self>) {
+        self.tab_menu = None;
+        if self.active() == Some(tab) {
+            self.toast("Switch to another tab before sleeping this one");
+            cx.notify();
+            return;
+        }
+        self.web.borrow_mut().sleep(tab, (0.0, 0.0));
+        self.toast("Tab put to sleep");
+        cx.notify();
+    }
+
+    pub(super) fn close_other_tabs(&mut self, keep: TabId, cx: &mut Context<Self>) {
+        self.tab_menu = None;
+        let others: Vec<TabId> = {
+            let h = self.hub.lock();
+            h.tabs()
+                .filter(|t| t.id != keep && !t.pinned && t.owner == Owner::User)
+                .map(|t| t.id)
+                .collect()
+        };
+        let count = others.len();
+        for id in others {
+            self.close_tab(id, cx);
+        }
+        if count > 0 {
+            self.toast(if count == 1 { "Closed 1 other tab".to_string() } else { format!("Closed {count} other tabs") });
+        }
+    }
+
+    pub(super) fn toggle_pin_for(&mut self, tab: TabId) {
+        self.tab_menu = None;
+        if let Some(pinned) = self.hub.update(|h| h.set_pinned(tab, !h.tab(tab).is_some_and(|t| t.pinned))) {
+            self.toast(if pinned { "Tab pinned to Favorites" } else { "Tab unpinned" });
+        }
+    }
+
     fn activate(&mut self, tab: TabId) {
+        self.tab_menu = None;
         if self.find.as_ref().is_some_and(|f| f.tab != tab) {
             self.find = None;
         }
@@ -988,13 +1060,16 @@ impl RelayApp {
     /// Close one tab from ⌘W, its row's ×, or a middle click. Pinned tabs
     /// are put to sleep; the last tab in a web app quits the app window.
     fn close_tab(&mut self, tab: TabId, cx: &mut Context<Self>) {
+        if self.tab_menu == Some(tab) {
+            self.tab_menu = None;
+        }
         if self.hub.lock().tab(tab).is_some_and(|t| t.pinned) {
             self.put_pinned_away(tab, cx);
             return;
         }
         let last = self.hub.lock().tabs().count() <= 1;
         if let Some(t) = self.hub.update(|h| h.close_tab(tab)) {
-            if t.url.starts_with("http") {
+            if !t.private && t.url.starts_with("http") {
                 self.closed.push(t.url);
             }
         }
@@ -1748,6 +1823,7 @@ impl RelayApp {
         self.find = None;
         self.confirm_clear_history = false;
         self.palette_new_tab = new_tab;
+        self.palette_private_tab = false;
         self.sources = Sources {
             tabs: self.hub.lock().tabs().map(|t| (t.id, t.title.clone(), t.url.clone())).collect(),
             history: self
@@ -1794,10 +1870,15 @@ impl RelayApp {
     }
 
     fn run_item(&mut self, item: Item, cx: &mut Context<Self>) {
+        let private = std::mem::take(&mut self.palette_private_tab);
         let new_tab = self.palette_new_tab || self.active().is_none();
         match item {
             Item::Open(url) | Item::Search { url, .. } | Item::Bang { url, .. } | Item::History { url, .. } | Item::Bookmark { url, .. } => {
-                self.open_url(url, new_tab);
+                if private {
+                    self.open_private_url(url);
+                } else {
+                    self.open_url(url, new_tab);
+                }
             }
             Item::Calc(result) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(result.clone()));
@@ -1879,6 +1960,21 @@ impl RelayApp {
             Command::ToggleReader => self.toggle_reader(cx),
             Command::TogglePictureInPicture => self.toggle_picture_in_picture(cx),
             Command::ShowDownloads => self.open_downloads(cx),
+            Command::NewPrivateTab => {
+                if self.app_mode {
+                    self.toast("App windows are single-tab");
+                } else {
+                    self.open_palette(None, true);
+                    self.palette_private_tab = true;
+                }
+            }
+            Command::Print => {
+                if let Some(t) = active {
+                    self.web.borrow_mut().apply(BrowserRequest::Print(t));
+                } else {
+                    self.toast("No page to print");
+                }
+            }
         }
     }
 
@@ -2673,6 +2769,14 @@ impl Render for RelayApp {
             }))
             .on_action(cx.listener(|app, _: &ShowDownloads, _, cx| {
                 app.open_downloads(cx);
+            }))
+            .on_action(cx.listener(|app, _: &NewPrivateTab, _, cx| {
+                app.run_command(Command::NewPrivateTab, cx);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|app, _: &Print, _, cx| {
+                app.run_command(Command::Print, cx);
+                cx.notify();
             }));
         macro_rules! select {
             ($($a:ident => $i:expr),*) => {
@@ -2723,7 +2827,7 @@ impl Render for RelayApp {
 fn session_snapshot(hub: &Hub, slept_scroll_y: impl Fn(TabId) -> Option<f64>) -> Vec<SessionTab> {
     let active = hub.active();
     hub.tabs()
-        .filter(|t| t.owner == Owner::User && is_http_url(&t.url))
+        .filter(|t| t.owner == Owner::User && !t.private && is_http_url(&t.url))
         .enumerate()
         .map(|(i, t)| SessionTab {
             url: t.url.clone(),
