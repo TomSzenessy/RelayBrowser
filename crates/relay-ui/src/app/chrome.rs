@@ -795,7 +795,7 @@ impl RelayApp {
                     .px_1p5()
                     .py_0p5()
                     .rounded(px(5.))
-                    .max_w(px(180.))
+                    .when(!self.bookmarks_icons_only, |d| d.max_w(px(180.)))
                     .overflow_hidden()
                     .cursor_pointer()
                     .text_size(px(11.))
@@ -806,7 +806,9 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .child(self.site_icon(url, title, 13.))
-                    .child(div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(label))),
+                    .when(!self.bookmarks_icons_only, |d| {
+                        d.child(div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(label)))
+                    }),
             );
         }
         bar.into_any_element()

@@ -1176,6 +1176,24 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let bm_icons_sw = switch("settings-bookmarks-icons", self.bookmarks_icons_only, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.bookmarks_icons_only = !app.bookmarks_icons_only;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("bookmarks_icons_only", if app.bookmarks_icons_only { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let bm_new_sw = switch("settings-bookmarks-newtab", self.bookmarks_new_tab_only, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.bookmarks_new_tab_only = !app.bookmarks_new_tab_only;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("bookmarks_new_tab_only", if app.bookmarks_new_tab_only { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let close_sw = switch("settings-always-close", self.always_show_close, false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.always_show_close = !app.always_show_close;
@@ -1210,6 +1228,8 @@ impl RelayApp {
                     .child(row("Site icons in tabs", Some("Off shows a coloured letter badge instead of each site's favicon"), glyphs_sw))
                     .child(row("Compact tab rows", Some("Shorter rows for more tabs in the same column"), compact_sw))
                     .child(row("Show the bookmarks bar", Some("A row of saved pages under the tab strip"), bookmarks_sw))
+                    .child(row("Bookmarks bar: icons only", Some("Titles are hidden to keep the row short"), bm_icons_sw))
+                    .child(row("Bookmarks bar only on new tabs", Some("Hidden while a page is open"), bm_new_sw))
                     .child(row("Always show tab close buttons", Some("Off: × appears on the active tab and on hover"), close_sw));
                 div()
                     .flex()

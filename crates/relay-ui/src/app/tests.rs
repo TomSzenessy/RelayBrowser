@@ -110,6 +110,14 @@ fn byte_size_reads_naturally() {
 }
 
 #[test]
+fn bookmarks_bar_optional_visibility() {
+    assert!(!bookmarks_bar_shown(false, false, true));
+    assert!(bookmarks_bar_shown(true, false, true));
+    assert!(bookmarks_bar_shown(true, true, false));
+    assert!(!bookmarks_bar_shown(true, true, true));
+}
+
+#[test]
 fn opt_in_settings_default_off() {
     assert!(!setting_opt_in(None));
     assert!(!setting_opt_in(Some("off")));

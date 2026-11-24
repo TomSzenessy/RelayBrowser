@@ -329,6 +329,10 @@ pub struct RelayApp {
     show_bookmarks_bar: bool,
     /// Always show a one-line address bar above the page.
     show_address_bar: bool,
+    /// Bookmarks bar shows only site icons.
+    bookmarks_icons_only: bool,
+    /// Bookmarks bar appears only on the new-tab page.
+    bookmarks_new_tab_only: bool,
     /// Keep every tab's close button visible instead of hover/active only.
     always_show_close: bool,
     /// Cached bookmarks for that bar; refreshed with the start page.
@@ -522,6 +526,8 @@ impl RelayApp {
         let setting_on = |key: &str| setting_opt_in(store.as_ref().and_then(|s| s.setting(key).ok().flatten()).as_deref());
         let show_bookmarks_bar = setting_on("bookmarks_bar");
         let show_address_bar = setting_on("address_bar");
+        let bookmarks_icons_only = setting_on("bookmarks_icons_only");
+        let bookmarks_new_tab_only = setting_on("bookmarks_new_tab_only");
         let collapsed_groups = store
             .as_ref()
             .and_then(|s| s.setting("collapsed_groups").ok().flatten())
@@ -581,6 +587,8 @@ impl RelayApp {
             compact_tabs,
             show_bookmarks_bar,
             show_address_bar,
+            bookmarks_icons_only,
+            bookmarks_new_tab_only,
             always_show_close,
             bookmarks_bar: vec![],
             default_zoom,
@@ -2876,6 +2884,8 @@ impl RelayApp {
             "compact_tabs" => self.compact_tabs = setting_enabled(Some(value)),
             "bookmarks_bar" => self.show_bookmarks_bar = setting_enabled(Some(value)),
             "address_bar" => self.show_address_bar = setting_enabled(Some(value)),
+            "bookmarks_icons_only" => self.bookmarks_icons_only = setting_enabled(Some(value)),
+            "bookmarks_new_tab_only" => self.bookmarks_new_tab_only = setting_enabled(Some(value)),
             "always_show_close" => self.always_show_close = setting_enabled(Some(value)),
             "default_zoom" => {
                 if let Ok(z) = value.parse::<f64>() {
@@ -3116,7 +3126,7 @@ impl Render for RelayApp {
             if self.show_address_bar && !self.app_mode {
                 column = column.child(self.render_address_bar(cx));
             }
-            if self.show_bookmarks_bar && !self.app_mode {
+            if bookmarks_bar_shown(self.show_bookmarks_bar, self.bookmarks_new_tab_only, self.active().is_some()) && !self.app_mode {
                 column = column.child(self.render_bookmarks_bar(cx));
             }
             column.child(self.render_content(cx)).into_any_element()
@@ -3505,6 +3515,12 @@ pub(crate) fn collapsed_group_names(raw: Option<&str>) -> HashSet<String> {
 
 /// Opt-in switches are off when the key is absent, unlike toggles that have
 /// historically defaulted on.
+/// The bookmarks bar is shown when enabled, and optionally only with no
+/// active tab (the new-tab page).
+pub(crate) fn bookmarks_bar_shown(enabled: bool, new_tab_only: bool, has_tab: bool) -> bool {
+    enabled && (!new_tab_only || !has_tab)
+}
+
 pub(crate) fn setting_opt_in(value: Option<&str>) -> bool {
     value.is_some_and(|v| setting_enabled(Some(v)))
 }

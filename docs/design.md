@@ -88,7 +88,7 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   above the page. It shows a lock/warning, host, path, and ⌘L; clicking opens
   the palette with the URL selected so typing replaces it.
 - **Bookmarks bar:** off by default (absence means off); Settings → Tabs turns on a 24 pt row of
-  saved pages under the strip. Each row is a site icon and title, click to
+  saved pages under the strip, optionally icon-only or only on the new-tab page. Each row is a site icon and title, click to
   open; ⌘D adds the current page.
 - **Default browser:** Settings → General → Make default asks LaunchServices
   to open http and https links with Relay; macOS shows its own confirmation.
