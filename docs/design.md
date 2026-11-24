@@ -22,9 +22,14 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
         ⌘K palette floats centred over everything (560 pt wide)
 ```
 
-- **Tab switching:** Ctrl+Tab / Ctrl+Shift+Tab walk the current space in
-  most-recently-used order; the MRU list is per session and drops closed tabs.
-  ⌘⌥T opens a visual switcher over the same MRU order (↑/↓, ↩, Esc or click).
+- **Tab switching and closing:** Ctrl+Tab / Ctrl+Shift+Tab walk the current
+  space in most-recently-used order by default, or in strip order when
+  `tab_switch_order = strip` in Settings → Tabs; ⌘⌥T opens the visual switcher
+  over the same configured order (↑/↓, ↩, Esc or click). Closing the last
+  unpinned tab returns to the start page by default, or quits Relay when
+  `last_tab_close = quit`; `confirm_close_multiple = on` asks before quitting
+  or closing several tabs at once (Esc or Cancel keeps every tab open). Pinned
+  tabs always sleep on ⌘W until explicitly unpinned (`⌘⌥P`).
 - **Tab strip:** a vertical list of title rows with status dots, an optional
   54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
   group: a heading with a colour dot, name, count, and collapse chevron; the

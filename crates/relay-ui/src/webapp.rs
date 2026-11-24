@@ -461,8 +461,8 @@ fn launcher(start_url: &str, source_binary: &Path, name: &str, icon: &Path) -> S
          # Relay web app. Resolve Relay when the app launches, not when it was\n\
          # installed: a moved or updated Relay.app must still open this site.\n\
          set -eu\n\
-         for candidate in /Applications/Relay.app/Contents/MacOS/relay \"$HOME/Applications/Relay.app/Contents/MacOS/relay\" {src}; do\n\
-           if [ -x \"$candidate\" ]; then exec \"$candidate\" {args}; fi\n\
+         for candidate in \"${{RELAY_BIN:-}}\" /Applications/Relay.app/Contents/MacOS/relay \"$HOME/Applications/Relay.app/Contents/MacOS/relay\" {src}; do\n\
+           if [ -n \"$candidate\" ] && [ -x \"$candidate\" ]; then exec \"$candidate\" {args}; fi\n\
          done\n\
          # Last resort: LaunchServices by bundle id, then by name.\n\
          exec open -b dev.relay.browser --args {args} 2>/dev/null || exec open -a Relay --args {args}\n"
@@ -724,7 +724,12 @@ mod tests {
         let installed = install(&dir.path().join("Applications"), &manifest(), &source).unwrap();
         let args = dir.path().join("args.txt");
         let launcher = installed.path.join("Contents/MacOS/RelayApp");
-        assert!(std::process::Command::new(&launcher).env("RELAY_TEST_ARGS", &args).status().unwrap().success());
+        assert!(std::process::Command::new(&launcher)
+            .env("RELAY_BIN", &source)
+            .env("RELAY_TEST_ARGS", &args)
+            .status()
+            .unwrap()
+            .success());
         let lines: Vec<String> = fs::read_to_string(&args).unwrap().lines().map(str::to_string).collect();
         assert_eq!(
             lines,

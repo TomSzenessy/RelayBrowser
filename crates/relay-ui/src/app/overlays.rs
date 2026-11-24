@@ -1061,6 +1061,82 @@ impl RelayApp {
         )
     }
 
+    pub(super) fn render_close_confirm(&self, confirm: CloseConfirm, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let (heading, body, action_label) = match confirm.kind {
+            CloseConfirmKind::Quit => (
+                format!("Quit Relay and close {} tabs?", confirm.count),
+                "Your session can reopen on next launch if Restore tabs at launch is enabled.",
+                "Quit Relay".to_string(),
+            ),
+            CloseConfirmKind::CloseOthers(_) => (
+                format!("Close {} other tabs?", confirm.count),
+                "Pinned tabs stay open and sleeping; closed web tabs can be reopened with ⌘⇧T.",
+                format!("Close {} tabs", confirm.count),
+            ),
+            CloseConfirmKind::ClearLoose => (
+                format!("Clear {} unpinned tabs?", confirm.count),
+                "Pinned tabs stay open; closed web tabs can be reopened with ⌘⇧T.",
+                format!("Clear {} tabs", confirm.count),
+            ),
+        };
+        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(140.)).bg(t.scrim).child(
+            div()
+                .id("close-confirm")
+                .w(px(400.))
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .rounded(px(12.))
+                .bg(t.raised)
+                .shadow_lg()
+                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
+                    app.cancel_close_confirm();
+                    cx.notify();
+                }))
+                .child(div().text_size(px(14.)).text_color(t.text).child(SharedString::from(heading)))
+                .child(div().text_size(px(12.)).text_color(t.muted).child(body))
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id("close-confirm-cancel")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(6.))
+                                .bg(t.well)
+                                .text_size(px(12.))
+                                .text_color(t.text)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover))
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    app.cancel_close_confirm();
+                                    cx.notify();
+                                }))
+                                .child("Cancel"),
+                        )
+                        .child(
+                            div()
+                                .id("close-confirm-ok")
+                                .px_3()
+                                .py_1p5()
+                                .rounded(px(6.))
+                                .bg(t.accent)
+                                .text_size(px(12.))
+                                .text_color(gpui::rgb(0xffffff))
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.9))
+                                .on_click(cx.listener(|app, _, _, cx| app.confirm_close_action(cx)))
+                                .child(SharedString::from(action_label)),
+                        ),
+                ),
+        )
+    }
+
     pub(super) fn render_tab_switcher(&self, switcher: &TabSwitcher, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut rows = div().id("switcher-rows").flex().flex_col().gap_1().max_h(px(380.)).overflow_y_scroll().p_2();
@@ -1979,10 +2055,75 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let confirm_close_sw = switch("settings-confirm-close-multiple", self.confirm_close_multiple, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.confirm_close_multiple = !app.confirm_close_multiple;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting(
+                                "confirm_close_multiple",
+                                if app.confirm_close_multiple { "on" } else { "off" },
+                            );
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let mut last_close_seg = div().flex().items_center().gap_1().p_0p5().rounded(px(8.)).bg(t.well);
+                for (choice, label) in [(LastTabClose::StartPage, "Start page"), (LastTabClose::Quit, "Quit Relay")] {
+                    let active = self.last_tab_close == choice;
+                    last_close_seg = last_close_seg.child(
+                        div()
+                            .id(SharedString::from(format!("settings-last-tab-close-{}", choice.as_str())))
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(6.))
+                            .bg(if active { t.surface } else { gpui::rgba(0x00000000).into() })
+                            .when(active, |d| d.shadow_sm())
+                            .text_size(px(11.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.last_tab_close = choice;
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_setting("last_tab_close", choice.as_str());
+                                }
+                                cx.notify();
+                            }))
+                            .child(label),
+                    );
+                }
+                let mut switch_seg = div().flex().items_center().gap_1().p_0p5().rounded(px(8.)).bg(t.well);
+                for (choice, label) in [(TabSwitchOrder::Mru, "Recent (MRU)"), (TabSwitchOrder::Strip, "Strip order")] {
+                    let active = self.tab_switch_order == choice;
+                    switch_seg = switch_seg.child(
+                        div()
+                            .id(SharedString::from(format!("settings-switch-order-{}", choice.as_str())))
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(6.))
+                            .bg(if active { t.surface } else { gpui::rgba(0x00000000).into() })
+                            .when(active, |d| d.shadow_sm())
+                            .text_size(px(11.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.tab_switch_order = choice;
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_setting("tab_switch_order", choice.as_str());
+                                }
+                                cx.notify();
+                            }))
+                            .child(label),
+                    );
+                }
                 let content = div()
                     .flex()
                     .flex_col()
                     .child(row("Restore tabs at launch", Some("Reopen last session's pages asleep, so the RAM is not spent until you visit them"), restore_sw))
+                    .child(row("When closing last tab", Some("Pinned tabs still sleep on ⌘W; unpin with ⌘⌥P to close them"), last_close_seg.into_any_element()))
+                    .child(row("Confirm closing multiple tabs", Some("Ask before quitting or closing several tabs at once"), confirm_close_sw))
+                    .child(row("Tab switching order", Some("Order used by ⌃Tab and the visual tab switcher (⌘⌥T)"), switch_seg.into_any_element()))
                     .child(row("Site icons in tabs", Some("Off shows a coloured letter badge instead of each site's favicon"), glyphs_sw))
                     .child(row("Compact tab rows", Some("Shorter rows for more tabs in the same column"), compact_sw))
                     .child(row("Icons-only vertical strip", Some("A narrow rail of site icons; middle-click or right-click to close/manage"), icons_only_sw))

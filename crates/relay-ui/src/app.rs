@@ -186,6 +186,67 @@ struct TabSwitcher {
     selected: usize,
 }
 
+/// What closing the last unpinned tab does in normal browser mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum LastTabClose {
+    #[default]
+    StartPage,
+    Quit,
+}
+
+impl LastTabClose {
+    pub(crate) fn parse(raw: Option<&str>) -> Self {
+        match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("quit") => Self::Quit,
+            _ => Self::StartPage,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::StartPage => "start_page",
+            Self::Quit => "quit",
+        }
+    }
+}
+
+/// Order used by Ctrl+Tab / Ctrl+Shift+Tab and the visual switcher (⌘⌥T).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum TabSwitchOrder {
+    #[default]
+    Mru,
+    Strip,
+}
+
+impl TabSwitchOrder {
+    pub(crate) fn parse(raw: Option<&str>) -> Self {
+        match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("strip") => Self::Strip,
+            _ => Self::Mru,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Mru => "mru",
+            Self::Strip => "strip",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CloseConfirmKind {
+    Quit,
+    CloseOthers(TabId),
+    ClearLoose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CloseConfirm {
+    pub(super) kind: CloseConfirmKind,
+    pub(super) count: usize,
+}
+
 struct PendingAi {
     prompt: String,
     history: Vec<(bool, String)>,
@@ -414,6 +475,14 @@ pub struct RelayApp {
     bookmarks_new_tab_only: bool,
     /// Keep every tab's close button visible instead of hover/active only.
     always_show_close: bool,
+    /// What closing the last unpinned tab does (`start_page` default vs `quit`).
+    last_tab_close: LastTabClose,
+    /// Ask before closing multiple tabs at once (Quit, Close Others, Clear).
+    confirm_close_multiple: bool,
+    /// Switcher and Ctrl+Tab order (`mru` default vs `strip`).
+    tab_switch_order: TabSwitchOrder,
+    /// Active multi-tab close confirmation modal, if any.
+    close_confirm: Option<CloseConfirm>,
     /// Cached bookmarks for that bar; refreshed with the start page.
     bookmarks_bar: Vec<(String, String)>,
     /// 100% unless the user picks another default for sites with no zoom pref.
@@ -599,10 +668,10 @@ impl RelayApp {
             .as_deref()
             .is_some_and(|v| setting_enabled(Some(v)));
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
-        let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
-        // These three are opt-in: absence must mean off, not the `on` that
+        // Opt-in switches: absence must mean off, not the `on` that
         // `setting_enabled(None)` returns for ordinary toggles.
         let setting_on = |key: &str| setting_opt_in(store.as_ref().and_then(|s| s.setting(key).ok().flatten()).as_deref());
+        let compact_tabs = setting_on("compact_tabs");
         let show_bookmarks_bar = setting_on("bookmarks_bar");
         let show_address_bar = setting_on("address_bar");
         let tab_icons_only = setting_on("tab_icons_only");
@@ -642,6 +711,9 @@ impl RelayApp {
         let downloads_ask = setting_opt_in(store.as_ref().and_then(|s| s.setting("downloads_ask").ok().flatten()).as_deref());
         web.set_downloads(downloads_dir.clone(), downloads_ask);
         let always_show_close = setting_on("always_show_close");
+        let last_tab_close = LastTabClose::parse(store.as_ref().and_then(|s| s.setting("last_tab_close").ok().flatten()).as_deref());
+        let confirm_close_multiple = setting_on("confirm_close_multiple");
+        let tab_switch_order = TabSwitchOrder::parse(store.as_ref().and_then(|s| s.setting("tab_switch_order").ok().flatten()).as_deref());
         let default_zoom = store
             .as_ref()
             .and_then(|s| s.setting("default_zoom").ok().flatten())
@@ -725,6 +797,10 @@ impl RelayApp {
             bookmarks_icons_only,
             bookmarks_new_tab_only,
             always_show_close,
+            last_tab_close,
+            confirm_close_multiple,
+            tab_switch_order,
+            close_confirm: None,
             bookmarks_bar: vec![],
             default_zoom,
             show_bottom_bar,
@@ -1331,9 +1407,26 @@ impl RelayApp {
                 .map(|t| t.id)
                 .collect()
         };
+        if should_confirm_multi_close(self.confirm_close_multiple, loose.len()) {
+            self.close_confirm = Some(CloseConfirm { kind: CloseConfirmKind::ClearLoose, count: loose.len() });
+            self.web.borrow().focus_shell();
+            cx.notify();
+            return;
+        }
+        self.execute_clear_loose_tabs(cx);
+    }
+
+    fn execute_clear_loose_tabs(&mut self, cx: &mut Context<Self>) {
+        let loose: Vec<TabId> = {
+            let h = self.hub.lock();
+            h.tabs()
+                .filter(|t| t.owner == Owner::User && !t.pinned)
+                .map(|t| t.id)
+                .collect()
+        };
         let count = loose.len();
         for id in loose {
-            self.close_tab(id, cx);
+            self.close_tab_inner(id, false, cx);
         }
         if count > 0 {
             self.toast(if count == 1 { "Cleared 1 tab".to_string() } else { format!("Cleared {count} tabs") });
@@ -1465,13 +1558,66 @@ impl RelayApp {
                 .map(|t| t.id)
                 .collect()
         };
+        if should_confirm_multi_close(self.confirm_close_multiple, others.len()) {
+            self.close_confirm = Some(CloseConfirm { kind: CloseConfirmKind::CloseOthers(keep), count: others.len() });
+            self.web.borrow().focus_shell();
+            cx.notify();
+            return;
+        }
+        self.execute_close_other_tabs(keep, cx);
+    }
+
+    fn execute_close_other_tabs(&mut self, keep: TabId, cx: &mut Context<Self>) {
+        let others: Vec<TabId> = {
+            let h = self.hub.lock();
+            h.tabs()
+                .filter(|t| t.id != keep && !t.pinned && t.owner == Owner::User)
+                .map(|t| t.id)
+                .collect()
+        };
         let count = others.len();
         for id in others {
-            self.close_tab(id, cx);
+            self.close_tab_inner(id, false, cx);
         }
         if count > 0 {
             self.toast(if count == 1 { "Closed 1 other tab".to_string() } else { format!("Closed {count} other tabs") });
         }
+    }
+
+    fn request_quit(&mut self, cx: &mut Context<Self>) {
+        let count = self.hub.lock().tabs().filter(|t| t.owner == Owner::User).count();
+        if !self.app_mode && should_confirm_multi_close(self.confirm_close_multiple, count) {
+            self.close_confirm = Some(CloseConfirm { kind: CloseConfirmKind::Quit, count });
+            self.web.borrow().focus_shell();
+            cx.notify();
+            return;
+        }
+        self.save_session();
+        cx.quit();
+    }
+
+    pub(super) fn cancel_close_confirm(&mut self) {
+        self.close_confirm = None;
+        self.focus_active_page();
+    }
+
+    pub(super) fn confirm_close_action(&mut self, cx: &mut Context<Self>) {
+        let Some(confirm) = self.close_confirm.take() else { return };
+        match confirm.kind {
+            CloseConfirmKind::Quit => {
+                self.save_session();
+                cx.quit();
+            }
+            CloseConfirmKind::CloseOthers(keep) => {
+                self.execute_close_other_tabs(keep, cx);
+                self.focus_active_page();
+            }
+            CloseConfirmKind::ClearLoose => {
+                self.execute_clear_loose_tabs(cx);
+                self.focus_active_page();
+            }
+        }
+        cx.notify();
     }
 
     pub(super) fn toggle_pin_for(&mut self, tab: TabId) {
@@ -1522,11 +1668,30 @@ impl RelayApp {
         self.try_focus_pending();
     }
 
+    /// Whether any shell-owned modal is currently drawn over the page area.
+    /// Native WKWebViews are hidden while true so they cannot cover overlays
+    /// or steal keyboard focus back from modal dialogs.
+    fn has_modal_overlay(&self) -> bool {
+        self.palette.is_some()
+            || self.settings_open
+            || self.library.is_some()
+            || self.shortcuts.is_some()
+            || self.connect_open
+            || self.downloads_open
+            || self.group_prompt.is_some()
+            || self.space_prompt.is_some()
+            || self.tab_switcher.is_some()
+            || self.ai_chat.is_some()
+            || self.profile_prompt.is_some()
+            || self.site_card.is_some()
+            || self.close_confirm.is_some()
+    }
+
     /// Focus the page only when the native view exists and no overlay owns
     /// the keyboard. Called from the pump until it succeeds.
     fn try_focus_pending(&mut self) {
         let Some(tab) = self.focus_pending else { return };
-        if self.active() != Some(tab) || self.palette.is_some() || self.settings_open || self.hints.is_some() {
+        if self.active() != Some(tab) || self.has_modal_overlay() || self.hints.is_some() {
             self.focus_pending = None;
             return;
         }
@@ -1549,8 +1714,13 @@ impl RelayApp {
     }
 
     /// Close one tab from ⌘W, its row's ×, or a middle click. Pinned tabs
-    /// are put to sleep; the last tab in a web app quits the app window.
+    /// are put to sleep; the last tab in a web app (or when `last_tab_close`
+    /// is set to `quit`) quits Relay.
     fn close_tab(&mut self, tab: TabId, cx: &mut Context<Self>) {
+        self.close_tab_inner(tab, true, cx);
+    }
+
+    fn close_tab_inner(&mut self, tab: TabId, allow_last_quit: bool, cx: &mut Context<Self>) {
         if self.tab_menu == Some(tab) {
             self.tab_menu = None;
         }
@@ -1594,7 +1764,7 @@ impl RelayApp {
         } else {
             self.hub.update(|h| h.clear_active());
         }
-        if self.app_mode && last {
+        if allow_last_quit && should_quit_on_last_tab(self.app_mode, self.last_tab_close, last) {
             self.save_session();
             cx.quit();
         }
@@ -2301,18 +2471,11 @@ impl RelayApp {
     }
 
     fn open_tab_switcher(&mut self, cx: &mut Context<Self>) {
-        let (space, active) = {
+        let (space_ids, active) = {
             let hub = self.hub.lock();
-            (hub.current_space().to_string(), hub.active())
+            (hub.space_tab_ids(), hub.active())
         };
-        let mut ids: Vec<TabId> = self.mru.iter().copied().collect();
-        let space_ids = self.hub.lock().space_tab_ids();
-        for id in &space_ids {
-            if !ids.contains(id) {
-                ids.push(*id);
-            }
-        }
-        ids.retain(|id| self.hub.lock().tab_space(*id) == Some(space.as_str()));
+        let ids = tab_switch_sequence(self.tab_switch_order, &self.mru, &space_ids);
         let tabs: Vec<(TabId, String, String)> = ids
             .into_iter()
             .filter_map(|id| self.hub.lock().tab(id).map(|t| (id, t.title.clone(), t.url.clone())))
@@ -3178,12 +3341,7 @@ impl RelayApp {
         if space_ids.is_empty() {
             return;
         }
-        let mut order: Vec<TabId> = self.mru.iter().copied().filter(|id| space_ids.contains(id)).collect();
-        for id in &space_ids {
-            if !order.contains(id) {
-                order.push(*id);
-            }
-        }
+        let order = tab_switch_sequence(self.tab_switch_order, &self.mru, &space_ids);
         let next = mru_next(&order, active, delta);
         if let Some(next) = next {
             self.activate(next);
@@ -3541,6 +3699,16 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.close_confirm.is_some() {
+            match k.key.as_str() {
+                "escape" => self.cancel_close_confirm(),
+                "enter" => self.confirm_close_action(cx),
+                _ => {}
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.tab_switcher.is_some() {
             match k.key.as_str() {
                 "escape" => self.close_tab_switcher(),
@@ -4048,6 +4216,9 @@ impl RelayApp {
             "bookmarks_icons_only" => self.bookmarks_icons_only = setting_enabled(Some(value)),
             "bookmarks_new_tab_only" => self.bookmarks_new_tab_only = setting_enabled(Some(value)),
             "always_show_close" => self.always_show_close = setting_enabled(Some(value)),
+            "last_tab_close" => self.last_tab_close = LastTabClose::parse(Some(value)),
+            "confirm_close_multiple" => self.confirm_close_multiple = setting_enabled(Some(value)),
+            "tab_switch_order" => self.tab_switch_order = TabSwitchOrder::parse(Some(value)),
             "default_zoom" => {
                 if let Ok(z) = value.parse::<f64>() {
                     if (0.5..=3.0).contains(&z) {
@@ -4273,7 +4444,7 @@ impl Render for RelayApp {
         // Panes re-register their bounds every frame; drop tabs not shown.
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
-        let overlay_open = self.palette.is_some() || self.settings_open || self.library.is_some() || self.shortcuts.is_some() || self.connect_open || self.downloads_open;
+        let overlay_open = self.has_modal_overlay();
         if overlay_open {
             // Keep native views from covering the palette or settings overlay.
             self.web.borrow().layout(&[]);
@@ -4425,8 +4596,7 @@ impl Render for RelayApp {
                 cx.notify();
             }))
             .on_action(cx.listener(|app, _: &Quit, _, cx| {
-                app.save_session();
-                cx.quit()
+                app.request_quit(cx);
             }))
             .on_action(cx.listener(|app, _: &ToggleTabStrip, _, cx| {
                 app.toggle_tab_strip(cx);
@@ -4570,6 +4740,9 @@ impl Render for RelayApp {
         }
         if let Some(prompt) = &self.space_prompt {
             root = root.child(self.render_space_prompt(prompt, cx));
+        }
+        if let Some(confirm) = self.close_confirm {
+            root = root.child(self.render_close_confirm(confirm, cx));
         }
         if let Some(switcher) = &self.tab_switcher {
             root = root.child(self.render_tab_switcher(switcher, cx));
@@ -4951,7 +5124,33 @@ fn compat_change(view_has_compat: bool, site_wants_compat: bool) -> CompatChange
 /// Browser-style zoom presets; `direction` 1 / -1 steps, 0 resets.
 const ZOOM_STEPS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
-/// Next tab in the MRU order, wrapping; `None` when the list is empty.
+/// Ordered tab sequence for Ctrl+Tab and the visual tab switcher.
+pub(crate) fn tab_switch_sequence(mode: TabSwitchOrder, mru: &[TabId], space_ids: &[TabId]) -> Vec<TabId> {
+    match mode {
+        TabSwitchOrder::Strip => space_ids.to_vec(),
+        TabSwitchOrder::Mru => {
+            let mut order: Vec<TabId> = mru.iter().copied().filter(|id| space_ids.contains(id)).collect();
+            for id in space_ids {
+                if !order.contains(id) {
+                    order.push(*id);
+                }
+            }
+            order
+        }
+    }
+}
+
+/// Whether closing the last tab should quit Relay.
+pub(crate) fn should_quit_on_last_tab(app_mode: bool, pref: LastTabClose, is_last: bool) -> bool {
+    is_last && (app_mode || pref == LastTabClose::Quit)
+}
+
+/// Whether a multi-tab close operation should ask before proceeding.
+pub(crate) fn should_confirm_multi_close(confirm_enabled: bool, count: usize) -> bool {
+    confirm_enabled && count >= 2
+}
+
+/// Next tab in the ordered list, wrapping; `None` when the list is empty.
 fn mru_next(order: &[TabId], active: Option<TabId>, delta: isize) -> Option<TabId> {
     if order.is_empty() {
         return None;

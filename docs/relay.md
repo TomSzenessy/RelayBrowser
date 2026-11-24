@@ -517,6 +517,14 @@ sleep policy never picks them, and ⌘W on a pinned tab switches to the next tab
 and sleeps the pinned one (scroll kept) instead of closing it; a lone pinned
 tab stays open. Pins persist through the saved session.
 
+Settings → Tabs (and `relay config`) expose three closing/switching preferences
+whose absent defaults preserve existing profiles: `last_tab_close` (`start_page`
+default or `quit` when closing the last unpinned tab), `confirm_close_multiple`
+(`off` default; when `on`, quitting or bulk-closing two or more tabs opens a
+cancellable confirmation modal), and `tab_switch_order` (`mru` default or `strip`
+order for ⌃Tab / ⌃⇧Tab and the visual switcher ⌘⌥T). Pinned-tab close behavior is
+unchanged by these preferences.
+
 ## Session restore
 
 With `restore_session` on (the default; `relay config set restore_session off`),

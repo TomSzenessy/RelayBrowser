@@ -344,10 +344,18 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
         }
         "blocking" | "mcp" | "restore_session" | "tabs_folded" | "bottom_bar" | "autofill_logins" | "login_offers" | "login_fill"
         | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "tab_icons_only" | "extension_toolbar" | "handoff" | "ai_page_context" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
-        | "downloads_ask" => match trimmed.to_ascii_lowercase().as_str() {
+        | "downloads_ask" | "confirm_close_multiple" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
             _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
+        },
+        "last_tab_close" => match trimmed.to_ascii_lowercase().as_str() {
+            "start_page" | "quit" => Ok(trimmed.to_ascii_lowercase()),
+            _ => bail!("invalid last_tab_close {value:?}: expected start_page or quit"),
+        },
+        "tab_switch_order" => match trimmed.to_ascii_lowercase().as_str() {
+            "mru" | "strip" => Ok(trimmed.to_ascii_lowercase()),
+            _ => bail!("invalid tab_switch_order {value:?}: expected mru or strip"),
         },
         "sync_folder" => {
             let path = trimmed;
@@ -397,7 +405,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, sync_folder, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, sync_folder, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, last_tab_close, confirm_close_multiple, tab_switch_order, downloads_ask, downloads_dir, default_zoom)"),
     }
 }
 
@@ -438,6 +446,9 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("downloads_ask = {}", setting("downloads_ask", "off"));
             println!("downloads_dir = {}", setting("downloads_dir", ""));
             println!("always_show_close = {}", setting("always_show_close", "off"));
+            println!("last_tab_close = {}", setting("last_tab_close", "start_page"));
+            println!("confirm_close_multiple = {}", setting("confirm_close_multiple", "off"));
+            println!("tab_switch_order = {}", setting("tab_switch_order", "mru"));
             println!("bangs = {}", cfg.bangs);
             println!("start_sections = {}", cfg.start_sections);
             Ok(())
@@ -457,11 +468,18 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
                 "tabs_position" => println!("{}", store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).unwrap_or_else(|| "left".into())),
                 "bottom_bar" => println!("{}", store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "on".into())),
-                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" | "address_bar" | "tab_icons_only" | "extension_toolbar" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close"
-        | "downloads_ask" => {
+                "login_fill" | "login_save" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "extension_toolbar" | "ai_page_context" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
                 }
-                "compact_tabs" => println!("{}", store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).unwrap_or_else(|| "off".into())),
+                "autofill_logins" | "compact_tabs" | "bookmarks_bar" | "address_bar" | "tab_icons_only" | "handoff" | "bookmarks_icons_only" | "bookmarks_new_tab_only" | "always_show_close" | "downloads_ask" | "confirm_close_multiple" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "off".into()))
+                }
+                "last_tab_close" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting("last_tab_close").ok().flatten()).unwrap_or_else(|| "start_page".into()))
+                }
+                "tab_switch_order" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting("tab_switch_order").ok().flatten()).unwrap_or_else(|| "mru".into()))
+                }
                 "sync_folder" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default())
                 }
@@ -473,7 +491,7 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 }
                 "bangs" => println!("{}", cfg.bangs),
                 "start_sections" => println!("{}", cfg.start_sections),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, sync_folder, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, downloads_ask, downloads_dir, default_zoom)"),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, address_bar, tab_icons_only, extension_toolbar, sync_folder, bookmarks_icons_only, bookmarks_new_tab_only, always_show_close, last_tab_close, confirm_close_multiple, tab_switch_order, downloads_ask, downloads_dir, default_zoom)"),
             }
             Ok(())
         }

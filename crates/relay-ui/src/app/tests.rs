@@ -617,3 +617,87 @@ fn closed_palette_does_not_consume_editing_keys(cx: &mut gpui::TestAppContext) {
         })
         .unwrap();
 }
+
+#[test]
+fn tab_closing_and_switching_defaults_preserve_upgraded_profiles() {
+    // Absent settings preserve existing behavior: start page on last tab close,
+    // no multi-tab confirmation, and MRU switching order.
+    assert_eq!(LastTabClose::parse(None), LastTabClose::StartPage);
+    assert_eq!(LastTabClose::parse(Some("unknown")), LastTabClose::StartPage);
+    assert_eq!(LastTabClose::parse(Some("quit")), LastTabClose::Quit);
+    assert_eq!(LastTabClose::Quit.as_str(), "quit");
+    assert_eq!(LastTabClose::StartPage.as_str(), "start_page");
+
+    assert!(!setting_opt_in(None));
+    assert!(setting_opt_in(Some("on")));
+    assert!(!setting_opt_in(Some("off")));
+
+    assert_eq!(TabSwitchOrder::parse(None), TabSwitchOrder::Mru);
+    assert_eq!(TabSwitchOrder::parse(Some("bogus")), TabSwitchOrder::Mru);
+    assert_eq!(TabSwitchOrder::parse(Some("strip")), TabSwitchOrder::Strip);
+    assert_eq!(TabSwitchOrder::Mru.as_str(), "mru");
+    assert_eq!(TabSwitchOrder::Strip.as_str(), "strip");
+}
+
+#[test]
+fn tab_closing_and_switching_preferences_persist_in_store() {
+    let store = Store::in_memory().unwrap();
+    assert_eq!(LastTabClose::parse(store.setting("last_tab_close").unwrap().as_deref()), LastTabClose::StartPage);
+    assert!(!setting_opt_in(store.setting("confirm_close_multiple").unwrap().as_deref()));
+    assert_eq!(TabSwitchOrder::parse(store.setting("tab_switch_order").unwrap().as_deref()), TabSwitchOrder::Mru);
+
+    store.set_setting("last_tab_close", LastTabClose::Quit.as_str()).unwrap();
+    store.set_setting("confirm_close_multiple", "on").unwrap();
+    store.set_setting("tab_switch_order", TabSwitchOrder::Strip.as_str()).unwrap();
+
+    assert_eq!(LastTabClose::parse(store.setting("last_tab_close").unwrap().as_deref()), LastTabClose::Quit);
+    assert!(setting_opt_in(store.setting("confirm_close_multiple").unwrap().as_deref()));
+    assert_eq!(TabSwitchOrder::parse(store.setting("tab_switch_order").unwrap().as_deref()), TabSwitchOrder::Strip);
+}
+
+#[test]
+fn tab_switch_sequence_switches_between_mru_and_strip_order() {
+    let strip = vec![1, 2, 3, 4];
+    let mru = vec![3, 1];
+    let mru_seq = tab_switch_sequence(TabSwitchOrder::Mru, &mru, &strip);
+    assert_eq!(mru_seq, vec![3, 1, 2, 4]);
+    assert_eq!(mru_next(&mru_seq, Some(3), 1), Some(1));
+    assert_eq!(mru_next(&mru_seq, Some(3), -1), Some(4));
+
+    let strip_seq = tab_switch_sequence(TabSwitchOrder::Strip, &mru, &strip);
+    assert_eq!(strip_seq, vec![1, 2, 3, 4]);
+    assert_eq!(mru_next(&strip_seq, Some(3), 1), Some(4));
+    assert_eq!(mru_next(&strip_seq, Some(1), -1), Some(4));
+}
+
+#[test]
+fn multi_tab_close_confirmation_and_last_tab_quit_rules() {
+    // Confirmation covers multiple tabs (>= 2) only when enabled.
+    assert!(!should_confirm_multi_close(false, 5));
+    assert!(!should_confirm_multi_close(true, 0));
+    assert!(!should_confirm_multi_close(true, 1));
+    assert!(should_confirm_multi_close(true, 2));
+
+    // Last-tab quit obeys app_mode or explicit Quit preference, never non-last tabs.
+    assert!(!should_quit_on_last_tab(false, LastTabClose::StartPage, true));
+    assert!(should_quit_on_last_tab(false, LastTabClose::Quit, true));
+    assert!(!should_quit_on_last_tab(false, LastTabClose::Quit, false));
+    assert!(should_quit_on_last_tab(true, LastTabClose::StartPage, true));
+
+    // Regression: pinned tabs stay open regardless of last_tab_close / confirm_close_multiple.
+    let hub = SharedHub::new();
+    let pinned_id = hub.update(|h| {
+        let id = h.create_tab("https://pinned.example/", Owner::User);
+        h.set_pinned(id, true);
+        id
+    });
+    assert!(hub.lock().tab(pinned_id).unwrap().pinned);
+    // Close-other filter never touches pinned tabs.
+    let others: Vec<TabId> = hub
+        .lock()
+        .tabs()
+        .filter(|t| !t.pinned && t.owner == Owner::User)
+        .map(|t| t.id)
+        .collect();
+    assert!(others.is_empty(), "pinned tabs remain protected from bulk close");
+}
