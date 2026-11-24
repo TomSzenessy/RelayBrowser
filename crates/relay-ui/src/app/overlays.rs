@@ -1259,174 +1259,6 @@ impl RelayApp {
         )
     }
 
-    pub(super) fn render_ai_chat(&self, chat: &AiChat, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = self.theme;
-        let mut messages = div().id("ai-messages").flex().flex_col().gap_2().px_4().py_3().max_h(px(330.)).overflow_y_scroll();
-        if chat.messages.is_empty() {
-            let copy = if self.ai_page_context {
-                "Ask about the current page. Its URL, title, and up to 20,000 characters of visible text are sent to your configured AI endpoint."
-            } else {
-                "Ask about the current page. The URL, title, and your question are sent; visible page text is off in Settings."
-            };
-            messages = messages.child(div().text_size(px(12.)).text_color(t.muted).child(copy)).child(
-                div()
-                    .id("ai-summarize")
-                    .px_2()
-                    .py_1()
-                    .rounded(px(5.))
-                    .bg(t.well)
-                    .text_size(px(11.))
-                    .text_color(t.text)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .on_click(cx.listener(|app, _, _, cx| app.summarize_page(cx)))
-                    .child("Summarize this page"),
-            );
-        }
-        for (index, (user, text)) in chat.messages.iter().enumerate() {
-            messages = messages.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .p_2()
-                    .rounded(px(7.))
-                    .when(*user, |d| d.bg(t.well))
-                    .child(div().text_size(px(9.)).text_color(t.muted).child(if *user { "YOU" } else { "AI" }))
-                    .child(div().text_size(px(12.)).text_color(t.text).child(SharedString::from(text.clone())))
-                    .when(!*user, |d| {
-                        let snippet = text.clone();
-                        d.child(
-                            div()
-                                .id(SharedString::from(format!("ai-copy-{index}")))
-                                .mt_1()
-                                .text_size(px(9.))
-                                .text_color(t.muted)
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(t.text))
-                                .on_click(cx.listener(move |app, _, _, cx| app.copy_ai_text(snippet.clone(), cx)))
-                                .child("copy"),
-                        )
-                    }),
-            );
-        }
-        if chat.busy {
-            messages = messages.child(div().text_size(px(11.)).text_color(t.muted).child("Thinking…"));
-        }
-        if let Some(error) = &chat.error {
-            messages = messages.child(div().text_size(px(11.)).text_color(t.error).child(SharedString::from(error.clone())));
-        }
-        let stop = div()
-            .id("ai-stop")
-            .px_3()
-            .py_1p5()
-            .rounded(px(6.))
-            .bg(t.well)
-            .text_size(px(12.))
-            .text_color(t.text)
-            .cursor_pointer()
-            .hover(|s| s.bg(t.hover))
-            .on_click(cx.listener(|app, _, _, cx| app.stop_ai(cx)))
-            .child("Stop");
-        let send = div()
-            .id("ai-send")
-            .px_3()
-            .py_1p5()
-            .rounded(px(6.))
-            .bg(t.accent)
-            .text_size(px(12.))
-            .text_color(gpui::rgb(0xffffff))
-            .cursor_pointer()
-            .hover(|s| s.opacity(0.9))
-            .on_click(cx.listener(|app, _, _, cx| app.send_ai(cx)))
-            .child("Send");
-        let input = div()
-            .flex_1()
-            .min_w_0()
-            .h(px(34.))
-            .px_3()
-            .flex()
-            .items_center()
-            .rounded(px(7.))
-            .bg(t.well)
-            .text_size(px(12.))
-            .text_color(if chat.input.is_empty() { t.muted } else { t.text })
-            .child(SharedString::from(if chat.input.is_empty() { "Ask a question…".to_string() } else { chat.input.clone() }))
-            .child(div().ml_0p5().text_color(t.accent).child("▏"));
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(70.)).bg(t.scrim).child(
-            div()
-                .id("ai-chat")
-                .w(px(600.))
-                .flex()
-                .flex_col()
-                .rounded(px(12.))
-                .bg(t.raised)
-                .shadow_lg()
-                .overflow_hidden()
-                .on_mouse_down_out(cx.listener(|app, _, _, cx| {
-                    app.close_ai_chat();
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .px_4()
-                        .py_3()
-                        .child(div().text_size(px(15.)).text_color(t.text).child("Ask AI"))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .id("ai-new")
-                                        .text_size(px(11.))
-                                        .text_color(t.muted)
-                                        .cursor_pointer()
-                                        .hover(|s| s.text_color(t.text))
-                                        .on_click(cx.listener(|app, _, _, cx| app.new_ai_chat(cx)))
-                                        .child("New"),
-                                )
-                                .child(
-                            div()
-                                .id("ai-close")
-                                .px_2()
-                                .cursor_pointer()
-                                .text_color(t.muted)
-                                .hover(|s| s.text_color(t.text))
-                                .on_click(cx.listener(|app, _, _, cx| {
-                                    app.close_ai_chat();
-                                    cx.notify();
-                                }))
-                                .child("×"),
-                                ),
-                        ),
-                )
-                .child(messages)
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_4()
-                        .py_3()
-                        .border_t_1()
-                        .border_color(t.well)
-                        .child(input)
-                        .when(chat.busy, |d| d.child(stop))
-                        .child(send),
-                )
-                .child(div().px_4().pb_3().text_size(px(9.)).text_color(t.muted).child(if self.ai_page_context {
-                    "↩ sends · esc closes · key stays in the login Keychain · page text is sent"
-                } else {
-                    "↩ sends · esc closes · key stays in the login Keychain · page text is off"
-                })),
-        )
-    }
-
     pub(super) fn render_site_card(&self, host: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let prefs = self.store.as_ref().and_then(|s| s.site_pref(host).ok()).unwrap_or_default();
@@ -2019,12 +1851,27 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
-                let bottom_sw = switch("settings-bottom-bar", self.show_bottom_bar, false)
-                    .on_click(cx.listener(|app, _, _, cx| {
-                        app.toggle_bottom_bar();
-                        cx.notify();
-                    }))
-                    .into_any_element();
+                let mut status_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.well);
+                for pos in StatusBarPosition::ALL {
+                    let active = self.status_bar_position == pos;
+                    status_seg = status_seg.child(
+                        div()
+                            .id(SharedString::from(format!("settings-status-bar-{}", pos.as_str())))
+                            .px_3()
+                            .py_1()
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .when(active, |d| d.bg(t.active))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.set_status_bar_position(pos);
+                                cx.notify();
+                            }))
+                            .child(pos.label()),
+                    );
+                }
                 let dark = t.background.l < 0.5;
                 let mut bg_row = div().flex().flex_wrap().items_center().justify_end().gap_1p5();
                 for preset in theme::StartBackground::PRESETS {
@@ -2077,7 +1924,7 @@ impl RelayApp {
                     .child(row("Show tab strip", Some("Hide to maximize page area; ⌘S toggles anytime"), strip_visible))
                     .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw))
                     .child(row("Always show the address bar", Some("One quiet URL line above the page; click it to edit in ⌘K"), address_sw))
-                    .child(row("Show the bottom bar", Some("URL, tab count and agent state; hide it for a quieter page (⌘⌥B)"), bottom_sw));
+                    .child(row("Status bar", Some("Place the compact URL/status bar at the top, bottom, or hide it (⌘⌥B)"), status_seg.into_any_element()));
                 div()
                     .flex()
                     .flex_col()

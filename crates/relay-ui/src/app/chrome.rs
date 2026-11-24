@@ -70,6 +70,31 @@ impl RelayApp {
             .into_any_element()
     }
 
+    fn agent_sidebar_button(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let open = self.inspector_open && self.sidebar_tab == SidebarTab::Agent;
+        let has_agent_tabs = self.hub.lock().tabs().any(|tab| tab.owner == Owner::Agent);
+        let paused = self.hub.agents_paused();
+        div()
+            .id("nav-agent-sidebar")
+            .w(px(24.))
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(5.))
+            .text_size(px(12.))
+            .when(open, |d| d.bg(t.agent_bg).text_color(t.agent))
+            .when(!open, |d| d.text_color(if paused { t.warn } else if has_agent_tabs { t.agent } else { t.muted }))
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover).text_color(t.text))
+            .on_click(cx.listener(|app, _, _, cx| {
+                app.toggle_agent_sidebar(cx);
+            }))
+            .child("✦")
+            .into_any_element()
+    }
+
     /// Current-space pill; opens the space prompt.
     fn space_chip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
@@ -197,6 +222,7 @@ impl RelayApp {
                                 Command::ToggleBookmark,
                                 cx,
                             ))
+                            .child(self.agent_sidebar_button(cx))
                             .child(self.fold_button(if is_left { "«" } else { "»" }, cx)),
                     ),
             );
@@ -310,6 +336,7 @@ impl RelayApp {
                     Command::ToggleBookmark,
                     cx,
                 ))
+                .child(self.agent_sidebar_button(cx))
                 .child(self.fold_button("⌃", cx))
                 .into_any_element()
         }
@@ -1487,7 +1514,7 @@ impl RelayApp {
         )
     }
 
-    pub(super) fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_status(&self, at_top: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let (url, hover, total, asleep, agents) = {
             let h = self.hub.lock();
@@ -1510,27 +1537,27 @@ impl RelayApp {
         if agents > 0 {
             right.push_str(&format!(" · {agents} agent"));
         }
-        if self.mcp_enabled {
-            right.push_str(" · agents: relay mcp");
-        } else {
-            right.push_str(" · mcp: off");
-        }
+        let agent_open = self.inspector_open && self.sidebar_tab == SidebarTab::Agent;
+        let paused = self.hub.agents_paused();
+        let clear_traffic_lights = at_top && (self.strip.folded || self.strip.placement == tabstrip::Placement::Right);
         div()
-            .h(px(24.))
+            .h(px(22.))
             .flex()
             .items_center()
-            .px_3()
-            .gap_3()
+            .pl(if clear_traffic_lights { px(78.) } else { px(12.) })
+            .pr_3()
+            .gap_2()
             .text_size(px(11.))
             .text_color(t.muted)
             .bg(t.background)
+            .when(at_top, |d| d.border_b_1().border_color(t.border))
+            .when(!at_top, |d| d.border_t_1().border_color(t.border))
             .when(self.strip.folded, |d| {
                 d.child(
                     div()
                         .id("status-unfold-tabs")
                         .px_1p5()
-                        .py_0p5()
-                        .rounded(px(5.))
+                        .rounded(px(4.))
                         .bg(t.well)
                         .text_size(px(10.))
                         .text_color(t.text)
@@ -1559,7 +1586,20 @@ impl RelayApp {
                     }))
                     .child(SharedString::from(status_text)),
             )
-            .child(SharedString::from(right))
+            .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(right)))
+            .child(
+                div()
+                    .id("status-agent-toggle")
+                    .px_1p5()
+                    .rounded(px(4.))
+                    .when(agent_open, |d| d.bg(t.agent_bg).text_color(t.agent))
+                    .when(!agent_open, |d| d.text_color(if paused { t.warn } else if self.mcp_enabled { t.muted } else { t.muted }))
+                    .text_size(px(10.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                    .on_click(cx.listener(|app, _, _, cx| app.toggle_agent_sidebar(cx)))
+                    .child(if paused { "✦ Paused" } else { "✦ Agent" }),
+            )
     }
 }
 

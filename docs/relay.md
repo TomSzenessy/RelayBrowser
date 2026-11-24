@@ -537,6 +537,12 @@ is checked for WCAG AA contrast (dot ≥ 3:1 and heading text/muted on tinted
 surface ≥ 4.5:1) in `theme.rs`; unknown or deleted colours fall back to the
 deterministic name hash without losing the group.
 
+The compact 22 pt status bar supports `status_bar_position = top | bottom | hidden`
+(default `hidden`; legacy `bottom_bar` remains supported). The 360 pt right
+sidebar (`✦ Agent` / `Inspector`) docks live agent status, per-site policy,
+agent-owned tabs, recent MCP audit activity, shell-write client grants, and the
+side-by-side AI page assistant directly beside the live `WKWebView`.
+
 ## Session restore
 
 With `restore_session` on (the default; `relay config set restore_session off`),

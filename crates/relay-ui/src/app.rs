@@ -188,6 +188,58 @@ struct TabSwitcher {
     selected: usize,
 }
 
+/// Placement of the compact URL/status bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum StatusBarPosition {
+    Top,
+    Bottom,
+    #[default]
+    Hidden,
+}
+
+impl StatusBarPosition {
+    pub(crate) const ALL: [StatusBarPosition; 3] = [Self::Top, Self::Bottom, Self::Hidden];
+
+    pub(crate) fn parse(raw: Option<&str>, legacy_bottom_bar: Option<&str>) -> Self {
+        if let Some(value) = raw {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "top" => return Self::Top,
+                "bottom" => return Self::Bottom,
+                "hidden" | "off" | "none" => return Self::Hidden,
+                _ => {}
+            }
+        }
+        if let Some(legacy) = legacy_bottom_bar {
+            return if setting_enabled(Some(legacy)) { Self::Bottom } else { Self::Hidden };
+        }
+        Self::Hidden
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+            Self::Hidden => "hidden",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Top => "Top",
+            Self::Bottom => "Bottom",
+            Self::Hidden => "Hidden",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Hidden => Self::Top,
+            Self::Top => Self::Bottom,
+            Self::Bottom => Self::Hidden,
+        }
+    }
+}
+
 /// What closing the last unpinned tab does in normal browser mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum LastTabClose {
@@ -431,9 +483,8 @@ pub struct RelayApp {
     login_fill_enabled: bool,
     /// Offer to save a login after a successful sign-in.
     login_save_enabled: bool,
-    /// The status bar at the window's bottom edge; hide it for a quieter page
-    /// (⌘⌥B or Settings → Appearance).
-    show_bottom_bar: bool,
+    /// Placement of the compact status bar (Top, Bottom, or Hidden; ⌘⌥B cycles).
+    status_bar_position: StatusBarPosition,
     /// Non-secret autofill offer: `(tab, url, form_idx, vec![(username, path)])`.
     login_fill_prompt: Option<(TabId, String, i64, Vec<(String, String)>)>,
     /// Fill a lone saved login as soon as a password field gets native focus.
@@ -464,6 +515,10 @@ pub struct RelayApp {
     /// Send visible page text as AI context (opt-out privacy switch).
     ai_page_context: bool,
     ai_chat: Option<AiChat>,
+    /// Whether the docked Agent sidebar's chat composer currently owns typing.
+    agent_input_focused: bool,
+    /// Whether the MCP & permissions drawer in the Agent sidebar is expanded.
+    agent_mcp_expanded: bool,
     tab_switcher: Option<TabSwitcher>,
     ai_stream: Option<std::sync::mpsc::Receiver<relay_extensions::ai::StreamEvent>>,
     ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -730,7 +785,10 @@ impl RelayApp {
             .and_then(|v| v.parse::<f64>().ok())
             .filter(|z| (0.5..=3.0).contains(z))
             .unwrap_or(1.0);
-        let show_bottom_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).as_deref());
+        let status_bar_position = StatusBarPosition::parse(
+            store.as_ref().and_then(|s| s.setting("status_bar_position").ok().flatten()).as_deref(),
+            store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).as_deref(),
+        );
         let bookmarked_urls: HashSet<String> = store
             .as_ref()
             .and_then(|s| s.bookmarks().ok())
@@ -796,7 +854,9 @@ impl RelayApp {
             ai_focus: 0,
             ai_has_key,
             ai_page_context,
-            ai_chat: None,
+            ai_chat: Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None }),
+            agent_input_focused: false,
+            agent_mcp_expanded: false,
             tab_switcher: None,
             ai_stream: None,
             ai_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -816,7 +876,7 @@ impl RelayApp {
             close_confirm: None,
             bookmarks_bar: vec![],
             default_zoom,
-            show_bottom_bar,
+            status_bar_position,
             login_fill_prompt: None,
             login_save_prompt: None,
             declined_login_saves: HashSet::new(),
@@ -1694,17 +1754,20 @@ impl RelayApp {
             || self.group_prompt.is_some()
             || self.space_prompt.is_some()
             || self.tab_switcher.is_some()
-            || self.ai_chat.is_some()
             || self.profile_prompt.is_some()
             || self.site_card.is_some()
             || self.close_confirm.is_some()
     }
 
-    /// Focus the page only when the native view exists and no overlay owns
-    /// the keyboard. Called from the pump until it succeeds.
+    /// Focus the page only when the native view exists and no overlay or
+    /// docked Agent chat composer owns the keyboard.
     fn try_focus_pending(&mut self) {
         let Some(tab) = self.focus_pending else { return };
-        if self.active() != Some(tab) || self.has_modal_overlay() || self.hints.is_some() {
+        if self.active() != Some(tab)
+            || self.has_modal_overlay()
+            || self.hints.is_some()
+            || (self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused)
+        {
             self.focus_pending = None;
             return;
         }
@@ -1926,12 +1989,35 @@ impl RelayApp {
 
     /// ⌘⌥B: hide or show the bottom status bar. A toast still reveals it for
     /// a moment, because the native page covers the shell.
-    fn toggle_bottom_bar(&mut self) {
-        self.show_bottom_bar = !self.show_bottom_bar;
+    fn set_status_bar_position(&mut self, pos: StatusBarPosition) {
+        self.status_bar_position = pos;
         if let Some(store) = &self.store {
-            let _ = store.set_setting("bottom_bar", if self.show_bottom_bar { "on" } else { "off" });
+            let _ = store.set_setting("status_bar_position", pos.as_str());
+            let _ = store.set_setting("bottom_bar", if pos == StatusBarPosition::Hidden { "off" } else { "on" });
         }
-        self.toast(if self.show_bottom_bar { "Bottom bar shown" } else { "Bottom bar hidden" });
+    }
+
+    fn toggle_bottom_bar(&mut self) {
+        let next = self.status_bar_position.next();
+        self.set_status_bar_position(next);
+        self.toast(format!("Status bar: {}", next.label()));
+    }
+
+    pub(super) fn toggle_agent_sidebar(&mut self, cx: &mut Context<Self>) {
+        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent {
+            self.inspector_open = false;
+            self.agent_input_focused = false;
+            self.hub.set_sidebar(false, self.sidebar_tab.as_str());
+            self.focus_active_page();
+        } else {
+            self.inspector_open = true;
+            self.sidebar_tab = SidebarTab::Agent;
+            self.hub.set_sidebar(true, self.sidebar_tab.as_str());
+            if self.ai_chat.is_none() {
+                self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
+            }
+        }
+        cx.notify();
     }
 
     pub(super) fn set_tab_strip_placement(&mut self, placement: tabstrip::Placement, cx: &mut Context<Self>) {
@@ -2537,24 +2623,32 @@ impl RelayApp {
     }
 
     fn open_ai_chat(&mut self, cx: &mut Context<Self>) {
-        if !self.ai_has_key {
-            self.settings_open = true;
-            self.settings_tab = SettingsTab::Ai;
-            self.toast("Set an AI API key in Settings → AI");
-            cx.notify();
-            return;
-        }
         self.settings_open = false;
+        self.inspector_open = true;
+        self.sidebar_tab = SidebarTab::Agent;
+        self.hub.set_sidebar(true, self.sidebar_tab.as_str());
         self.ai_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
-        self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
+        if self.ai_chat.is_none() {
+            self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
+        }
+        self.agent_input_focused = self.ai_has_key;
+        if self.agent_input_focused {
+            self.web.borrow().focus_shell();
+        }
+        cx.notify();
+    }
+
+    pub(super) fn focus_agent_input(&mut self, cx: &mut Context<Self>) {
+        if self.ai_chat.is_none() {
+            self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
+        }
+        self.agent_input_focused = true;
         self.web.borrow().focus_shell();
         cx.notify();
     }
 
-    fn close_ai_chat(&mut self) {
-        self.ai_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        self.ai_chat = None;
-        self.ai_stream = None;
+    fn unfocus_agent_input(&mut self) {
+        self.agent_input_focused = false;
         self.focus_active_page();
     }
 
@@ -3845,9 +3939,9 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        if self.ai_chat.is_some() {
+        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused && !self.has_modal_overlay() {
             match k.key.as_str() {
-                "escape" => self.close_ai_chat(),
+                "escape" => self.unfocus_agent_input(),
                 "enter" => self.send_ai(cx),
                 "backspace" => {
                     if let Some(chat) = self.ai_chat.as_mut() {
@@ -4319,7 +4413,16 @@ impl RelayApp {
                 }
             }
             "tabs_folded" => self.strip.folded = setting_enabled(Some(value)),
-            "bottom_bar" => self.show_bottom_bar = setting_enabled(Some(value)),
+            "bottom_bar" => {
+                self.status_bar_position = if setting_enabled(Some(value)) {
+                    StatusBarPosition::Bottom
+                } else {
+                    StatusBarPosition::Hidden
+                };
+            }
+            "status_bar_position" => {
+                self.status_bar_position = StatusBarPosition::parse(Some(value), None);
+            }
             "autofill_logins" => self.autofill_logins = setting_enabled(Some(value)),
             "tab_glyphs" => self.tab_glyphs = setting_enabled(Some(value)),
             "compact_tabs" => self.compact_tabs = setting_enabled(Some(value)),
@@ -4572,10 +4675,16 @@ impl Render for RelayApp {
             self.placements.borrow_mut().clear();
         }
         let t = self.theme;
+        let show_top_status = !self.app_mode && self.status_bar_position == StatusBarPosition::Top;
+        let show_bottom_status = (!self.app_mode && self.status_bar_position == StatusBarPosition::Bottom)
+            || (!show_top_status && (self.toast.is_some() || self.hints.is_some()));
         let content = if overlay_open {
             div().flex_1().h_full().bg(t.page).into_any_element()
         } else {
             let mut column = div().flex_1().h_full().flex().flex_col().overflow_hidden();
+            if show_top_status {
+                column = column.child(self.render_status(true, cx));
+            }
             if self.show_address_bar && !self.app_mode {
                 column = column.child(self.render_address_bar(cx));
             }
@@ -4834,10 +4943,10 @@ impl Render for RelayApp {
         if let Some(banner) = self.render_login_save_banner(cx) {
             root = root.child(banner);
         }
-        // A hidden bar still appears for a toast or link hints: those messages
-        // have nowhere else to go while the native page covers the shell.
-        if (!self.app_mode && self.show_bottom_bar) || self.toast.is_some() || self.hints.is_some() {
-            root = root.child(self.render_status(cx));
+        // When hidden, a compact temporary bar still appears only for a toast
+        // or link hints so those messages stay visible above WKWebView.
+        if show_bottom_status {
+            root = root.child(self.render_status(false, cx));
         }
         // The folded-strip pill is a small overlay over the page, not part of
         // the layout: show it on a page too, or hiding the bottom bar leaves
@@ -4867,9 +4976,6 @@ impl Render for RelayApp {
         }
         if let Some(switcher) = &self.tab_switcher {
             root = root.child(self.render_tab_switcher(switcher, cx));
-        }
-        if let Some(chat) = &self.ai_chat {
-            root = root.child(self.render_ai_chat(chat, cx));
         }
         if let Some(prompt) = &self.profile_prompt {
             root = root.child(self.render_profile_prompt(prompt, cx));

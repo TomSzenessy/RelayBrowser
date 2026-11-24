@@ -801,3 +801,23 @@ fn start_background_persists_validates_local_images_and_rejects_bad_inputs() {
     assert_eq!(load_start_background(Some("https://example.test/bg.png")).0, theme::StartBackground::Default);
     assert_eq!(load_start_background(Some("file:https://example.test/bg.png")).0, theme::StartBackground::Default);
 }
+
+#[test]
+fn status_bar_position_defaults_hidden_cycles_and_honors_legacy_setting() {
+    assert_eq!(StatusBarPosition::parse(None, None), StatusBarPosition::Hidden);
+    assert_eq!(StatusBarPosition::parse(None, Some("on")), StatusBarPosition::Bottom);
+    assert_eq!(StatusBarPosition::parse(None, Some("off")), StatusBarPosition::Hidden);
+    assert_eq!(StatusBarPosition::parse(Some("top"), Some("off")), StatusBarPosition::Top);
+    assert_eq!(StatusBarPosition::parse(Some("bottom"), None), StatusBarPosition::Bottom);
+    assert_eq!(StatusBarPosition::parse(Some("hidden"), Some("on")), StatusBarPosition::Hidden);
+    assert_eq!(StatusBarPosition::Hidden.next(), StatusBarPosition::Top);
+    assert_eq!(StatusBarPosition::Top.next(), StatusBarPosition::Bottom);
+    assert_eq!(StatusBarPosition::Bottom.next(), StatusBarPosition::Hidden);
+
+    let store = Store::in_memory().unwrap();
+    store.set_setting("status_bar_position", StatusBarPosition::Top.as_str()).unwrap();
+    assert_eq!(
+        StatusBarPosition::parse(store.setting("status_bar_position").unwrap().as_deref(), None),
+        StatusBarPosition::Top
+    );
+}

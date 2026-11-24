@@ -5,42 +5,61 @@ use super::*;
 impl RelayApp {
     pub(super) fn render_inspector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let mut head = div().flex().items_center().gap_1().px_2().h(px(32.));
-        for (tab, label) in [(SidebarTab::Agent, "Agent"), (SidebarTab::Inspector, "Inspector")] {
+        let has_agent_tabs = self.hub.lock().tabs().any(|tab| tab.owner == Owner::Agent);
+        let mut head = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_3()
+            .h(px(36.))
+            .border_b_1()
+            .border_color(t.border);
+        for (tab, label) in [(SidebarTab::Agent, "✦ Agent"), (SidebarTab::Inspector, "Inspector")] {
             let on = self.sidebar_tab == tab;
             head = head.child(
                 div()
                     .id(if tab == SidebarTab::Agent { "sidebar-agent" } else { "sidebar-inspector" })
-                    .px_2()
-                    .py_0p5()
-                    .rounded(px(4.))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_2p5()
+                    .py_1()
+                    .rounded(px(6.))
                     .text_size(px(12.))
                     .cursor_pointer()
                     .text_color(if on { t.text } else { t.muted })
-                    .when(on, |d| d.bg(t.active))
+                    .when(on, |d| d.bg(if tab == SidebarTab::Agent { t.agent_bg } else { t.active }))
+                    .hover(|s| s.text_color(t.text))
                     .on_click(cx.listener(move |app, _, _, cx| {
                         app.sidebar_tab = tab;
+                        if tab != SidebarTab::Agent {
+                            app.agent_input_focused = false;
+                        }
                         app.hub.set_sidebar(app.inspector_open, tab.as_str());
                         cx.notify();
                     }))
-                    .child(label),
+                    .child(label)
+                    .when(tab == SidebarTab::Agent && has_agent_tabs, |d| {
+                        d.child(div().size(px(6.)).rounded_full().bg(t.agent))
+                    }),
             );
         }
         head = head.child(div().flex_1()).child(
             div()
                 .id("sidebar-collapse")
-                .w(px(20.))
-                .h(px(20.))
+                .w(px(22.))
+                .h(px(22.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(4.))
+                .rounded(px(5.))
                 .text_size(px(14.))
                 .text_color(t.muted)
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover).text_color(t.text))
                 .on_click(cx.listener(|app, _, _, cx| {
                     app.inspector_open = false;
+                    app.agent_input_focused = false;
                     app.hub.set_sidebar(false, app.sidebar_tab.as_str());
                     app.focus_active_page();
                     cx.notify();
@@ -49,17 +68,25 @@ impl RelayApp {
         );
         let body = match self.sidebar_tab {
             SidebarTab::Agent => self.render_agent_pane(cx),
-            SidebarTab::Inspector => self.render_inspector_pane(cx),
+            SidebarTab::Inspector => div()
+                .id("sidebar-body")
+                .flex_1()
+                .overflow_y_scroll()
+                .font_family("Menlo")
+                .text_size(px(12.))
+                .child(self.render_inspector_pane(cx))
+                .into_any_element(),
         };
         div()
-            .w(px(380.))
+            .w(px(360.))
             .h_full()
             .flex()
             .flex_col()
             .bg(t.surface)
-            .font_family("Menlo")
+            .border_l_1()
+            .border_color(t.border)
             .child(head)
-            .child(div().id("sidebar-body").flex_1().overflow_y_scroll().text_size(px(12.)).child(body))
+            .child(body)
     }
 
     fn render_agent_pane(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -72,39 +99,30 @@ impl RelayApp {
                 let policy = self.hub.agent_policy_for_host(&host);
                 (host, policy)
             })
-            .unwrap_or_else(|| ("no site".to_string(), relay_bridge::AgentPolicy::Allow));
+            .unwrap_or_else(|| ("No active site".to_string(), relay_bridge::AgentPolicy::Allow));
         let paused = self.hub.agents_paused();
+        let agent_tabs: Vec<(TabId, String, String, bool)> = self
+            .hub
+            .lock()
+            .tabs()
+            .filter(|tab| tab.owner == Owner::Agent)
+            .map(|tab| (tab.id, tab.title.clone(), tab.url.clone(), tab.challenge.is_some()))
+            .collect();
         let clients = self.store.as_ref().and_then(|s| s.mcp_clients().ok()).unwrap_or_default();
+        let recent_audit = self.store.as_ref().and_then(|s| s.agent_audit(5).ok()).unwrap_or_default();
         let granted = clients.iter().filter(|c| c.granted).count();
-        let button = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .px_2()
-                .py_1()
-                .rounded(px(5.))
-                .text_size(px(11.))
-                .text_color(t.text)
-                .cursor_pointer()
-                .hover(|s| s.bg(t.hover))
-                .child(label)
-        };
-        let mut shell_section = div()
+
+        // Compact live status + per-site policy bar at the top.
+        let status_card = div()
+            .mx_3()
+            .mt_3()
+            .p_2p5()
+            .rounded(px(9.))
+            .bg(t.raised)
             .flex()
             .flex_col()
-            .gap_1()
-            .child(div().text_size(px(11.)).text_color(t.text).child("Shell writes"))
-            .child(div().text_size(px(10.)).text_color(t.muted).child(if self.shell_control {
-                "The global switch is on for every client; Revoke still removes a stored grant."
-            } else {
-                "Off by default. Grant one connected agent; Revoke applies on its next tool call, no restart."
-            }));
-        if clients.is_empty() {
-            shell_section = shell_section.child(div().text_size(px(10.)).text_color(t.muted).child("No MCP agent has connected yet."));
-        }
-        for c in &clients {
-            let name = c.name.clone();
-            let granted = c.granted;
-            shell_section = shell_section.child(
+            .gap_2()
+            .child(
                 div()
                     .flex()
                     .items_center()
@@ -113,92 +131,473 @@ impl RelayApp {
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .child(div().text_size(px(11.)).text_color(t.text).child(c.name.clone()))
-                            .child(div().text_size(px(10.)).text_color(t.muted).child(if granted {
-                                "may plan/apply shell changes"
+                            .items_center()
+                            .gap_1p5()
+                            .child(div().size(px(7.)).rounded_full().bg(if paused {
+                                t.warn
+                            } else if self.mcp_enabled {
+                                t.agent
                             } else {
-                                "connected; no shell writes"
-                            })),
+                                t.muted
+                            }))
+                            .child(div().text_size(px(12.)).text_color(t.text).child(if paused {
+                                "Agents paused"
+                            } else if self.mcp_enabled {
+                                "Agents ready"
+                            } else {
+                                "MCP off"
+                            }))
+                            .when(!clients.is_empty(), |d| {
+                                d.child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(format!(
+                                    "· {} client{}",
+                                    clients.len(),
+                                    if clients.len() == 1 { "" } else { "s" }
+                                ))))
+                            }),
                     )
                     .child(
                         div()
-                            .id(SharedString::from(format!("agent-grant-{}", c.name)))
+                            .id(if paused { "agent-resume" } else { "agent-pause" })
                             .px_2()
+                            .py_0p5()
+                            .rounded(px(5.))
+                            .bg(if paused { t.active } else { t.well })
+                            .text_size(px(11.))
+                            .text_color(if paused { t.accent } else { t.text })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(|app, _, _, cx| app.toggle_agents(cx)))
+                            .child(if paused { "Resume" } else { "Pause" }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(11.))
+                            .text_color(t.muted)
+                            .child(SharedString::from(host)),
+                    )
+                    .child(
+                        div()
+                            .id("agent-cycle-policy")
+                            .px_2()
+                            .py_0p5()
+                            .rounded(px(5.))
+                            .bg(t.well)
+                            .text_size(px(10.))
+                            .text_color(t.text)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(|app, _, _, cx| app.cycle_agent_policy(cx)))
+                            .child(SharedString::from(format!("Site: {}", policy.label()))),
+                    ),
+            );
+
+        // Live agent-owned tabs section (only when agents have open tabs).
+        let mut agent_tabs_section = div().flex().flex_col().gap_1().mx_3().mt_2();
+        if !agent_tabs.is_empty() {
+            agent_tabs_section = agent_tabs_section.child(
+                div().text_size(px(10.)).text_color(t.agent).child(SharedString::from(format!("AGENT TABS ({})", agent_tabs.len()))),
+            );
+            for (id, title, url, needs_human) in &agent_tabs {
+                let tid = *id;
+                let label = if title.is_empty() { palette::short_url(url) } else { title.clone() };
+                agent_tabs_section = agent_tabs_section.child(
+                    div()
+                        .id(("sidebar-agent-tab", tid as usize))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .h(px(26.))
+                        .px_2()
+                        .rounded(px(6.))
+                        .bg(t.agent_bg)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            app.activate(tid);
+                            cx.notify();
+                        }))
+                        .child(self.site_icon(url, title, 14.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(px(11.))
+                                .text_color(t.text)
+                                .child(SharedString::from(label)),
+                        )
+                        .when(*needs_human, |d| d.child(div().text_size(px(11.)).text_color(t.warn).child("⚠"))),
+                );
+            }
+        }
+
+        // Integrated side-by-side AI Page Assistant.
+        let chat = self.ai_chat.as_ref();
+        let has_messages = chat.is_some_and(|c| !c.messages.is_empty());
+        let assistant_header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px_3()
+            .pt_3()
+            .pb_1()
+            .child(div().text_size(px(11.)).text_color(t.muted).child("PAGE ASSISTANT"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when(has_messages, |d| {
+                        d.child(
+                            div()
+                                .id("ai-new")
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded(px(4.))
+                                .text_size(px(10.))
+                                .text_color(t.muted)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover).text_color(t.text))
+                                .on_click(cx.listener(|app, _, _, cx| app.new_ai_chat(cx)))
+                                .child("New"),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id("agent-ai-settings")
+                            .px_1p5()
                             .py_0p5()
                             .rounded(px(4.))
                             .text_size(px(10.))
-                            .text_color(if granted { t.accent } else { t.text })
+                            .text_color(t.muted)
                             .cursor_pointer()
-                            .hover(|s| s.bg(t.hover))
-                            .child(shell_grant_action(granted))
-                            .on_click(cx.listener(move |app, _, _, cx| {
-                                if let Some(store) = &app.store {
-                                    let _ = store.set_mcp_client_granted(&name, !granted, now_unix());
-                                }
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .on_click(cx.listener(|app, _, _, cx| {
+                                app.settings_open = true;
+                                app.settings_tab = SettingsTab::Ai;
+                                app.agent_input_focused = false;
                                 cx.notify();
-                            })),
+                            }))
+                            .child(if self.ai_page_context { "Context: on" } else { "URL only" }),
                     ),
             );
-        }
-        div()
-            .p_3()
+
+        let mut messages = div()
+            .id("agent-ai-messages")
+            .flex_1()
+            .overflow_y_scroll()
+            .px_3()
+            .py_2()
             .flex()
             .flex_col()
-            .gap_3()
-            .child(div().text_size(px(13.)).text_color(t.text).child("Agent surface"))
-            .child(
+            .gap_2();
+
+        if !self.ai_has_key {
+            messages = messages.child(
                 div()
+                    .p_3()
+                    .rounded(px(9.))
+                    .bg(t.raised)
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .text_size(px(11.))
-                    .text_color(t.muted)
-                    .child(format!("MCP: {}", if self.mcp_enabled { "on (restart to apply)" } else { "off" }))
-                    .child(format!("Socket: {}", self.mcp_socket))
-                    .child(format!("Status: {}", if paused { "paused" } else { "accepting tool calls" }))
-                    .child(format!("eval_js: {}", if self.agent_eval { "on (Allow sites only)" } else { "off" }))
-                    .child(format!("shell writes: {}", shell_write_summary(self.shell_control, granted)))
-                    .child(format!("This site: {host} · {}", policy.label())),
-            )
-            .child(
-                div()
-                    .flex()
                     .gap_2()
+                    .child(div().text_size(px(12.)).text_color(t.text).child("Chat alongside any page"))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child(
+                        "Connect OpenAI, Ollama, LM Studio, or any OpenAI-compatible model to ask questions or summarize the active tab.",
+                    ))
                     .child(
-                        button(if paused { "agent-resume" } else { "agent-pause" }, if paused { "Resume" } else { "Pause" })
-                            .on_click(cx.listener(|app, _, _, cx| app.toggle_agents(cx))),
-                    )
-                    .child(
-                        button("agent-cycle-policy", "Cycle site access")
-                            .on_click(cx.listener(|app, _, _, cx| app.cycle_agent_policy(cx))),
+                        div().flex().child(
+                            div()
+                                .id("agent-configure-ai")
+                                .px_2p5()
+                                .py_1()
+                                .rounded(px(6.))
+                                .bg(t.accent)
+                                .text_size(px(11.))
+                                .text_color(gpui::rgb(0xffffff))
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.9))
+                                .on_click(cx.listener(|app, _, _, cx| {
+                                    app.settings_open = true;
+                                    app.settings_tab = SettingsTab::Ai;
+                                    app.agent_input_focused = false;
+                                    cx.notify();
+                                }))
+                                .child("Configure AI in Settings…"),
+                        ),
                     ),
-            )
-            .child(shell_section)
+            );
+        } else if let Some(chat) = chat {
+            if chat.messages.is_empty() {
+                let copy = if self.ai_page_context {
+                    "Ask about the active page side-by-side. URL, title, and up to 20,000 chars of visible text are sent to your configured endpoint."
+                } else {
+                    "Ask about the active page side-by-side. Only URL, title, and your question are sent (page text is off in Settings)."
+                };
+                messages = messages
+                    .child(div().text_size(px(11.)).text_color(t.muted).child(copy))
+                    .child(
+                        div().flex().child(
+                            div()
+                                .id("ai-summarize")
+                                .px_2p5()
+                                .py_1()
+                                .rounded(px(6.))
+                                .bg(t.well)
+                                .text_size(px(11.))
+                                .text_color(t.text)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover))
+                                .on_click(cx.listener(|app, _, _, cx| app.summarize_page(cx)))
+                                .child("Summarize this page"),
+                        ),
+                    );
+            }
+            for (index, (user, text)) in chat.messages.iter().enumerate() {
+                messages = messages.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .p_2p5()
+                        .rounded(px(8.))
+                        .bg(if *user { t.well } else { t.raised })
+                        .child(div().text_size(px(9.)).text_color(t.muted).child(if *user { "YOU" } else { "ASSISTANT" }))
+                        .child(div().text_size(px(12.)).text_color(t.text).child(SharedString::from(text.clone())))
+                        .when(!*user, |d| {
+                            let snippet = text.clone();
+                            d.child(
+                                div().flex().child(
+                                    div()
+                                        .id(SharedString::from(format!("ai-copy-{index}")))
+                                        .mt_0p5()
+                                        .text_size(px(10.))
+                                        .text_color(t.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.text_color(t.text))
+                                        .on_click(cx.listener(move |app, _, _, cx| app.copy_ai_text(snippet.clone(), cx)))
+                                        .child("Copy"),
+                                ),
+                            )
+                        }),
+                );
+            }
+            if chat.busy {
+                messages = messages.child(div().text_size(px(11.)).text_color(t.muted).child("Thinking…"));
+            }
+            if let Some(error) = &chat.error {
+                messages = messages.child(div().text_size(px(11.)).text_color(t.error).child(SharedString::from(error.clone())));
+            }
+        }
+
+        // Collapsible MCP & Activity drawer so technical config stays quiet until needed.
+        let mut mcp_drawer = div()
+            .border_t_1()
+            .border_color(t.border)
+            .px_3()
+            .py_2()
+            .flex()
+            .flex_col()
+            .gap_2()
             .child(
                 div()
-                    .id("agent-copy-setup")
-                    .px_2()
-                    .py_1()
-                    .rounded(px(5.))
-                    .bg(t.background)
-                    .text_size(px(10.))
-                    .text_color(t.muted)
+                    .id("agent-mcp-toggle")
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
+                    .hover(|s| s.text_color(t.text))
                     .on_click(cx.listener(|app, _, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(app.mcp_setup.clone()));
-                        app.toast("Copied the MCP setup command");
+                        app.agent_mcp_expanded = !app.agent_mcp_expanded;
                         cx.notify();
                     }))
-                    .child(SharedString::from(self.mcp_setup.clone())),
-            )
-            .child(
+                    .child(div().text_size(px(11.)).text_color(t.muted).child(if self.agent_mcp_expanded {
+                        "▾ MCP & recent activity"
+                    } else {
+                        "▸ MCP & recent activity"
+                    }))
+                    .child(div().text_size(px(10.)).text_color(t.muted).child(SharedString::from(if !recent_audit.is_empty() {
+                        format!("{} recent", recent_audit.len())
+                    } else {
+                        shell_write_summary(self.shell_control, granted)
+                    }))),
+            );
+        if self.agent_mcp_expanded {
+            if !recent_audit.is_empty() {
+                let mut log = div().flex().flex_col().gap_0p5();
+                for row in &recent_audit {
+                    let host_label = if row.host.is_empty() { "shell" } else { row.host.as_str() };
+                    log = log.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .text_size(px(10.))
+                            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(t.text).child(SharedString::from(format!("{} · {host_label}", row.tool))))
+                            .child(div().text_color(if row.outcome == "ok" { t.muted } else { t.warn }).child(SharedString::from(row.outcome.clone()))),
+                    );
+                }
+                mcp_drawer = mcp_drawer.child(log);
+            }
+            for c in &clients {
+                let name = c.name.clone();
+                let is_granted = c.granted;
+                mcp_drawer = mcp_drawer.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(div().text_size(px(11.)).text_color(t.text).child(c.name.clone()))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("agent-grant-{}", c.name)))
+                                .px_2()
+                                .py_0p5()
+                                .rounded(px(4.))
+                                .bg(t.well)
+                                .text_size(px(10.))
+                                .text_color(if is_granted { t.accent } else { t.text })
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.hover))
+                                .child(shell_grant_action(is_granted))
+                                .on_click(cx.listener(move |app, _, _, cx| {
+                                    if let Some(store) = &app.store {
+                                        let _ = store.set_mcp_client_granted(&name, !is_granted, now_unix());
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                );
+            }
+            mcp_drawer = mcp_drawer
+                .child(
+                    div()
+                        .id("agent-copy-setup")
+                        .px_2()
+                        .py_1()
+                        .rounded(px(5.))
+                        .bg(t.well)
+                        .font_family("Menlo")
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(app.mcp_setup.clone()));
+                            app.toast("Copied the MCP setup command");
+                            cx.notify();
+                        }))
+                        .child(SharedString::from(format!("Copy: {}", self.mcp_setup))),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .child("Page content is untrusted data. Pause and site policy gate every MCP tool call."),
+                );
+        }
+
+        // Docked chat composer at the bottom of the Agent sidebar (when AI key is set).
+        let composer = if self.ai_has_key {
+            let input_text = chat.map(|c| c.input.as_str()).unwrap_or("");
+            let busy = chat.is_some_and(|c| c.busy);
+            Some(
                 div()
-                    .text_size(px(10.))
-                    .text_color(t.muted)
-                    .child("Page content is untrusted data. Every tool call is checked by Stop and the site policy before it touches this tab."),
+                    .p_3()
+                    .border_t_1()
+                    .border_color(t.border)
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("agent-chat-input")
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(32.))
+                            .px_2p5()
+                            .flex()
+                            .items_center()
+                            .rounded(px(7.))
+                            .bg(t.well)
+                            .when(self.agent_input_focused, |d| d.border_1().border_color(t.accent))
+                            .text_size(px(12.))
+                            .text_color(if input_text.is_empty() { t.muted } else { t.text })
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .cursor_text()
+                            .on_click(cx.listener(|app, _, _, cx| app.focus_agent_input(cx)))
+                            .child(SharedString::from(if input_text.is_empty() {
+                                "Ask about this page…".to_string()
+                            } else {
+                                input_text.to_string()
+                            }))
+                            .when(self.agent_input_focused, |d| d.child(div().ml_0p5().text_color(t.accent).child("▏"))),
+                    )
+                    .child(if busy {
+                        div()
+                            .id("ai-stop")
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(6.))
+                            .bg(t.well)
+                            .text_size(px(11.))
+                            .text_color(t.text)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover))
+                            .on_click(cx.listener(|app, _, _, cx| app.stop_ai(cx)))
+                            .child("Stop")
+                            .into_any_element()
+                    } else {
+                        div()
+                            .id("ai-send")
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(6.))
+                            .bg(t.accent)
+                            .text_size(px(11.))
+                            .text_color(gpui::rgb(0xffffff))
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.9))
+                            .on_click(cx.listener(|app, _, _, cx| app.send_ai(cx)))
+                            .child("Send")
+                            .into_any_element()
+                    }),
             )
+        } else {
+            None
+        };
+
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(status_card)
+            .when(!agent_tabs.is_empty(), |d| d.child(agent_tabs_section))
+            .child(assistant_header)
+            .child(messages)
+            .child(mcp_drawer)
+            .when_some(composer, |d, c| d.child(c))
             .into_any_element()
     }
 

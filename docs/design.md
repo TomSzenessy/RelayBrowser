@@ -42,14 +42,21 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   the strip to a thin, clickable rail (14 pt at the side, 10 pt at the top)
   that brings it back; the edge and folded state persist in `tabs_position`
   and `tabs_folded`.
-- **AI:** Settings → AI stores an OpenAI-compatible endpoint/model and an API
-  key in the login Keychain. ⌘⇧A opens a chat that sends the current URL,
-  title, up to 20,000 characters of visible page text, and the question, then
-  streams the reply (SSE, with a non-SSE fallback and a Stop button); prior
-  turns (last 10) are sent with follow-ups; OpenAI/Ollama/LM Studio/OpenRouter
-  presets fill endpoint/model; a **Send visible page text** switch disables
-  body context; New resets the conversation, each answer has Copy, and an
-  empty chat offers Summarize this page; Esc closes.
+- **AI & Agent sidebar:** the 360 px right sidebar has **✦ Agent** and **Inspector**
+  tabs, toggled via the `✦` button in the tab strip, `⌘⇧A`, or `⌘⌥I`. **Agent**
+  integrates live MCP status (Pause/Resume, per-site access pill), clickable
+  agent-owned tabs, an inline side-by-side AI Page Assistant (OpenAI-compatible
+  endpoint/model with login Keychain API key, streaming/Stop, ten-turn history,
+  New/Copy/Summarize, and a **Send visible page text** opt-out), and a
+  collapsible **MCP & recent activity** drawer (recent audit calls, per-client
+  shell-write Grant/Revoke, copyable setup command, untrusted-page reminder) so
+  you can browse and collaborate with agents side-by-side without hiding the
+  page. **Inspector** keeps the monospace Elements/Network/Console/Cookies panels.
+- **Status bar placement:** `status_bar_position` (Settings → Appearance or
+  `⌘⌥B`) places the compact 22 pt status bar at **Top**, **Bottom**, or
+  **Hidden** (default, so pages get full height; when hidden, a temporary bar
+  appears only while a toast or link-hints prompt is active). Top placement
+  clears macOS traffic lights automatically when the left edge is open.
 - **Motion:** palette, Settings, and Library fade in over 140 ms with
   ease-out-quint; no other transitions are animated yet.
 - **Palette:** also exposes duplicate, mute, and sleep tab commands.
