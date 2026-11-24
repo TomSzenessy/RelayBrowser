@@ -321,6 +321,10 @@ impl RelayApp {
             .child(item("sleep", "Sleep Tab", false).on_click(cx.listener(move |app, _, _, cx| {
                 app.sleep_tab_now(id, cx);
             })))
+            .child(item("mute", "Mute / Unmute Tab", false).on_click(cx.listener(move |app, _, _, cx| {
+                app.toggle_mute(id);
+                cx.notify();
+            })))
             .child(item("others", "Close Other Tabs", false).on_click(cx.listener(move |app, _, _, cx| {
                 app.close_other_tabs(id, cx);
                 cx.notify();
@@ -616,6 +620,52 @@ impl RelayApp {
             .absolute()
             .size_full(),
         )
+    }
+
+    /// The optional bookmarks bar: saved pages as one quiet row under the
+    /// tab strip. Off by default; Settings → Tabs turns it on.
+    pub(super) fn render_bookmarks_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let mut bar = div()
+            .id("bookmarks-bar")
+            .h(px(24.))
+            .w_full()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .bg(t.surface)
+            .overflow_hidden();
+        if self.bookmarks_bar.is_empty() {
+            bar = bar.child(div().text_size(px(11.)).text_color(t.muted).child("No bookmarks yet · ⌘D adds one"));
+        }
+        for (i, (title, url)) in self.bookmarks_bar.iter().enumerate() {
+            let target = url.clone();
+            let label = if title.trim().is_empty() { palette::short_url(url) } else { title.clone() };
+            bar = bar.child(
+                div()
+                    .id(("bookmark-bar", i))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded(px(5.))
+                    .max_w(px(180.))
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .text_size(px(11.))
+                    .text_color(t.text)
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.open_url(target.clone(), false);
+                        cx.notify();
+                    }))
+                    .child(self.site_icon(url, title, 13.))
+                    .child(div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(label))),
+            );
+        }
+        bar.into_any_element()
     }
 
     pub(super) fn render_content(&self, cx: &mut Context<Self>) -> impl IntoElement {

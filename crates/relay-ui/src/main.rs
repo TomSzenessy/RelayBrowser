@@ -270,11 +270,18 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             bail!("invalid search value {value:?}: use duckduckgo, kagi, google, brave, or an http(s)://...%s... URL template");
         }
         "blocking" | "mcp" | "restore_session" | "tabs_folded" | "bottom_bar" | "autofill_logins" | "login_offers" | "login_fill"
-        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" => match trimmed.to_ascii_lowercase().as_str() {
+        | "login_save" | "tab_glyphs" | "compact_tabs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" => match trimmed.to_ascii_lowercase().as_str() {
             "on" => Ok("on".to_string()),
             "off" => Ok("off".to_string()),
             _ => bail!("invalid value {value:?} for {key}: expected 'on' or 'off'"),
         },
+        "default_zoom" => {
+            let zoom: f64 = trimmed.parse().with_context(|| format!("invalid default_zoom {value:?}: expected 0.5..=3.0"))?;
+            if !(0.5..=3.0).contains(&zoom) {
+                bail!("invalid default_zoom {value:?}: expected 0.5..=3.0");
+            }
+            Ok(format!("{zoom:.2}"))
+        }
         "tabs_position" => match trimmed.to_ascii_lowercase().as_str() {
             "left" | "top" | "right" => Ok(trimmed.to_ascii_lowercase()),
             _ => bail!("invalid tabs_position {value:?}: expected left, top, or right"),
@@ -302,7 +309,7 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             })?;
             Ok(pairs.iter().map(|(t, u)| format!("{t}={u}")).collect::<Vec<_>>().join(" "))
         }
-        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control)"),
+        _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, default_zoom)"),
     }
 }
 
@@ -329,6 +336,9 @@ fn config(args: &[String]) -> anyhow::Result<()> {
             println!("autofill_logins = {}", setting("autofill_logins", "on"));
             println!("tab_glyphs = {}", setting("tab_glyphs", "on"));
             println!("compact_tabs = {}", setting("compact_tabs", "off"));
+            println!("default_zoom = {}", setting("default_zoom", "1.00"));
+            println!("cookie_banners = {}", setting("cookie_banners", "on"));
+            println!("bookmarks_bar = {}", setting("bookmarks_bar", "off"));
             println!("bangs = {}", cfg.bangs);
             println!("start_sections = {}", cfg.start_sections);
             Ok(())
@@ -348,13 +358,16 @@ fn config(args: &[String]) -> anyhow::Result<()> {
                 "restore_session" => println!("{}", if cfg.restore_session { "on" } else { "off" }),
                 "tabs_position" => println!("{}", store.as_ref().and_then(|s| s.setting("tabs_position").ok().flatten()).unwrap_or_else(|| "left".into())),
                 "bottom_bar" => println!("{}", store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).unwrap_or_else(|| "on".into())),
-                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" => {
+                "login_fill" | "login_save" | "autofill_logins" | "login_offers" | "tab_glyphs" | "tab_numbers" | "agent_eval" | "shell_control" | "cookie_banners" | "bookmarks_bar" => {
                     println!("{}", store.as_ref().and_then(|s| s.setting(key).ok().flatten()).unwrap_or_else(|| "on".into()))
                 }
                 "compact_tabs" => println!("{}", store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).unwrap_or_else(|| "off".into())),
+                "default_zoom" => {
+                    println!("{}", store.as_ref().and_then(|s| s.setting("default_zoom").ok().flatten()).unwrap_or_else(|| "1.00".into()))
+                }
                 "bangs" => println!("{}", cfg.bangs),
                 "start_sections" => println!("{}", cfg.start_sections),
-                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control)"),
+                _ => bail!("unknown config key {key:?} (valid keys: search, blocking, sleep_minutes, mcp, restore_session, start_sections, bangs, tabs_position, tabs_folded, bottom_bar, autofill_logins, login_offers, login_fill, login_save, tab_glyphs, compact_tabs, tab_numbers, agent_eval, shell_control, cookie_banners, bookmarks_bar, default_zoom)"),
             }
             Ok(())
         }

@@ -622,6 +622,16 @@
     },
     storage: storageSummary,
     reader: reader,
+    mute: function (c) {
+      var media = document.querySelectorAll("audio, video");
+      if (!media.length) return 0;
+      var want = (c && typeof c.muted === "boolean") ? c.muted : !media[0].muted;
+      for (var i = 0; i < media.length; i++) {
+        media[i].muted = want;
+        if (want) media[i].setAttribute("muted", ""); else media[i].removeAttribute("muted");
+      }
+      return media.length;
+    },
     picture_in_picture: function () {
       var video = document.querySelector("video");
       if (!video) return { available: false, reason: "no video on this page" };

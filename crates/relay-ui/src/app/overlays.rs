@@ -1049,6 +1049,15 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let bookmarks_sw = switch("settings-bookmarks-bar", self.show_bookmarks_bar, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.show_bookmarks_bar = !app.show_bookmarks_bar;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("bookmarks_bar", if app.show_bookmarks_bar { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let compact_sw = switch("settings-compact-tabs", self.compact_tabs, false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.compact_tabs = !app.compact_tabs;
@@ -1063,12 +1072,64 @@ impl RelayApp {
                     .flex_col()
                     .child(row("Restore tabs at launch", Some("Reopen last session's pages asleep, so the RAM is not spent until you visit them"), restore_sw))
                     .child(row("Site icons in tabs", Some("Off shows a coloured letter badge instead of each site's favicon"), glyphs_sw))
-                    .child(row("Compact tab rows", Some("Shorter rows for more tabs in the same column"), compact_sw));
+                    .child(row("Compact tab rows", Some("Shorter rows for more tabs in the same column"), compact_sw))
+                    .child(row("Show the bookmarks bar", Some("A row of saved pages under the tab strip"), bookmarks_sw));
                 div()
                     .flex()
                     .flex_col()
                     .gap_4()
                     .child(div().text_size(px(16.)).text_color(t.text).child("Tabs"))
+                    .child(card(content))
+                    .into_any_element()
+            }
+            SettingsTab::Browsing => {
+                let mut zoom_seg = div().flex().items_center().gap_1().p_0p5().rounded(px(8.)).bg(t.well);
+                for pct in [80u32, 90, 100, 110, 125, 150] {
+                    let zoom = f64::from(pct) / 100.0;
+                    let active = (self.default_zoom - zoom).abs() < 1e-6;
+                    zoom_seg = zoom_seg.child(
+                        div()
+                            .id(SharedString::from(format!("settings-zoom-{pct}")))
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(6.))
+                            .text_size(px(11.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .when(active, |d| d.bg(t.surface))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.default_zoom = zoom;
+                                if let Some(store) = &app.store {
+                                    let _ = store.set_setting("default_zoom", &format!("{zoom:.2}"));
+                                }
+                                if let Some(tab) = app.active() {
+                                    app.web.borrow().set_zoom(tab, zoom);
+                                }
+                                app.toast(format!("Default zoom: {pct}%"));
+                                cx.notify();
+                            }))
+                            .child(format!("{pct}%")),
+                    );
+                }
+                let notes = div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .text_size(px(11.))
+                    .text_color(t.muted)
+                    .child("⌘= and ⌘- still change one site and remember it; the default applies to sites you never zoomed.")
+                    .child("Find is case-insensitive and wraps; setting case/whole-word options is not implemented yet.");
+                let content = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Default page zoom", Some("Sites without their own saved zoom open at this size"), zoom_seg.into_any_element()))
+                    .child(div().px_4().py_3().child(notes));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(div().text_size(px(16.)).text_color(t.text).child("Browsing"))
                     .child(card(content))
                     .into_any_element()
             }
@@ -1161,6 +1222,18 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let cookie_sw = switch("settings-cookie-banners", self.hide_cookie_banners, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.hide_cookie_banners = !app.hide_cookie_banners;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("cookie_banners", if app.hide_cookie_banners { "on" } else { "off" });
+                        }
+                        if app.blocking {
+                            app.web.borrow().load_content_rules(&rules_json(app.store.as_ref()));
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let clear_label: SharedString = if self.confirm_clear_history { "Confirm clear history".into() } else { "Clear history".into() };
                 let clear_btn = btn("settings-clear-history", clear_label, self.confirm_clear_history)
                     .on_click(cx.listener(|app, _, _, cx| {
@@ -1181,11 +1254,26 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let site_label: SharedString = if self.confirm_clear_site_data { "Confirm sign out everywhere".into() } else { "Clear cookies & site data".into() };
+                let site_btn = btn("settings-clear-site-data", site_label, self.confirm_clear_site_data)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        if !app.confirm_clear_site_data {
+                            app.confirm_clear_site_data = true;
+                            app.toast("Click again to sign out of every site");
+                        } else {
+                            app.confirm_clear_site_data = false;
+                            app.web.borrow().clear_site_data();
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let privacy_card = div()
                     .flex()
                     .flex_col()
                     .child(row("Ad & tracker blocking", Some("Native WebKit content-rule blocker"), blocking_sw))
-                    .child(row("Browsing history & saved session", Some("Removes all visited pages and open session tabs"), clear_btn));
+                    .child(row("Hide cookie banners", Some("Consent-platform selectors from the blocker; reload to apply"), cookie_sw))
+                    .child(row("Browsing history & saved session", Some("Removes all visited pages and open session tabs"), clear_btn))
+                    .child(row("Cookies & site data", Some("Signs you out everywhere; clears cache and local storage"), site_btn));
                 let active_url = self
                     .active()
                     .and_then(|id| self.hub.lock().tab(id).map(|s| s.url.clone()))

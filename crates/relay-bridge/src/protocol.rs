@@ -191,6 +191,9 @@ pub enum Op {
     /// Toggle picture-in-picture for the first `<video>` using WebKit/Safari's
     /// presentation mode or the standard API.
     PictureInPicture,
+    /// Mute or unmute every media element. `None` flips the page's current
+    /// state, so one menu item works as a toggle without native state.
+    Mute { #[serde(skip_serializing_if = "Option::is_none")] muted: Option<bool> },
 }
 
 fn yes() -> bool {
@@ -202,7 +205,14 @@ impl Op {
     pub fn mutates(&self) -> bool {
         matches!(
             self,
-            Op::Click { .. } | Op::Type { .. } | Op::EditStyle { .. } | Op::PressKey { .. } | Op::Eval { .. } | Op::SetCookie { .. } | Op::Reader { .. }
+            Op::Click { .. }
+                | Op::Type { .. }
+                | Op::EditStyle { .. }
+                | Op::PressKey { .. }
+                | Op::Eval { .. }
+                | Op::SetCookie { .. }
+                | Op::Reader { .. }
+                | Op::Mute { .. }
         )
     }
 }

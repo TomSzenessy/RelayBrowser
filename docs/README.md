@@ -58,6 +58,7 @@ itself and this table cannot drift. Edit the line in the document, not here.
 | [`engineering.md`](./engineering.md) | Modular design, single source of truth, dependency, cleanup rules | Code changed, refactored, or reviewed; deep modules. |
 | [`login-autofill.md`](./login-autofill.md) | Login offer/fill/save design, Keychain storage, redaction, and open owner decisions | Before implementing password fill/save or reviewing its security. |
 | [`model-integration.md`](./model-integration.md) | Confining a language model inside a product: code decides, the model reads and writes, votes, grounding, shadow mode, measured confidence | code calls a model at runtime or model output reaches a decision |
+| [`passkeys.md`](./passkeys.md) | Passkey support status, Apple entitlement, and the signing path | when a sign-in offers a passkey |
 | [`relay.md`](./relay.md) | Relay crate map, data flow, threading, and seams | changing any crate or adding one |
 | [`security.md`](./security.md) | Secure implementation baseline | Auth, secrets, CI, dependencies, deployment, or untrusted input changes. |
 | [`architecture/README.md`](./architecture/README.md) | Current structure, seams, kit module map, and design rules | Adding a surface, changing dependencies, or locating ownership. |

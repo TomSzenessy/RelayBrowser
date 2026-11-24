@@ -202,6 +202,7 @@ pub(super) enum SettingsTab {
     General,
     Appearance,
     Tabs,
+    Browsing,
     Passwords,
     Privacy,
     Extensions,
@@ -211,10 +212,11 @@ pub(super) enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [SettingsTab; 9] = [
+    pub(super) const ALL: [SettingsTab; 10] = [
         SettingsTab::General,
         SettingsTab::Appearance,
         SettingsTab::Tabs,
+        SettingsTab::Browsing,
         SettingsTab::Passwords,
         SettingsTab::Privacy,
         SettingsTab::Extensions,
@@ -228,6 +230,7 @@ impl SettingsTab {
             SettingsTab::General => "General",
             SettingsTab::Appearance => "Appearance",
             SettingsTab::Tabs => "Tabs",
+            SettingsTab::Browsing => "Browsing",
             SettingsTab::Passwords => "Passwords",
             SettingsTab::Privacy => "Privacy",
             SettingsTab::Extensions => "Extensions",
@@ -287,6 +290,8 @@ pub struct RelayApp {
     /// Load failures from WKWebExtension, shown in Settings → Extensions.
     ext_errors: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     blocking: bool,
+    /// Hide consent-platform banners with the built-in CMP selectors.
+    hide_cookie_banners: bool,
     /// Offer to fill a saved login when a sign-in field gets focus.
     login_fill_enabled: bool,
     /// Offer to save a login after a successful sign-in.
@@ -302,6 +307,12 @@ pub struct RelayApp {
     tab_glyphs: bool,
     /// 24 px tab rows instead of 28.
     compact_tabs: bool,
+    /// A row of saved pages under the tab strip (off by default).
+    show_bookmarks_bar: bool,
+    /// Cached bookmarks for that bar; refreshed with the start page.
+    bookmarks_bar: Vec<(String, String)>,
+    /// 100% unless the user picks another default for sites with no zoom pref.
+    default_zoom: f64,
     /// Non-secret save-login offer: `(tab, url, username)`. Password stays inside Engine.
     login_save_prompt: Option<(TabId, String, String)>,
     /// `(origin_display, username)` declined in this session; never re-prompted.
@@ -312,6 +323,7 @@ pub struct RelayApp {
     sleep_minutes: u64,
     mcp_enabled: bool,
     confirm_clear_history: bool,
+    confirm_clear_site_data: bool,
     sources: Sources,
     inspector_open: bool,
     sidebar_tab: SidebarTab,
@@ -401,6 +413,7 @@ impl RelayApp {
         let mut web = WebHost::new(hub.clone(), window);
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
+        let hide_cookie_banners = setting_enabled(store.as_ref().and_then(|s| s.setting("cookie_banners").ok().flatten()).as_deref());
         let agent_eval = setting_enabled(store.as_ref().and_then(|s| s.setting("agent_eval").ok().flatten()).as_deref());
         let shell_control = setting_enabled(store.as_ref().and_then(|s| s.setting("shell_control").ok().flatten()).as_deref());
         let agent_widget = store.as_ref().and_then(|s| {
@@ -469,6 +482,13 @@ impl RelayApp {
         let autofill_logins = setting_enabled(store.as_ref().and_then(|s| s.setting("autofill_logins").ok().flatten()).as_deref());
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
         let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
+        let show_bookmarks_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bookmarks_bar").ok().flatten()).as_deref());
+        let default_zoom = store
+            .as_ref()
+            .and_then(|s| s.setting("default_zoom").ok().flatten())
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|z| (0.5..=3.0).contains(z))
+            .unwrap_or(1.0);
         let show_bottom_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).as_deref());
         let bookmarked_urls: HashSet<String> = store
             .as_ref()
@@ -506,11 +526,15 @@ impl RelayApp {
             ext_busy: false,
             ext_errors: std::rc::Rc::default(),
             blocking,
+            hide_cookie_banners,
             login_fill_enabled,
             login_save_enabled,
             autofill_logins,
             tab_glyphs,
             compact_tabs,
+            show_bookmarks_bar,
+            bookmarks_bar: vec![],
+            default_zoom,
             show_bottom_bar,
             login_fill_prompt: None,
             login_save_prompt: None,
@@ -521,6 +545,7 @@ impl RelayApp {
             sleep_minutes,
             mcp_enabled,
             confirm_clear_history: false,
+            confirm_clear_site_data: false,
             sources: Sources::default(),
             inspector_open: false,
             sidebar_tab: SidebarTab::Inspector,
@@ -606,6 +631,7 @@ impl RelayApp {
             true
         });
         app.start_pump(cx);
+        app.refresh_start_page();
         app
     }
 
@@ -750,6 +776,10 @@ impl RelayApp {
                         self.login_fill_prompt = None;
                     }
                     self.toast(if ok { "Password filled" } else { "Could not fill this form" });
+                }
+                WebEvent::SiteDataCleared => {
+                    self.confirm_clear_site_data = false;
+                    self.toast("Cookies and site data cleared");
                 }
                 WebEvent::LoginSaveOffer { tab, url, username } => {
                     let origin_key = relay_extensions::login::Origin::parse(&url).ok().map(|o| o.to_string());
@@ -991,10 +1021,9 @@ impl RelayApp {
         };
         let sections = store.setting("start_sections").ok().flatten();
         self.start_page = StartPage::build(store, sections.as_deref()).unwrap_or_default();
-        self.bookmarked_urls = store
-            .bookmarks()
-            .map(|list| list.into_iter().map(|b| b.url).collect())
-            .unwrap_or_default();
+        let list = store.bookmarks().unwrap_or_default();
+        self.bookmarked_urls = list.iter().map(|b| b.url.clone()).collect();
+        self.bookmarks_bar = list.into_iter().take(16).map(|b| (b.title, b.url)).collect();
     }
 
     pub(super) fn active_is_bookmarked(&self) -> bool {
@@ -1295,7 +1324,10 @@ impl RelayApp {
             return;
         };
         let prefs = self.store.as_ref().and_then(|s| s.site_pref(&host).ok()).unwrap_or_default();
-        self.web.borrow().set_zoom(tab, prefs.zoom);
+        // A per-site zoom wins; 1.0 means "never changed here", so the
+        // owner's default applies instead of silently resetting the page.
+        let zoom = if (prefs.zoom - 1.0).abs() < 1e-6 { self.default_zoom } else { prefs.zoom };
+        self.web.borrow().set_zoom(tab, zoom);
         match compat_change(self.compat_tabs.contains(&tab), prefs.compat_mode) {
             CompatChange::None => {}
             CompatChange::Enable => {
@@ -1776,6 +1808,12 @@ impl RelayApp {
         }
         self.toast(format!("Agents on {host}: {}. Each MCP call is checked in the hub.", next.label()));
         cx.notify();
+    }
+
+    /// Mute / unmute every media element in a tab. JS reports the page's own
+    /// current state, so the native side needs no duplicate media model.
+    fn toggle_mute(&mut self, tab: TabId) {
+        self.eval_op(tab, Op::Mute { muted: None });
     }
 
     fn toggle_picture_in_picture(&mut self, cx: &mut Context<Self>) {
@@ -2582,6 +2620,12 @@ impl RelayApp {
     fn apply_shell_setting(&mut self, key: &str, value: &str, cx: &mut Context<Self>) {
         match key {
             "search" => self.search = value.to_string(),
+            "cookie_banners" => {
+                self.hide_cookie_banners = setting_enabled(Some(value));
+                if self.blocking {
+                    self.web.borrow().load_content_rules(&rules_json(self.store.as_ref()));
+                }
+            }
             "blocking" => {
                 self.blocking = setting_enabled(Some(value));
                 if self.blocking {
@@ -2604,6 +2648,14 @@ impl RelayApp {
             "autofill_logins" => self.autofill_logins = setting_enabled(Some(value)),
             "tab_glyphs" => self.tab_glyphs = setting_enabled(Some(value)),
             "compact_tabs" => self.compact_tabs = setting_enabled(Some(value)),
+            "bookmarks_bar" => self.show_bookmarks_bar = setting_enabled(Some(value)),
+            "default_zoom" => {
+                if let Ok(z) = value.parse::<f64>() {
+                    if (0.5..=3.0).contains(&z) {
+                        self.default_zoom = z;
+                    }
+                }
+            }
             "login_offers" => {
                 let on = setting_enabled(Some(value));
                 self.login_fill_enabled = on;
@@ -2828,7 +2880,11 @@ impl Render for RelayApp {
         let content = if overlay_open {
             div().flex_1().h_full().bg(t.page).into_any_element()
         } else {
-            self.render_content(cx).into_any_element()
+            let mut column = div().flex_1().h_full().flex().flex_col().overflow_hidden();
+            if self.show_bookmarks_bar && !self.app_mode {
+                column = column.child(self.render_bookmarks_bar(cx));
+            }
+            column.child(self.render_content(cx)).into_any_element()
         };
         // A web app window starts chromeless; a popup tab brings the strip
         // back rather than hiding a tab the user cannot reach.
@@ -3225,7 +3281,8 @@ fn shell_write_summary(global: bool, granted: usize) -> String {
 /// The content-blocker JSON: built-in + cookie-banner + `filters.txt` rules,
 /// then an exception for every site the user turned blocking off on.
 fn rules_json(store: Option<&Store>) -> String {
-    let mut rules = relay_webkit::content_rules::compile(&blocklist());
+    let hide_banners = setting_enabled(store.and_then(|s| s.setting("cookie_banners").ok().flatten()).as_deref());
+    let mut rules = relay_webkit::content_rules::compile(&blocklist(hide_banners));
     let off: Vec<String> = store
         .and_then(|s| s.all_site_prefs().ok())
         .unwrap_or_default()
@@ -3237,9 +3294,11 @@ fn rules_json(store: Option<&Store>) -> String {
     rules.to_json()
 }
 
-fn blocklist() -> String {
+fn blocklist(hide_cookie_banners: bool) -> String {
     let mut s = relay_webkit::content_rules::BUILTIN_FILTERS.to_string();
-    s.push_str(relay_webkit::content_rules::CMP_FILTERS);
+    if hide_cookie_banners {
+        s.push_str(relay_webkit::content_rules::CMP_FILTERS);
+    }
     if let Ok(extra) = std::fs::read_to_string(relay_bridge::paths::relay_home().join("filters.txt")) {
         s.push('\n');
         s.push_str(&extra);

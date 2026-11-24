@@ -17,7 +17,7 @@ use objc2_app_kit::{
     NSPrintInfo, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_foundation::{
-    NSArray, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize, NSString, NSURL,
+    NSArray, NSDate, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize, NSString, NSURL,
     NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::{
@@ -187,6 +187,8 @@ pub enum EngineEvent {
     LoginFocus { tab: TabId, url: String, form_idx: i64 },
     /// The page answered a fill request: true when a password field was set.
     LoginFilled { tab: TabId, ok: bool },
+    /// The default website data store finished removing cookies/cache.
+    SiteDataCleared,
     /// A trusted login submit succeeded on the same origin; offer to save
     /// `username` (the password remains strictly inside `Engine`).
     LoginSaveOffer { tab: TabId, url: String, username: String },
@@ -939,6 +941,18 @@ impl Engine {
             pending_captures: Rc::default(),
             offered_logins: Rc::default(),
             login_capture: Rc::new(Cell::new(true)),
+        }
+    }
+
+    /// Remove cookies, cache, and local storage for every site. Used by
+    /// Settings → Privacy; completion is reported through `EngineEvent`.
+    pub fn clear_site_data(&self) {
+        let store = unsafe { WKWebsiteDataStore::defaultDataStore(self.mtm) };
+        let types = unsafe { WKWebsiteDataStore::allWebsiteDataTypes(self.mtm) };
+        let events = self.events.clone();
+        let done = RcBlock::new(move || events(EngineEvent::SiteDataCleared));
+        unsafe {
+            store.removeDataOfTypes_modifiedSince_completionHandler(&types, &NSDate::distantPast(), &done);
         }
     }
 

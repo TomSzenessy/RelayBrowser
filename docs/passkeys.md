@@ -1,6 +1,6 @@
 # Passkeys and WebAuthn
 
-<!-- index: passkeys | Passkey support status, Apple entitlement, and the signing path | when a sign-in offers a passkey -->
+<!-- index: design | Passkey support status, Apple entitlement, and the signing path | when a sign-in offers a passkey -->
 
 Relay hosts every page in WKWebView. WebKit's default WKWebView host is not a
 browser: `navigator.credentials.create()` / `.get()` for a public-key

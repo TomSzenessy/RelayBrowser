@@ -67,7 +67,12 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   only a genuinely fresh profile shows the welcome card. `start_sections` owns the order and `none` hides the page's sections.
 - **Menu bar:** native macOS menus (Relay, File, Edit, View, History,
   Bookmarks, Tab, Window, Help) carry every shortcut; View names Tabs on the
-  Left, Top, and Right explicitly, not only the cycling command. AppKit checks menu key
+  Left, Top, and Right explicitly, not only the cycling command.
+- **Bookmarks bar:** off by default; Settings → Tabs turns on a 24 pt row of
+  saved pages under the strip. Each row is a site icon and title, click to
+  open; ⌘D adds the current page.
+- **Tab context menu:** pin, duplicate, mute/unmute, sleep, close others, and
+  close, with no outline around the menu. AppKit checks menu key
   equivalents before the first responder, so they work while WKWebView has
   focus; `Edit` forwards `⌘X`/`⌘C`/`⌘V`/`⌘A` to the page.
 - **Web app window:** an installed site runs `relay --app <url>`: one page,
@@ -91,7 +96,10 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 Appearance is System (follow macOS), Light, or Dark; the accent is Blue
 (default), Purple, Green, or Orange. `theme::Theme::for_choice` applies the
 accent's light/dark pair, and every accent is checked at 3:1 against the
-surface. Settings → Appearance changes it live and stores `theme`/`accent`.
+surface. Settings → Appearance changes it live and stores `theme`/`accent`. The
+Settings rail has ten pages: General, Appearance, Tabs, Browsing, Passwords,
+Privacy, Extensions, Agents, Shortcuts, and About. Every row is a surface on
+the background, not a boxed cell; only the groups' spacing separates them.
 
 Type: system UI font at 13 pt for chrome and 12 pt monospace for the Inspector.
 Corner radius is 6 pt and spacing uses a 4 pt grid. Motion is 150 ms, and is

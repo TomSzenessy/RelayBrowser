@@ -40,7 +40,7 @@ ordinary text/search fields keep their values for debugging.
 `unhighlight`, `edit_style`, `scroll_into_view`, `click`, `type`, `query`,
 `find_text`, `read_text`, `scroll`, `scroll_to`, `page_info`, `show_hints`
 (`hints: [[id, label], …]`, labels only visible elements, returns the count),
-`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`, `set_cookie`, `reader`, `picture_in_picture`. Element ids are
+`hide_hints`, `markdown`, `web_app`, `favicon`, `press_key`, `storage`, `eval_js`, `set_cookie`, `reader`, `picture_in_picture`, `mute`. Element ids are
 the `data-relay-id` numbers, and they go stale on navigation.
 
 `markdown` renders `<article>`, else `<main>`, else `<body>` (skipping script, style, nav, aside, footer, form controls, and hidden elements) as Markdown capped at 200 KB. It is read-only, so agents may call it on challenge pages. The string is both the command result and a `markdown` message stored by the Hub; an MCP tool for it is Tier 2.
@@ -68,6 +68,11 @@ prefix, mime, byte signature, decoded size, and pixel dimensions (max 1024²,
 extracted; BMP-only ICOs fall back to the letter badge. The shell asks only
 after the page has a DOM and retries once per load, so the first request can
 no longer cache a negative answer for a blank tab.
+
+`mute` sets every `audio`/`video` element's `muted` property and attribute;
+`{muted: true|false}` is explicit, an omitted `muted` flips the page's current
+state so one menu item works as a toggle. It returns the number of media
+elements and is a mutating op (refused while a tab waits for a human).
 
 `press_key` dispatches keydown/keyup to the focused element (or `<body>`),
 with `ctrl`/`alt`/`shift`/`meta`; Enter submits a focused form unless the page
