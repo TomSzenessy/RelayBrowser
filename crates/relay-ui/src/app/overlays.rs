@@ -1065,7 +1065,12 @@ impl RelayApp {
         let t = self.theme;
         let mut messages = div().id("ai-messages").flex().flex_col().gap_2().px_4().py_3().max_h(px(330.)).overflow_y_scroll();
         if chat.messages.is_empty() {
-            messages = messages.child(div().text_size(px(12.)).text_color(t.muted).child("Ask about the current page. Its URL, title, and up to 20,000 characters of visible text are sent to your configured AI endpoint."));
+            let copy = if self.ai_page_context {
+                "Ask about the current page. Its URL, title, and up to 20,000 characters of visible text are sent to your configured AI endpoint."
+            } else {
+                "Ask about the current page. The URL, title, and your question are sent; visible page text is off in Settings."
+            };
+            messages = messages.child(div().text_size(px(12.)).text_color(t.muted).child(copy));
         }
         for (user, text) in &chat.messages {
             messages = messages.child(
@@ -1173,7 +1178,11 @@ impl RelayApp {
                         .when(chat.busy, |d| d.child(stop))
                         .child(send),
                 )
-                .child(div().px_4().pb_3().text_size(px(9.)).text_color(t.muted).child("↩ sends · esc closes · key stays in the login Keychain · page text is sent")),
+                .child(div().px_4().pb_3().text_size(px(9.)).text_color(t.muted).child(if self.ai_page_context {
+                    "↩ sends · esc closes · key stays in the login Keychain · page text is sent"
+                } else {
+                    "↩ sends · esc closes · key stays in the login Keychain · page text is off"
+                })),
         )
     }
 
@@ -2570,7 +2579,11 @@ impl RelayApp {
                     .gap_4()
                     .child(div().text_size(px(16.)).text_color(t.text).child("AI (OpenAI-compatible)"))
                     .child(card(content))
-                    .child(div().text_size(px(11.)).text_color(t.muted).child("Tab moves between fields, Return saves. Asking sends the current URL, title, up to 20,000 characters of visible page text, and your question to the endpoint."))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child(if self.ai_page_context {
+                        "Tab moves between fields, Return saves. Asking sends the current URL, title, up to 20,000 characters of visible page text, and your question."
+                    } else {
+                        "Tab moves between fields, Return saves. Asking sends only the URL, title, conversation, and your question."
+                    }))
                     .into_any_element()
             }
             SettingsTab::About => {
