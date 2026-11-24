@@ -452,6 +452,8 @@ pub struct TabState {
     pub playing_audio: bool,
     /// Hovered link target for the status line; cleared on a new page.
     pub hover_url: Option<String>,
+    /// Last visible page text requested for AI context and its URL.
+    pub page_text: Option<(String, String)>,
     pub sleeping: bool,
     /// Why the last navigation failed (WebKit's message), cleared on reload.
     pub load_error: Option<String>,
@@ -498,6 +500,7 @@ impl TabState {
             space: String::new(),
             playing_audio: false,
             hover_url: None,
+            page_text: None,
             sleeping: false,
             load_error: None,
             bridge_version: None,
@@ -899,6 +902,7 @@ impl Hub {
             t.console.clear();
             t.network.clear();
             t.hover_url = None;
+            t.page_text = None;
         }
     }
 
@@ -1159,6 +1163,11 @@ impl Hub {
         }
     }
 
+    /// Visible text requested for AI context, if it belongs to `url`.
+    pub fn page_text(&self, tab: TabId, url: &str) -> Option<String> {
+        self.tabs.get(&tab).and_then(|t| t.page_text.as_ref()).filter(|(u, _)| u == url).map(|(_, text)| text.clone())
+    }
+
     /// The last Markdown the page produced for `Op::Markdown`, if any.
     pub fn page_markdown(&self, tab: TabId) -> Option<String> {
         self.tabs.get(&tab).and_then(|t| t.markdown.clone())
@@ -1272,6 +1281,10 @@ impl Hub {
             PageMessage::Hotkey { mut key } => {
                 truncate(&mut key, 64);
                 t.hotkeys.push(key);
+            }
+            PageMessage::PageText { url, mut text } => {
+                truncate(&mut text, 20_000);
+                t.page_text = (!text.trim().is_empty()).then_some((url, text));
             }
             PageMessage::Markdown { mut text } => {
                 truncate(&mut text, MAX_MARKDOWN_BYTES);
@@ -1688,6 +1701,17 @@ mod tests {
             assert_eq!(Hub::normalize_space_name("  A   B ").as_deref(), Some("A B"));
             assert_eq!(Hub::normalize_space_name("\u{0007}"), None);
         });
+    }
+
+    #[test]
+    fn page_text_is_url_bound_and_cleared_on_navigation() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://a.test/", Owner::User));
+        hub.ingest_json(tab, r##"{"kind":"page_text","url":"https://a.test/","text":"hello"}"##).unwrap();
+        assert_eq!(hub.lock().page_text(tab, "https://a.test/").as_deref(), Some("hello"));
+        assert!(hub.lock().page_text(tab, "https://b.test/").is_none(), "wrong URL must not match");
+        hub.update(|h| h.navigation_started(tab, "https://b.test/"));
+        assert!(hub.lock().page_text(tab, "https://b.test/").is_none(), "navigation clears the cached text");
     }
 
     #[test]

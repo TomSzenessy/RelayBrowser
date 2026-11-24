@@ -185,6 +185,9 @@ struct AiChat {
     input: String,
     busy: bool,
     error: Option<String>,
+    /// Set while visible page text is being collected for the next question.
+    pending: Option<String>,
+    pending_at: Option<Instant>,
 }
 
 /// The modal that names a profile or picks an existing one.
@@ -1140,6 +1143,7 @@ impl RelayApp {
             self.title_cache = (u64::MAX, String::new());
             cx.notify();
         }
+        self.maybe_send_ai(cx);
         self.web.borrow_mut().poll_float_panel();
         let target = self
             .active()
@@ -2214,7 +2218,7 @@ impl RelayApp {
             return;
         }
         self.settings_open = false;
-        self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None });
+        self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
         self.web.borrow().focus_shell();
         cx.notify();
     }
@@ -2229,12 +2233,35 @@ impl RelayApp {
         if prompt.is_empty() || self.ai_chat.as_ref().is_some_and(|c| c.busy) {
             return;
         }
-        let (url, title) = self
-            .active()
-            .and_then(|id| self.hub.lock().tab(id).map(|t| (t.url.clone(), t.title.clone())))
-            .unwrap_or_default();
+        let Some(tab) = self.active() else { return };
+        let (url, title) = self.hub.lock().tab(tab).map(|t| (t.url.clone(), t.title.clone())).unwrap_or_default();
+        if self.ai_chat.as_ref().is_some_and(|c| c.pending.is_some()) {
+            return;
+        }
+        let page = self.hub.lock().page_text(tab, &url);
+        if let Some(chat) = self.ai_chat.as_mut() {
+            chat.input.clear();
+            chat.error = None;
+            chat.messages.push((true, prompt.clone()));
+            chat.busy = true;
+        }
+        match page {
+            Some(page) => self.dispatch_ai(prompt, page, url, title, cx),
+            None => {
+                if let Some(chat) = self.ai_chat.as_mut() {
+                    chat.pending = Some(prompt);
+                    chat.pending_at = Some(Instant::now());
+                }
+                self.eval_op(tab, Op::PageText);
+                cx.notify();
+            }
+        }
+    }
+
+    fn dispatch_ai(&mut self, prompt: String, page: String, url: String, title: String, cx: &mut Context<Self>) {
         let Some(key) = ai_key(self.store.as_ref()) else {
             if let Some(chat) = self.ai_chat.as_mut() {
+                chat.busy = false;
                 chat.error = Some("No API key; set one in Settings → AI".into());
             }
             cx.notify();
@@ -2242,21 +2269,20 @@ impl RelayApp {
         };
         let Some(config) = ai_config(&self.ai_endpoint, &self.ai_model) else {
             if let Some(chat) = self.ai_chat.as_mut() {
+                chat.busy = false;
                 chat.error = Some("AI endpoint must be an http(s) URL".into());
             }
             cx.notify();
             return;
         };
-        let Some(chat) = self.ai_chat.as_mut() else { return };
-        chat.input.clear();
-        chat.messages.push((true, prompt.clone()));
-        chat.busy = true;
-        chat.error = None;
+        if let Some(chat) = self.ai_chat.as_mut() {
+            chat.busy = true;
+        }
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { relay_extensions::ai::complete(&config, &key, &url, &title, &prompt) })
+                .spawn(async move { relay_extensions::ai::complete(&config, &key, &url, &title, &page, &prompt) })
                 .await;
             let _ = this.update(cx, |app, cx| {
                 if let Some(chat) = app.ai_chat.as_mut() {
@@ -2270,6 +2296,22 @@ impl RelayApp {
             });
         })
         .detach();
+    }
+
+    fn maybe_send_ai(&mut self, cx: &mut Context<Self>) {
+        let Some(prompt) = self.ai_chat.as_ref().and_then(|c| c.pending.clone()) else { return };
+        let Some(tab) = self.active() else { return };
+        let (url, title) = self.hub.lock().tab(tab).map(|t| (t.url.clone(), t.title.clone())).unwrap_or_default();
+        let page = self.hub.lock().page_text(tab, &url);
+        let timeout = self.ai_chat.as_ref().and_then(|c| c.pending_at).is_some_and(|at| at.elapsed() > std::time::Duration::from_secs(2));
+        if page.is_none() && !timeout {
+            return;
+        }
+        if let Some(chat) = self.ai_chat.as_mut() {
+            chat.pending = None;
+            chat.pending_at = None;
+        }
+        self.dispatch_ai(prompt, page.unwrap_or_default(), url, title, cx);
     }
 
     fn open_profile_prompt(&mut self, cx: &mut Context<Self>) {

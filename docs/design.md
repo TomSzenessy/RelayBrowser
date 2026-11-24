@@ -35,8 +35,9 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   that brings it back; the edge and folded state persist in `tabs_position`
   and `tabs_folded`.
 - **AI:** Settings → AI stores an OpenAI-compatible endpoint/model and an API
-  key in the login Keychain. ⌘⇧A opens a chat that sends only the current URL,
-  title, and question, then shows the reply; Esc closes.
+  key in the login Keychain. ⌘⇧A opens a chat that sends the current URL,
+  title, up to 20,000 characters of visible page text, and the question, then
+  shows the reply; Esc closes.
 - **Motion:** palette, Settings, and Library fade in over 140 ms with
   ease-out-quint; no other transitions are animated yet.
 - **Palette:** also exposes duplicate, mute, and sleep tab commands.

@@ -622,6 +622,11 @@
     },
     storage: storageSummary,
     reader: reader,
+    page_text: function () {
+      var text = document.body ? String(document.body.innerText || "") : "";
+      post({ kind: "page_text", url: location.href, text: text.slice(0, 20000) });
+      return true;
+    },
     float_video: function (c) {
       var v = document.querySelector("video");
       if (!v) return false;

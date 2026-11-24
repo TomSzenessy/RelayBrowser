@@ -127,6 +127,8 @@ pub enum PageMessage {
     Hotkey { key: String },
     /// Markdown rendering of the page's main content (reply to `Op::Markdown`).
     Markdown { text: String },
+    /// Visible text for the AI page context (reply to `Op::PageText`).
+    PageText { url: String, text: String },
     Result(CommandResult),
 }
 
@@ -197,6 +199,8 @@ pub enum Op {
     Media { action: String },
     /// Float the first `<video>` in a fixed corner overlay, or restore it.
     FloatVideo { on: bool },
+    /// Send visible page text (bounded) for the AI assistant.
+    PageText,
     /// Mute or unmute every media element. `None` flips the page's current
     /// state, so one menu item works as a toggle without native state.
     Mute { #[serde(skip_serializing_if = "Option::is_none")] muted: Option<bool> },
@@ -319,6 +323,10 @@ mod tests {
         assert!(op.mutates());
         let s = Command { id: 8, op }.to_script();
         assert!(s.contains(r#""op":"media""#), "{s}");
+        let op: Op = serde_json::from_str(r#"{"op":"page_text"}"#).unwrap();
+        assert_eq!(op, Op::PageText);
+        let s = Command { id: 10, op }.to_script();
+        assert!(s.contains(r#""op":"page_text""#), "{s}");
         let op: Op = serde_json::from_str(r#"{"op":"float_video","on":true}"#).unwrap();
         assert_eq!(op, Op::FloatVideo { on: true });
         assert!(op.mutates());

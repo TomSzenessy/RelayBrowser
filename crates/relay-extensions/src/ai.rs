@@ -37,9 +37,9 @@ struct Request<'a> {
     stream: bool,
 }
 
-pub fn request_body(model: &str, url: &str, title: &str, prompt: &str) -> String {
-    let system = "You are Relay's concise browser assistant. Answer in plain text. The user's page URL and title are provided, but not the page body; do not claim to have read it.";
-    let user = format!("Page: {title}\nURL: {url}\n\nQuestion: {prompt}");
+pub fn request_body(model: &str, url: &str, title: &str, page: &str, prompt: &str) -> String {
+    let system = "You are Relay's concise browser assistant. Answer in plain text. The user's page URL, title, and visible page text are provided.";
+    let user = format!("Page: {title}\nURL: {url}\n\nVisible page text:\n{page}\n\nQuestion: {prompt}");
     serde_json::to_string(&Request {
         model,
         messages: vec![Message { role: "system", content: system }, Message { role: "user", content: &user }],
@@ -74,12 +74,12 @@ pub fn parse_reply(json: &str) -> Result<String, String> {
 /// One blocking completion. `endpoint` is a base URL like
 /// `https://api.openai.com/v1`; the key is sent only in the Authorization
 /// header. Runs off the main thread by the caller.
-pub fn complete(config: &AiConfig, key: &str, url: &str, title: &str, prompt: &str) -> Result<String, String> {
+pub fn complete(config: &AiConfig, key: &str, url: &str, title: &str, page: &str, prompt: &str) -> Result<String, String> {
     let endpoint = normalize_endpoint(&config.endpoint).ok_or("AI endpoint must be an http(s) URL")?;
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(60))).build(),
     );
-    let body = request_body(&config.model, url, title, prompt);
+    let body = request_body(&config.model, url, title, page, prompt);
     let mut res = agent
         .post(&format!("{endpoint}/chat/completions"))
         .header("Authorization", &format!("Bearer {key}"))
@@ -103,11 +103,12 @@ mod tests {
     fn endpoint_and_body_are_bounded() {
         assert_eq!(normalize_endpoint(" https://api.test/v1/ ").as_deref(), Some("https://api.test/v1"));
         assert!(normalize_endpoint("file:///etc/passwd").is_none());
-        let body = request_body("m", "https://a.test/", "A \"page\"", "why?");
+        let body = request_body("m", "https://a.test/", "A \"page\"", "visible body", "why?");
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["model"], "m");
         assert_eq!(v["messages"][0]["role"], "system");
-        assert!(v["messages"][1]["content"].as_str().unwrap().contains("A \"page\""));
+        let user = v["messages"][1]["content"].as_str().unwrap();
+        assert!(user.contains("A \"page\"") && user.contains("visible body"));
         assert_eq!(v["stream"], false);
     }
 

@@ -14,6 +14,7 @@ const root = join(here, "..", "..");
 const BRIDGE = readFileSync(join(here, "..", "bridge.js"), "utf8");
 const ORIGIN = "https://shop.relay.test";
 
+const PAGE_URL = "about:blank";
 const PAGE = `<!doctype html><html><head><title>Checkout</title></head><body>
   <h1>Your cart</h1>
   <a id="link" href="https://example.org/x">Example link</a>
@@ -675,4 +676,12 @@ test("hovering a link posts its target and clearing posts null", async () => {
   assert.ok(hit);
   await page.mouse.move(0, 0);
   await until(m => m.kind === "link" && m.url === null);
+});
+
+test("page_text posts bounded visible text with its URL", async () => {
+  const res = await run({ id: 401, op: "page_text" });
+  assert.equal(res.value, true);
+  const hit = await until(m => m.kind === "page_text" && m.url === PAGE_URL);
+  assert.ok(hit);
+  assert.ok(hit.text.length > 0 && hit.text.length <= 20000);
 });
