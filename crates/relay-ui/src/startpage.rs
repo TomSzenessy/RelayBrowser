@@ -132,12 +132,17 @@ impl StartPage {
 
     pub fn build(store: &Store, raw_sections: Option<&str>) -> Result<Self, relay_extensions::Error> {
         let wanted = parse_sections(raw_sections);
-        let recent_visits = store.recent_sites(MAX_ROWS)?;
+        let recent_visits: Vec<_> = store
+            .recent_sites(40)?
+            .into_iter()
+            .filter(|v| !is_noisy_visit(&v.title, &v.url))
+            .take(MAX_ROWS)
+            .collect();
         let recent_urls: HashSet<String> = recent_visits.iter().map(|v| v.url.clone()).collect();
         let frequent: Vec<_> = store
-            .frequent_sites(24)?
+            .frequent_sites(40)?
             .into_iter()
-            .filter(|v| !recent_urls.contains(&v.url))
+            .filter(|v| !is_noisy_visit(&v.title, &v.url) && !recent_urls.contains(&v.url))
             .take(MAX_ROWS)
             .collect();
         let apps = store.web_apps()?.into_iter().take(MAX_ROWS).collect::<Vec<_>>();
@@ -160,11 +165,60 @@ impl StartPage {
     }
 }
 
+/// Filter out transient "Loading" pages, OAuth/SSO/consent redirects, and raw
+/// search-engine query pages so Recent and Frequent show real destinations.
+pub fn is_noisy_visit(title: &str, url: &str) -> bool {
+    let tl = title.trim().to_ascii_lowercase();
+    if matches!(tl.as_str(), "loading" | "loading..." | "loading…" | "redirecting..." | "redirecting…" | "just a moment...") {
+        return true;
+    }
+    let lower = url.trim().to_ascii_lowercase();
+    let without_scheme = lower.split("://").nth(1).unwrap_or(&lower);
+    let host = without_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    if matches!(
+        host,
+        "accounts.google.com"
+            | "consent.google.com"
+            | "login.microsoftonline.com"
+            | "login.live.com"
+            | "appleid.apple.com"
+            | "idmsa.apple.com"
+    ) || host.starts_with("login.")
+        || host.starts_with("sso.")
+        || host.starts_with("oauth.")
+        || host.contains(".login.")
+        || host.ends_with(".auth0.com")
+    {
+        return true;
+    }
+    let path_and_query = without_scheme.strip_prefix(host).or_else(|| without_scheme.strip_prefix(&format!("www.{host}"))).unwrap_or("");
+    if path_and_query.starts_with("/v3/signin")
+        || path_and_query.starts_with("/oauth/")
+        || path_and_query.starts_with("/oauth2/")
+        || path_and_query.starts_with("/auth/authorize")
+        || path_and_query.starts_with("/saml")
+        || path_and_query.starts_with("/login?")
+        || path_and_query.starts_with("/signin?")
+        || path_and_query.starts_with("/search?")
+    {
+        return true;
+    }
+    false
+}
+
+fn host_only(url: &str) -> String {
+    let s = url.split("://").nth(1).unwrap_or(url);
+    let host = s.split(['/', '?', '#']).next().unwrap_or(s);
+    host.strip_prefix("www.").unwrap_or(host).to_string()
+}
+
 fn visit_item(v: &relay_extensions::store::Visit) -> StartItem {
+    let host = host_only(&v.url);
     StartItem {
         title: if v.title.trim().is_empty() { short_url(&v.url) } else { v.title.clone() },
         url: v.url.clone(),
-        note: if v.visit_count > 1 { format!("{} visits · {}", v.visit_count, short_url(&v.url)) } else { short_url(&v.url) },
+        note: if v.visit_count > 1 { format!("{} visits · {host}", v.visit_count) } else { host },
     }
 }
 
@@ -280,7 +334,23 @@ mod tests {
         let page = StartPage::build(&s, Some("recent")).unwrap();
         let item = &page.sections[0].1[0];
         assert!(item.title.starts_with("example.test/"));
-        assert!(item.note.starts_with("example.test/"));
+        assert_eq!(item.note, "example.test");
         assert!(item.title.chars().count() <= 49);
+    }
+
+    #[test]
+    fn noisy_visits_are_filtered_out_of_start_page() {
+        let s = Store::in_memory().unwrap();
+        s.record_visit("https://accounts.google.com/v3/signin/identifier", "Sign in", 10).unwrap();
+        s.record_visit("https://login.microsoftonline.com/20f0b6e3/oauth2/authorize", "Sign in", 11).unwrap();
+        s.record_visit("https://consent.google.com/m?continue=x", "Bevor Sie zur Google Suche weitergehen", 12).unwrap();
+        s.record_visit("https://www.google.com/search?q=asdf", "asdf - Google Suche", 13).unwrap();
+        s.record_visit("https://example.org/app", "Loading", 14).unwrap();
+        s.record_visit("https://youtube.com/", "YouTube", 15).unwrap();
+        let page = StartPage::build(&s, Some("recent")).unwrap();
+        let recent = &page.sections[0].1;
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].title, "YouTube");
+        assert_eq!(recent[0].note, "youtube.com");
     }
 }

@@ -16,7 +16,7 @@ mod web;
 mod webapp;
 
 use anyhow::{bail, Context as _};
-use gpui::{px, size, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
+use gpui::{point, px, size, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
 use relay_bridge::{paths, ChannelBrowser, Owner, SharedHub, PROTOCOL_VERSION};
 use relay_extensions::{chrome_import, crx, manifest, store::Store};
 use std::sync::Arc;
@@ -639,9 +639,14 @@ fn run_browser(initial_url: Option<String>, app_mode: bool, app_name: Option<Str
         } else {
             Bounds::centered(None, size(px(1280.), px(820.)), cx)
         };
+        let _ = window_title;
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions { title: Some(window_title.clone().into()), ..Default::default() }),
+            titlebar: Some(TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(12.), px(12.))),
+            }),
             ..Default::default()
         };
         let hub_for_window = hub.clone();

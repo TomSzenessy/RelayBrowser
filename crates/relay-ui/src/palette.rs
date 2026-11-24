@@ -527,6 +527,7 @@ impl Palette {
         scored.sort_by_key(|s| std::cmp::Reverse(s.0));
         let mut seen = std::collections::HashSet::new();
         let mut items: Vec<Item> = vec![];
+        let mut deferred_search: Option<Item> = None;
         if let Some(url) = crate::bangs::resolve(q, &self.custom_bangs) {
             items.push(Item::Bang { label: format!("Bang: {}", short_url(&url)), url });
         } else {
@@ -534,7 +535,18 @@ impl Palette {
                 items.push(Item::Calc(result));
             }
             if !q.is_empty() {
-                items.push(resolve(q, search_template));
+                let resolved = resolve(q, search_template);
+                // If the user typed a short prefix/alias (e.g. "you" -> youtube.com,
+                // "dsh" -> DSH DeepSeek Harness) rather than an explicit URL or
+                // multi-word search, promote the top matching tab/bookmark/history
+                // entry to index 0 so Enter opens the predicted link directly.
+                let promote_prediction = matches!(resolved, Item::Search { .. })
+                    && scored.first().is_some_and(|(_, top)| is_strong_prediction(q, top));
+                if promote_prediction {
+                    deferred_search = Some(resolved);
+                } else {
+                    items.push(resolved);
+                }
             }
         }
         for (_, item) in scored {
@@ -545,10 +557,16 @@ impl Palette {
             // An open tab beats a history row for the same URL.
             if seen.insert(key) {
                 items.push(item);
+                if let Some(search_item) = deferred_search.take() {
+                    items.push(search_item);
+                }
             }
             if items.len() >= MAX_ITEMS {
                 break;
             }
+        }
+        if let Some(search_item) = deferred_search.take() {
+            items.push(search_item);
         }
         if q.is_empty() {
             items.extend(Command::ALL.iter().take(MAX_ITEMS.saturating_sub(items.len())).map(|c| Item::Command(*c)));
@@ -583,6 +601,34 @@ fn best_chars(q: &[char], title: &str, url: &str) -> Option<i32> {
 fn short_str(url: &str) -> &str {
     let s = url.split("://").nth(1).unwrap_or(url).trim_end_matches('/');
     s.strip_prefix("www.").unwrap_or(s)
+}
+
+/// True when `q` is a single-token prefix (≥2 chars) of a tab/bookmark/history
+/// item's host, title, or word-initial acronym (e.g. "you" -> youtube.com,
+/// "dsh" -> "DSH DeepSeek Harness" or "DeepSeek Harness").
+fn is_strong_prediction(q: &str, item: &Item) -> bool {
+    let (title, url) = match item {
+        Item::Tab { title, url, .. } | Item::Bookmark { title, url } | Item::History { title, url } => (title.as_str(), url.as_str()),
+        _ => return false,
+    };
+    if q.chars().count() < 2 || q.contains(char::is_whitespace) {
+        return false;
+    }
+    let ql = q.to_lowercase();
+    let host = short_str(url).split(['/', '?', '#']).next().unwrap_or("").to_lowercase();
+    if host.starts_with(&ql) {
+        return true;
+    }
+    let tl = title.trim().to_lowercase();
+    if tl.starts_with(&ql) {
+        return true;
+    }
+    // Word-start acronym match (e.g. "dsh" matching "DeepSeek Harness" or "DSH ...").
+    let initials: String = tl
+        .split(|c: char| !c.is_alphanumeric())
+        .filter_map(|w| w.chars().next())
+        .collect();
+    !initials.is_empty() && initials.starts_with(&ql)
 }
 
 #[cfg(test)]
@@ -715,8 +761,8 @@ mod tests {
         };
         let mut p = Palette { query: "gpui".into(), ..Default::default() };
         p.refresh(&sources, DEFAULT_SEARCH);
-        assert!(matches!(p.items[0], Item::Search { .. }), "typed text is always first");
-        assert!(matches!(p.items[1], Item::Tab { id: 1, .. }));
+        assert!(matches!(p.items[0], Item::Tab { id: 1, .. }), "strong tab prediction preselects first");
+        assert!(matches!(p.items[1], Item::Search { .. }), "search fallback follows right after");
         assert_eq!(p.items.iter().filter(|i| i.detail().contains("docs.rs/gpui")).count(), 1);
         p.move_selection(-1);
         assert_eq!(p.selected, p.items.len() - 1, "selection wraps");
@@ -854,5 +900,31 @@ mod tests {
         let mut p = Palette { query: "duplicate".into(), ..Default::default() };
         p.refresh(&Sources::default(), DEFAULT_SEARCH);
         assert!(p.items.contains(&Item::Command(Command::CloseDuplicateTabs)));
+    }
+
+    #[test]
+    fn strong_predictions_preselect_ahead_of_search() {
+        let sources = Sources {
+            tabs: vec![],
+            bookmarks: vec![
+                ("DSH DeepSeek Harness".into(), "https://dsh.internal/".into()),
+                ("YouTube".into(), "https://www.youtube.com/".into()),
+            ],
+            history: vec![("GitHub".into(), "https://github.com/".into())],
+        };
+        let mut p = Palette { query: "you".into(), ..Default::default() };
+        p.refresh(&sources, DEFAULT_SEARCH);
+        assert!(matches!(&p.items[0], Item::Bookmark { url, .. } if url == "https://www.youtube.com/"));
+        assert!(matches!(&p.items[1], Item::Search { query, .. } if query == "you"));
+
+        p.set_query("dsh".into());
+        p.refresh(&sources, DEFAULT_SEARCH);
+        assert!(matches!(&p.items[0], Item::Bookmark { title, .. } if title == "DSH DeepSeek Harness"));
+        assert!(matches!(&p.items[1], Item::Search { query, .. } if query == "dsh"));
+
+        // Multi-word searches keep Search at index 0 rather than hijacking Enter.
+        p.set_query("youtube music".into());
+        p.refresh(&sources, DEFAULT_SEARCH);
+        assert!(matches!(&p.items[0], Item::Search { query, .. } if query == "youtube music"));
     }
 }

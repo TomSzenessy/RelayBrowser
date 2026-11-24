@@ -155,8 +155,10 @@ impl Element for PaletteTextElement {
         }
         prepaint.line.paint(bounds.origin, bounds.size.height, window, cx).ok();
         if focused {
+            let caret_h = px(18.);
+            let caret_y = bounds.top() + (bounds.size.height - caret_h) / 2.;
             window.paint_quad(fill(
-                Bounds::new(point(bounds.left() + prepaint.cursor, bounds.top()), size(px(1.5), px(18.))),
+                Bounds::new(point(bounds.left() + prepaint.cursor, caret_y), size(px(1.5), caret_h)),
                 self.theme.accent,
             ));
         }
@@ -215,11 +217,21 @@ impl RelayApp {
                         app.run_item(item_c.clone(), cx);
                         cx.notify();
                     }))
-                    .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(13.)).child(SharedString::from(item.title())))
-                    .child(div().text_size(px(12.)).text_color(t.muted).child(SharedString::from(custom_key))),
+                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(13.)).child(SharedString::from(item.title())))
+                    .child(
+                        div()
+                            .max_w(px(220.))
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(12.))
+                            .text_color(t.muted)
+                            .child(SharedString::from(custom_key)),
+                    ),
             );
         }
-        let query_row = div().flex_1().h_full().overflow_hidden().child(PaletteTextElement {
+        let query_row = div().flex_1().h_full().flex().items_center().overflow_hidden().child(PaletteTextElement {
             app: cx.entity(),
             focus: self.focus.clone(),
             theme: t,
