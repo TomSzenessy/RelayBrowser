@@ -350,6 +350,9 @@ test("web_app reads a manifest asynchronously and returns a PNG icon", async () 
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU2l4wAAAABJRU5ErkJggg==",
     "base64");
+  const ico = Buffer.from(
+    "AAABAAEAAQEAAAEAIABGAAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAABAAAAAQgGAAAAHxXEiQAAAA1JREFUeNpj/M/AUA8ABYMCf5VNpeMAAAAASUVORK5CYII=",
+    "base64");
   await p.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
     if (url.pathname === "/app/") return route.fulfill({ contentType: "text/html", body: APP_PAGE });
@@ -417,12 +420,17 @@ test("favicon returns a supported image and refuses non-images", async () => {
   const png = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU2l4wAAAABJRU5ErkJggg==",
     "base64");
+  const ico = Buffer.from(
+    "AAABAAEAAQEAAAEAIABGAAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAABAAAAAQgGAAAAHxXEiQAAAA1JREFUeNpj/M/AUA8ABYMCf5VNpeMAAAAASUVORK5CYII=",
+    "base64");
   await p.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
     if (url.pathname === "/icon/") return route.fulfill({ contentType: "text/html", body: '<link rel="icon" href="/icon.png"><h1>Icon</h1>' });
     if (url.pathname === "/icon.png") return route.fulfill({ contentType: "image/png", body: png });
     if (url.pathname === "/bad/") return route.fulfill({ contentType: "text/html", body: '<link rel="icon" href="/icon.txt"><h1>Bad</h1>' });
     if (url.pathname === "/icon.txt") return route.fulfill({ contentType: "text/plain", body: "not an icon" });
+    if (url.pathname === "/ico/") return route.fulfill({ contentType: "text/html", body: '<link rel="icon" href="/fav.ico"><h1>ICO</h1>' });
+    if (url.pathname === "/fav.ico") return route.fulfill({ contentType: "image/x-icon", body: ico });
     return route.fulfill({ status: 404, body: "" });
   });
   await p.goto(`${ORIGIN}/icon/`);
@@ -449,7 +457,18 @@ test("favicon returns a supported image and refuses non-images", async () => {
   }
   assert.ok(result, "bad favicon replied");
   assert.equal(result.ok, true, result.error);
-  assert.equal(result.value.available, false, "text/plain and ICO are refused");
+  assert.equal(result.value.available, false, "text/plain is refused");
+
+  await p.goto(`${ORIGIN}/ico/`);
+  result = null;
+  await p.evaluate(() => window.__relay.exec({ id: 132, op: "favicon" }));
+  for (let i = 0; i < 100 && !result; i++) {
+    const msgs = await p.evaluate(() => window.__relay.drain());
+    result = msgs.find(m => m.kind === "result" && m.id === 132);
+    if (!result) await p.waitForTimeout(25);
+  }
+  assert.equal(result.value.available, true, "an ICO favicon is accepted");
+  assert.equal(result.value.mime, "image/x-icon");
   await p.close();
 });
 

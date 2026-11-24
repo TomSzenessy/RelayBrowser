@@ -60,8 +60,10 @@ untrusted, so a manifest can never point the installer at another site. The
 `apple-touch-icon` URLs, then `/favicon.ico`, with `same-origin` credentials,
 a 3 s timeout, a 256 KB cap, and a PNG/JPEG/WebP/GIF/SVG/ICO whitelist
 (`image/x-icon` and `image/vnd.microsoft.icon` included). A blob with no
-`Content-Type` is typed from its URL, and the encoded payload is rebuilt with
-the declared mime. It replies `{available: true, data: "data:<mime>;base64,…",
+`Content-Type` is typed from a known image extension or an extensionless
+`/favicon` path; an unknown extension keeps the server's type and is refused
+if that is not an image. The encoded payload is rebuilt with the declared
+mime. It replies `{available: true, data: "data:<mime>;base64,…",
 mime}` or `{available: false}`; text is refused. The shell validates the
 prefix, mime, byte signature, decoded size, and pixel dimensions (max 1024²,
 2 MP) before caching and painting it. An ICO's largest PNG-compressed entry is

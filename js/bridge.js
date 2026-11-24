@@ -875,7 +875,8 @@
     if (/\.webp$/.test(clean)) return "image/webp";
     if (/\.gif$/.test(clean)) return "image/gif";
     if (/\.jpe?g$/.test(clean)) return "image/jpeg";
-    return "image/png";
+    if (/\.png$/.test(clean) || clean.indexOf(".") === -1 || /\/favicon$/.test(clean)) return "image/png";
+    return "";
   }
   function blobToIcon(blob, url) {
     return new Promise(function (resolve, reject) {
@@ -886,6 +887,7 @@
       var type = String(blob.type || "").toLowerCase();
       if (!/^image\/(png|jpeg|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon)$/.test(type)) {
         type = iconTypeFromUrl(url);
+        if (!type) return reject(new Error("icon format is not supported"));
       }
       var reader = new FileReader();
       reader.onload = function () {
