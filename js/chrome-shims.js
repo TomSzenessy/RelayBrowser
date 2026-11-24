@@ -22,6 +22,66 @@
     return promise;
   }
 
+  // Chrome extensions call the callback form far more often than the promise
+  // form (`chrome.storage.local.get(keys, cb)`). WebKit's `browser.*` is
+  // promise-only, so adapt the common namespaces without touching listeners.
+  var lastError = null;
+  try {
+    Object.defineProperty(b.runtime || {}, "lastError", {
+      configurable: true,
+      get: function () { return lastError; }
+    });
+  } catch (e) {}
+  function callbackForm(target, name) {
+    if (!target || typeof target[name] !== "function" || target[name].__relayCallback) return;
+    var original = target[name];
+    var wrapped = function () {
+      var args = Array.prototype.slice.call(arguments);
+      var callback = typeof args[args.length - 1] === "function" ? args.pop() : null;
+      var result;
+      try {
+        result = original.apply(target, args);
+      } catch (e) {
+        if (!callback) throw e;
+        lastError = { message: String(e && e.message || e) };
+        callback(undefined);
+        lastError = null;
+        return;
+      }
+      if (!callback) return result;
+      var promise = result && typeof result.then === "function" ? result : Promise.resolve(result);
+      promise.then(function (value) {
+        lastError = null;
+        try { callback(value); } finally { lastError = null; }
+      }, function (e) {
+        lastError = { message: String(e && e.message || e) };
+        try { callback(undefined); } finally { lastError = null; }
+      });
+      return undefined;
+    };
+    wrapped.__relayCallback = true;
+    target[name] = wrapped;
+  }
+  function adaptNamespace(root, methods) {
+    if (!root) return;
+    for (var name in methods) {
+      var target = root;
+      var parts = name.split(".");
+      for (var i = 0; i < parts.length - 1 && target; i++) target = target[parts[i]];
+      if (target) callbackForm(target, parts[parts.length - 1]);
+    }
+  }
+  adaptNamespace(b, {
+    "storage.local.get": 1, "storage.local.set": 1, "storage.local.remove": 1, "storage.local.clear": 1,
+    "storage.sync.get": 1, "storage.sync.set": 1, "storage.sync.remove": 1, "storage.sync.clear": 1,
+    "storage.session.get": 1, "storage.session.set": 1, "storage.session.remove": 1,
+    "runtime.sendMessage": 1,
+    "tabs.query": 1, "tabs.create": 1, "tabs.update": 1, "tabs.remove": 1, "tabs.get": 1, "tabs.sendMessage": 1,
+    "scripting.executeScript": 1, "scripting.insertCSS": 1, "scripting.removeCSS": 1,
+    "permissions.request": 1, "permissions.contains": 1, "permissions.remove": 1,
+    "windows.create": 1, "windows.get": 1, "windows.getAll": 1, "windows.update": 1, "windows.remove": 1
+  });
+
   // chrome.sidePanel -> a GPUI pane beside the page.
   if (!chrome.sidePanel) {
     var behavior = { openPanelOnActionClick: false };

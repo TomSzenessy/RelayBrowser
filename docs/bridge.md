@@ -69,6 +69,12 @@ extracted; BMP-only ICOs fall back to the letter badge. The shell asks only
 after the page has a DOM and retries once per load, so the first request can
 no longer cache a negative answer for a blank tab.
 
+`chrome-shims.js` also adapts the callback form of the common Chrome
+namespaces (`storage`, `runtime.sendMessage`, `tabs`, `scripting`,
+`permissions`, `windows`) onto WebKit's promise-only `browser.*`, setting
+`chrome.runtime.lastError` during a failed callback. Event registration is
+never wrapped. Only `sidePanel` and `offscreen` have native receivers.
+
 `mute` sets every `audio`/`video` element's `muted` property and attribute;
 `{muted: true|false}` is explicit, an omitted `muted` flips the page's current
 state so one menu item works as a toggle. It returns the number of media
