@@ -387,6 +387,7 @@ pub struct RelayApp {
     ai_focus: u8,
     ai_has_key: bool,
     ai_chat: Option<AiChat>,
+    ai_stream: Option<std::sync::mpsc::Receiver<relay_extensions::ai::StreamEvent>>,
     last_handoff: Option<String>,
     last_sync: Instant,
     last_ext_icons: Instant,
@@ -699,6 +700,7 @@ impl RelayApp {
             ai_focus: 0,
             ai_has_key,
             ai_chat: None,
+            ai_stream: None,
             last_handoff: None,
             last_sync: Instant::now(),
             last_ext_icons: Instant::now(),
@@ -1148,6 +1150,7 @@ impl RelayApp {
             self.title_cache = (u64::MAX, String::new());
             cx.notify();
         }
+        self.drain_ai_stream(cx);
         self.maybe_send_ai(cx);
         self.web.borrow_mut().poll_float_panel();
         let target = self
@@ -2176,6 +2179,63 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn drain_ai_stream(&mut self, cx: &mut Context<Self>) {
+        let Some(rx) = self.ai_stream.take() else { return };
+        let mut keep = true;
+        loop {
+            let event = match rx.try_recv() {
+                Ok(event) => event,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    keep = false;
+                    if let Some(chat) = self.ai_chat.as_mut() {
+                        chat.busy = false;
+                    }
+                    cx.notify();
+                    break;
+                }
+            };
+            let mut done = false;
+            if let Some(chat) = self.ai_chat.as_mut() {
+                match event {
+                    relay_extensions::ai::StreamEvent::Delta(delta) => {
+                        if chat.messages.last().is_some_and(|(user, _)| !*user) {
+                            if let Some((_, text)) = chat.messages.last_mut() {
+                                text.push_str(&delta);
+                            }
+                        } else {
+                            chat.messages.push((false, delta));
+                        }
+                    }
+                    relay_extensions::ai::StreamEvent::Done(Ok(answer)) => {
+                        if chat.messages.last().is_some_and(|(user, _)| !*user) {
+                            if let Some((_, text)) = chat.messages.last_mut() {
+                                *text = answer;
+                            }
+                        } else {
+                            chat.messages.push((false, answer));
+                        }
+                        chat.busy = false;
+                        done = true;
+                    }
+                    relay_extensions::ai::StreamEvent::Done(Err(error)) => {
+                        chat.busy = false;
+                        chat.error = Some(error);
+                        done = true;
+                    }
+                }
+            }
+            cx.notify();
+            if done {
+                keep = false;
+                break;
+            }
+        }
+        if keep {
+            self.ai_stream = Some(rx);
+        }
+    }
+
     fn save_ai_settings(&mut self, cx: &mut Context<Self>) {
         let Some(endpoint) = relay_extensions::ai::normalize_endpoint(&self.ai_endpoint) else {
             self.toast("AI endpoint must be an http(s) URL");
@@ -2230,6 +2290,7 @@ impl RelayApp {
 
     fn close_ai_chat(&mut self) {
         self.ai_chat = None;
+        self.ai_stream = None;
         self.focus_active_page();
     }
 
@@ -2292,23 +2353,13 @@ impl RelayApp {
             chat.busy = true;
         }
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { relay_extensions::ai::complete(&config, &key, &url, &title, &page, &prompt, &history) })
-                .await;
-            let _ = this.update(cx, |app, cx| {
-                if let Some(chat) = app.ai_chat.as_mut() {
-                    chat.busy = false;
-                    match result {
-                        Ok(answer) => chat.messages.push((false, answer)),
-                        Err(e) => chat.error = Some(e),
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.ai_stream = Some(rx);
+        cx.background_executor()
+            .spawn(async move {
+                relay_extensions::ai::stream(&config, &key, &url, &title, &page, &prompt, &history, tx);
+            })
+            .detach();
     }
 
     fn maybe_send_ai(&mut self, cx: &mut Context<Self>) {

@@ -43,7 +43,15 @@ const MAX_HISTORY_BYTES: usize = 24_000;
 /// Build the chat-completions body. Prior turns are included (last 10, capped)
 /// so follow-up questions keep context; the page text is attached only to the
 /// current question.
-pub fn request_body(model: &str, url: &str, title: &str, page: &str, prompt: &str, history: &[(bool, String)]) -> String {
+pub fn request_body(
+    model: &str,
+    url: &str,
+    title: &str,
+    page: &str,
+    prompt: &str,
+    history: &[(bool, String)],
+    stream: bool,
+) -> String {
     let system = "You are Relay's concise browser assistant. Answer in plain text. The user's page URL, title, and visible page text are provided.";
     let mut messages = vec![Message { role: "system", content: system.to_string() }];
     let mut used = 0usize;
@@ -61,7 +69,7 @@ pub fn request_body(model: &str, url: &str, title: &str, page: &str, prompt: &st
     }
     let user = format!("Page: {title}\nURL: {url}\n\nVisible page text:\n{page}\n\nQuestion: {prompt}");
     messages.push(Message { role: "user", content: user });
-    serde_json::to_string(&Request { model: model.to_string(), messages, stream: false }).unwrap_or_else(|_| "{}".into())
+    serde_json::to_string(&Request { model: model.to_string(), messages, stream }).unwrap_or_else(|_| "{}".into())
 }
 
 pub fn parse_reply(json: &str) -> Result<String, String> {
@@ -103,7 +111,7 @@ pub fn complete(
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(60))).build(),
     );
-    let body = request_body(&config.model, url, title, page, prompt, history);
+    let body = request_body(&config.model, url, title, page, prompt, history, false);
     let mut res = agent
         .post(&format!("{endpoint}/chat/completions"))
         .header("Authorization", &format!("Bearer {key}"))
@@ -119,6 +127,100 @@ pub fn complete(
     parse_reply(&text)
 }
 
+/// A streamed reply update. `Delta` chunks arrive until exactly one `Done`.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    Delta(String),
+    Done(Result<String, String>),
+}
+
+/// Stream a chat completion through OpenAI-style SSE. The callback is a
+/// channel sender so the network thread stays free of UI types.
+pub fn stream(
+    config: &AiConfig,
+    key: &str,
+    url: &str,
+    title: &str,
+    page: &str,
+    prompt: &str,
+    history: &[(bool, String)],
+    tx: std::sync::mpsc::Sender<StreamEvent>,
+) {
+    let result = stream_inner(config, key, url, title, page, prompt, history, &tx);
+    let _ = tx.send(StreamEvent::Done(result));
+}
+
+fn stream_inner(
+    config: &AiConfig,
+    key: &str,
+    url: &str,
+    title: &str,
+    page: &str,
+    prompt: &str,
+    history: &[(bool, String)],
+    tx: &std::sync::mpsc::Sender<StreamEvent>,
+) -> Result<String, String> {
+    use std::io::BufRead;
+    let endpoint = normalize_endpoint(&config.endpoint).ok_or("AI endpoint must be an http(s) URL")?;
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(120))).build(),
+    );
+    let body = request_body(&config.model, url, title, page, prompt, history, true);
+    let mut res = agent
+        .post(&format!("{endpoint}/chat/completions"))
+        .header("Authorization", &format!("Bearer {key}"))
+        .header("Content-Type", "application/json")
+        .send(body)
+        .map_err(|e| format!("AI request failed: {e}"))?;
+    if !res.status().is_success() {
+        let text = res.body_mut().read_to_string().unwrap_or_default();
+        return Err(format!("AI endpoint returned {}: {}", res.status(), text.chars().take(300).collect::<String>()));
+    }
+    let reader = res.body_mut().as_reader();
+    let mut answer = String::new();
+    let mut raw = String::new();
+    let mut saw_data = false;
+    for line in std::io::BufReader::new(reader).lines() {
+        let line = line.map_err(|e| format!("AI stream read failed: {e}"))?;
+        raw.push_str(&line);
+        raw.push('\n');
+        if let Some(delta) = parse_sse_line(&line)? {
+            saw_data = true;
+            answer.push_str(&delta);
+            let _ = tx.send(StreamEvent::Delta(delta));
+        }
+        if raw.len() > MAX_REPLY_BYTES {
+            return Err("AI stream exceeded the reply cap".into());
+        }
+    }
+    if !saw_data || answer.trim().is_empty() {
+        // Some compatible servers ignore `stream:true` and return plain JSON.
+        return parse_reply(&raw);
+    }
+    Ok(answer)
+}
+
+/// Parse one SSE line; `Some(None)` means a `[DONE]` sentinel, `None` means
+/// the line carried no content.
+fn parse_sse_line(line: &str) -> Result<Option<String>, String> {
+    let Some(data) = line.trim().strip_prefix("data:") else { return Ok(None) };
+    let data = data.trim();
+    if data == "[DONE]" {
+        return Ok(Some(String::new()));
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else { return Ok(None) };
+    if let Some(error) = value.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+        return Err(error.to_string());
+    }
+    Ok(value
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("delta"))
+        .and_then(|d| d.get("content"))
+        .and_then(|c| c.as_str())
+        .map(str::to_string))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,7 +229,7 @@ mod tests {
     fn endpoint_and_body_are_bounded() {
         assert_eq!(normalize_endpoint(" https://api.test/v1/ ").as_deref(), Some("https://api.test/v1"));
         assert!(normalize_endpoint("file:///etc/passwd").is_none());
-        let body = request_body("m", "https://a.test/", "A \"page\"", "visible body", "why?", &[]);
+        let body = request_body("m", "https://a.test/", "A \"page\"", "visible body", "why?", &[], false);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["model"], "m");
         assert_eq!(v["messages"][0]["role"], "system");
@@ -141,7 +243,7 @@ mod tests {
         let history: Vec<(bool, String)> = (0..20)
             .map(|i| (i % 2 == 0, format!("turn {i} {}", "x".repeat(1000))))
             .collect();
-        let body = request_body("m", "https://a.test/", "T", "page", "now", &history);
+        let body = request_body("m", "https://a.test/", "T", "page", "now", &history, false);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         let messages = v["messages"].as_array().unwrap();
         assert_eq!(messages[0]["role"], "system");
@@ -149,6 +251,14 @@ mod tests {
         assert!(messages.len() <= 12);
         assert_eq!(messages.last().unwrap()["role"], "user");
         assert!(messages.last().unwrap()["content"].as_str().unwrap().contains("Question: now"));
+    }
+
+    #[test]
+    fn sse_deltas_and_done_are_parsed() {
+        assert_eq!(parse_sse_line(r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#).unwrap().as_deref(), Some("hi"));
+        assert_eq!(parse_sse_line("data: [DONE]").unwrap().as_deref(), Some(""));
+        assert_eq!(parse_sse_line(": keep-alive").unwrap(), None);
+        assert!(parse_sse_line(r#"data: {"error":{"message":"bad"}}"#).is_err());
     }
 
     #[test]
