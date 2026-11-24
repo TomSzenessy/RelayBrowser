@@ -99,6 +99,7 @@ actions!(
         TabsOnRight,
         FoldAllGroups,
         UnfoldAllGroups,
+        Spaces,
     ]
 );
 
@@ -166,6 +167,11 @@ struct ShortcutEditor {
 /// The small modal that names a tab group.
 struct GroupPrompt {
     tab: TabId,
+    value: String,
+}
+
+/// The small modal that names or picks a space.
+struct SpacePrompt {
     value: String,
 }
 
@@ -299,6 +305,7 @@ pub struct RelayApp {
     tab_menu: Option<TabId>,
     /// Inline name prompt opened from a tab's context menu.
     group_prompt: Option<GroupPrompt>,
+    space_prompt: Option<SpacePrompt>,
     /// Group headings folded by the user; persisted as `collapsed_groups`.
     collapsed_groups: HashSet<String>,
     /// Remembered camera/mic decisions: `(host, kind)` → allowed.
@@ -546,6 +553,12 @@ impl RelayApp {
             .map(|raw| parse_media_permissions(&raw))
             .unwrap_or_default();
         web.set_media_permissions(media_permissions.iter().map(|((host, kind), granted)| (host.clone(), *kind, *granted)).collect());
+        let active_space = store
+            .as_ref()
+            .and_then(|s| s.setting("active_space").ok().flatten())
+            .map(|s| Hub::normalize_space_name(&s).unwrap_or_default())
+            .unwrap_or_default();
+        hub.update(|h| h.set_current_space(&active_space));
         let downloads_dir = download_dir_setting(store.as_ref().and_then(|s| s.setting("downloads_dir").ok().flatten()).as_deref());
         let downloads_ask = setting_opt_in(store.as_ref().and_then(|s| s.setting("downloads_ask").ok().flatten()).as_deref());
         web.set_downloads(downloads_dir.clone(), downloads_ask);
@@ -588,6 +601,7 @@ impl RelayApp {
             palette_private_tab: false,
             tab_menu: None,
             group_prompt: None,
+            space_prompt: None,
             collapsed_groups,
             media_permissions,
             downloads_dir: downloads_dir.to_string_lossy().into_owned(),
@@ -1321,6 +1335,12 @@ impl RelayApp {
 
     fn activate(&mut self, tab: TabId) {
         self.tab_menu = None;
+        if let Some(space) = self.hub.lock().tab_space(tab).map(str::to_string) {
+            if self.hub.lock().current_space() != space {
+                self.hub.update(|h| h.set_current_space(&space));
+                self.persist_active_space();
+            }
+        }
         if self.find.as_ref().is_some_and(|f| f.tab != tab) {
             self.find = None;
         }
@@ -1409,8 +1429,12 @@ impl RelayApp {
         self.snapshots.remove(&tab);
         self.compat_tabs.remove(&tab);
         self.web.borrow_mut().apply(BrowserRequest::Close(tab));
-        if let Some(next) = self.active() {
+        let current = self.hub.lock().current_space().to_string();
+        let next = self.active().filter(|next| self.hub.lock().tab_space(*next) == Some(current.as_str()));
+        if let Some(next) = next {
             self.activate(next);
+        } else {
+            self.hub.update(|h| h.clear_active());
         }
         if self.app_mode && last {
             self.save_session();
@@ -1966,6 +1990,44 @@ impl RelayApp {
         self.focus_active_page();
     }
 
+    fn open_space_prompt(&mut self, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.tab_menu = None;
+        self.group_prompt = None;
+        self.space_prompt = Some(SpacePrompt { value: self.hub.lock().current_space().to_string() });
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
+    fn close_space_prompt(&mut self) {
+        self.space_prompt = None;
+        self.focus_active_page();
+    }
+
+    fn save_space_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(prompt) = self.space_prompt.take() else { return };
+        let name = Hub::normalize_space_name(&prompt.value).unwrap_or_default();
+        self.switch_space(name, cx);
+    }
+
+    /// Switch to a named space (empty is Default). Activates its first tab, or
+    /// clears the active tab so the start page shows when the space is empty.
+    fn switch_space(&mut self, name: String, cx: &mut Context<Self>) {
+        let first = self.hub.update(|h| {
+            h.set_current_space(&name);
+            h.space_tab_ids().first().copied()
+        });
+        self.persist_active_space();
+        if let Some(tab) = first {
+            self.activate(tab);
+        } else {
+            self.hub.update(|h| h.clear_active());
+        }
+        let label = if name.is_empty() { "Default".to_string() } else { name };
+        self.toast(format!("Space: {label}"));
+        cx.notify();
+    }
+
     fn save_group_prompt(&mut self, cx: &mut Context<Self>) {
         let Some(prompt) = self.group_prompt.take() else { return };
         let group = relay_bridge::hub::normalize_group_name(&prompt.value);
@@ -2009,6 +2071,12 @@ impl RelayApp {
         }
         self.persist_collapsed_groups();
         cx.notify();
+    }
+
+    fn persist_active_space(&self) {
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("active_space", self.hub.lock().current_space());
+        }
     }
 
     fn persist_downloads(&self) {
@@ -2270,7 +2338,7 @@ impl RelayApp {
     fn cycle(&mut self, delta: isize) {
         let (ids, active) = {
             let h = self.hub.lock();
-            (h.tab_ids().to_vec(), h.active())
+            (h.space_tab_ids(), h.active())
         };
         if ids.is_empty() {
             return;
@@ -2281,7 +2349,7 @@ impl RelayApp {
     }
 
     fn select_index(&mut self, i: usize) {
-        let ids = self.hub.lock().tab_ids().to_vec();
+        let ids = self.hub.lock().space_tab_ids();
         // ⌘9 is always the last tab, as in Safari and Chrome.
         let target = if i == 8 { ids.last() } else { ids.get(i) };
         if let Some(t) = target.copied() {
@@ -2547,7 +2615,7 @@ impl RelayApp {
         }
         let (ids, active) = {
             let h = self.hub.lock();
-            (h.tab_ids().to_vec(), h.active())
+            (h.space_tab_ids(), h.active())
         };
         // Pair the active tab with the most recent other tab.
         let other = {
@@ -2614,6 +2682,33 @@ impl RelayApp {
 
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        if self.space_prompt.is_some() {
+            match k.key.as_str() {
+                "escape" => self.close_space_prompt(),
+                "enter" => self.save_space_prompt(cx),
+                "backspace" => {
+                    if let Some(prompt) = self.space_prompt.as_mut() {
+                        if k.modifiers.secondary() || k.modifiers.alt {
+                            prompt.value.clear();
+                        } else {
+                            prompt.value.pop();
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                        if let Some(prompt) = self.space_prompt.as_mut() {
+                            if prompt.value.chars().count() < 24 {
+                                prompt.value.push_str(c);
+                            }
+                        }
+                    }
+                }
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         if self.group_prompt.is_some() {
             match k.key.as_str() {
                 "escape" => self.close_group_prompt(),
@@ -3404,6 +3499,9 @@ impl Render for RelayApp {
             .on_action(cx.listener(|app, _: &UnfoldAllGroups, _, cx| {
                 app.fold_all_groups(false, cx);
             }))
+            .on_action(cx.listener(|app, _: &Spaces, _, cx| {
+                app.open_space_prompt(cx);
+            }))
             .on_action(cx.listener(|app, _: &NewPrivateTab, _, cx| {
                 app.run_command(Command::NewPrivateTab, cx);
                 cx.notify();
@@ -3463,6 +3561,9 @@ impl Render for RelayApp {
         if let Some(prompt) = &self.group_prompt {
             root = root.child(self.render_group_prompt(prompt, cx));
         }
+        if let Some(prompt) = &self.space_prompt {
+            root = root.child(self.render_space_prompt(prompt, cx));
+        }
         if self.settings_open {
             root = root.child(self.render_settings(cx));
         }
@@ -3498,6 +3599,7 @@ fn session_snapshot(hub: &Hub, slept_scroll_y: impl Fn(TabId) -> Option<f64>) ->
             active: Some(t.id) == active,
             position: i as i64,
             group: t.group.clone().unwrap_or_default(),
+            space: t.space.clone(),
         })
         .collect()
 }
@@ -3513,6 +3615,7 @@ fn restore_into(hub: &mut Hub, saved: &[SessionTab]) -> (Vec<(TabId, String, f64
             t.title = s.title.clone();
             t.pinned = s.pinned;
             t.group = relay_bridge::hub::normalize_group_name(&s.group);
+            t.space = Hub::normalize_space_name(&s.space).unwrap_or_default();
         }
         if s.active {
             active = Some(id);
@@ -3522,6 +3625,9 @@ fn restore_into(hub: &mut Hub, saved: &[SessionTab]) -> (Vec<(TabId, String, f64
     let active = active.or_else(|| restored.first().map(|r| r.0));
     if let Some(id) = active {
         hub.set_active(id);
+        if let Some(space) = hub.tab_space(id).map(str::to_string) {
+            hub.set_current_space(&space);
+        }
     }
     (restored, active)
 }

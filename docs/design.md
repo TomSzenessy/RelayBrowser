@@ -215,6 +215,7 @@ and displayed shortcuts cannot drift either.
 | ⌘⌥B | Show / hide bottom bar |
 | ⌘⌥[ | Fold all tab groups |
 | ⌘⌥] | Unfold all tab groups |
+| ⌘⇧E | Switch space… |
 <!-- keymap:end -->
 
 Behaviour that is not a single action:
@@ -235,6 +236,10 @@ Behaviour that is not a single action:
   the native web view never covers it, lists one button per saved account and
   a "Save password?" offer (Save/Replace / Not now). The list and Delete only
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
+- **Spaces:** named tab sets with their own pins and session entries. The
+  current space is a small pill at the top of the strip; ⌘⇧E opens the switcher
+  (type a new name or pick an existing space), new tabs join the current space,
+  and the choice persists in `active_space`.
 - **Tab groups:** a group heading is a 24 pt row with a chevron, colour dot,
   name, and count. Collapsed groups show only the heading; names are capped at
   40 characters and persist in `collapsed_groups`; a unit test covers the

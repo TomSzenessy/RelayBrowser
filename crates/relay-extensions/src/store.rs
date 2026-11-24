@@ -72,6 +72,8 @@ pub struct SessionTab {
     pub position: i64,
     /// Empty for an ungrouped tab; otherwise the tab-group heading.
     pub group: String,
+    /// Empty for the Default space; otherwise the space name.
+    pub space: String,
 }
 
 /// A web app installed from a page: where its `.app` bundle lives and which
@@ -201,6 +203,15 @@ impl Store {
         if !has_group {
             conn.execute("ALTER TABLE session_tabs ADD COLUMN group_name TEXT NOT NULL DEFAULT ''", [])?;
         }
+        let has_space = conn
+            .prepare("PRAGMA table_info(session_tabs)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "space_name");
+        if !has_space {
+            conn.execute("ALTER TABLE session_tabs ADD COLUMN space_name TEXT NOT NULL DEFAULT ''", [])?;
+        }
         Ok(Self { conn })
     }
 
@@ -325,8 +336,8 @@ impl Store {
         for (i, t) in kept.take(MAX_SESSION_TABS).enumerate() {
             let scroll = if t.scroll_y.is_finite() { t.scroll_y.max(0.0) } else { 0.0 };
             tx.execute(
-                "INSERT INTO session_tabs(position, url, title, pinned, scroll_y, active, group_name) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-                params![i as i64, t.url, t.title, t.pinned as i64, scroll, t.active as i64, t.group],
+                "INSERT INTO session_tabs(position, url, title, pinned, scroll_y, active, group_name, space_name) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![i as i64, t.url, t.title, t.pinned as i64, scroll, t.active as i64, t.group, t.space],
             )?;
         }
         tx.commit()?;
@@ -335,7 +346,7 @@ impl Store {
 
     pub fn load_session(&self) -> Result<Vec<SessionTab>, Error> {
         let mut stmt = self.conn.prepare(
-            "SELECT url, title, pinned, scroll_y, active, position, group_name FROM session_tabs ORDER BY position",
+            "SELECT url, title, pinned, scroll_y, active, position, group_name, space_name FROM session_tabs ORDER BY position",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(SessionTab {
@@ -346,6 +357,7 @@ impl Store {
                 active: r.get::<_, i64>(4)? != 0,
                 position: r.get(5)?,
                 group: r.get(6)?,
+                space: r.get(7)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -1047,7 +1059,7 @@ mod tests {
     }
 
     fn tab(url: &str, active: bool) -> SessionTab {
-        SessionTab { url: url.into(), title: "T".into(), pinned: false, scroll_y: 12.5, active, position: 0, group: String::new() }
+        SessionTab { url: url.into(), title: "T".into(), pinned: false, scroll_y: 12.5, active, position: 0, group: String::new(), space: String::new() }
     }
 
     #[test]
@@ -1072,9 +1084,12 @@ mod tests {
         let mut t = s.load_session().unwrap().pop().unwrap();
         assert_eq!(t.url, "https://old.test/");
         assert_eq!(t.group, "", "old rows have no group");
+        assert_eq!(t.space, "", "old rows have no space");
         t.group = "Later".into();
+        t.space = "Work".into();
         s.save_session(&[t]).unwrap();
         assert_eq!(s.load_session().unwrap()[0].group, "Later");
+        assert_eq!(s.load_session().unwrap()[0].space, "Work");
     }
 
     #[test]
@@ -1084,12 +1099,14 @@ mod tests {
         let mut pinned = tab("https://b.test/", false);
         pinned.pinned = true;
         pinned.group = "Work".into();
+        pinned.space = "Work".into();
         s.save_session(&[tab("https://a.test/", true), tab("about:blank", false), tab("file:///etc/passwd", false), pinned]).unwrap();
         let got = s.load_session().unwrap();
         assert_eq!(got.len(), 2);
         assert_eq!((got[0].url.as_str(), got[0].active, got[0].position, got[0].scroll_y), ("https://a.test/", true, 0, 12.5));
         assert_eq!((got[1].url.as_str(), got[1].pinned, got[1].position), ("https://b.test/", true, 1));
         assert_eq!(got[1].group, "Work");
+        assert_eq!(got[1].space, "Work");
         s.save_session(&[tab("http://c.test/", true)]).unwrap();
         assert_eq!(s.load_session().unwrap().len(), 1);
         let many: Vec<_> = (0..300).map(|i| tab(&format!("https://x.test/{i}"), false)).collect();

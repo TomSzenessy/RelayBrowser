@@ -422,6 +422,8 @@ pub struct TabView {
     pub private: bool,
     /// Optional tab-group heading; `None` is an ungrouped tab.
     pub group: Option<String>,
+    /// Named space (empty is the Default space).
+    pub space: String,
 }
 
 /// Everything known about one tab.
@@ -445,6 +447,8 @@ pub struct TabState {
     pub private: bool,
     /// Optional tab-group heading; `None` is an ungrouped tab.
     pub group: Option<String>,
+    /// Named space (empty is the Default space).
+    pub space: String,
     pub playing_audio: bool,
     /// Hovered link target for the status line; cleared on a new page.
     pub hover_url: Option<String>,
@@ -491,6 +495,7 @@ impl TabState {
             pinned: false,
             private: false,
             group: None,
+            space: String::new(),
             playing_audio: false,
             hover_url: None,
             sleeping: false,
@@ -509,6 +514,7 @@ impl TabState {
             owner: self.owner,
             sleeping: self.sleeping,
             group: self.group.clone(),
+            space: self.space.clone(),
             waiting_for_human: self.challenge,
             load_error: self.load_error.clone(),
             console_errors: self.console.iter().filter(|c| c.level == crate::protocol::ConsoleLevel::Error).count(),
@@ -525,6 +531,7 @@ pub struct TabSummary {
     pub owner: Owner,
     pub sleeping: bool,
     pub group: Option<String>,
+    pub space: String,
     pub load_error: Option<String>,
     pub waiting_for_human: Option<Challenge>,
     pub console_errors: usize,
@@ -566,6 +573,8 @@ pub struct Hub {
     downloads: BTreeMap<u64, Download>,
     pending: HashMap<u64, (TabId, oneshot::Sender<CommandResult>)>,
     sidebar: SidebarState,
+    /// New tabs join this space; the shell filters the strip by it.
+    space: String,
 }
 
 /// One user-initiated download. The file lives outside the profile; this is
@@ -823,7 +832,9 @@ impl Hub {
     pub fn create_tab(&mut self, url: &str, owner: Owner) -> TabId {
         let id = self.next_tab;
         self.next_tab += 1;
-        self.tabs.insert(id, TabState::new(id, url, owner));
+        let mut tab = TabState::new(id, url, owner);
+        tab.space = self.space.clone();
+        self.tabs.insert(id, tab);
         self.order.push(id);
         id
     }
@@ -975,8 +986,64 @@ impl Hub {
                 pinned: t.pinned,
                 private: t.private,
                 group: t.group.clone(),
+                space: t.space.clone(),
             })
             .collect()
+    }
+
+    /// Trim, drop control characters, and cap a space name at 24 characters.
+    /// Empty means the Default space.
+    pub fn normalize_space_name(raw: &str) -> Option<String> {
+        let text: String = raw.chars().filter(|c| !c.is_control()).collect();
+        let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let trimmed = collapsed.trim();
+        (!trimmed.is_empty()).then(|| trimmed.chars().take(24).collect::<String>().trim_end().to_string())
+    }
+
+    pub fn current_space(&self) -> &str {
+        &self.space
+    }
+
+    /// Switch the space new tabs join. Does not move the active tab; the shell
+    /// activates the first tab in the target space.
+    pub fn set_current_space(&mut self, raw: &str) -> String {
+        self.space = Self::normalize_space_name(raw).unwrap_or_default();
+        self.space.clone()
+    }
+
+    /// Move a tab to a space; empty/`None` means Default. Returns the stored
+    /// name, or `None` when the tab does not exist.
+    pub fn set_tab_space(&mut self, id: TabId, space: Option<&str>) -> Option<String> {
+        let clean = space.and_then(Self::normalize_space_name).unwrap_or_default();
+        self.tabs.get_mut(&id).map(|t| {
+            t.space = clean.clone();
+            clean
+        })
+    }
+
+    pub fn tab_space(&self, id: TabId) -> Option<&str> {
+        self.tabs.get(&id).map(|t| t.space.as_str())
+    }
+
+    /// Spaces in first-tab order; the Default space is `""` and is included
+    /// only when a tab lives there.
+    pub fn space_names(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for tab in self.tabs() {
+            if seen.insert(tab.space.clone()) {
+                out.push(tab.space.clone());
+            }
+        }
+        out
+    }
+
+    pub fn space_tab_ids(&self) -> Vec<TabId> {
+        self.tabs().filter(|t| t.space == self.space).map(|t| t.id).collect()
+    }
+
+    pub fn first_tab_in_space(&self, space: &str) -> Option<TabId> {
+        self.tabs().find(|t| t.space == space).map(|t| t.id)
     }
 
     /// Move a tab into a named group, or out of one with `None`/empty. Names
@@ -1021,6 +1088,10 @@ impl Hub {
 
     pub fn active(&self) -> Option<TabId> {
         self.active
+    }
+
+    pub fn clear_active(&mut self) {
+        self.active = None;
     }
 
     pub fn set_active(&mut self, id: TabId) {
@@ -1552,6 +1623,30 @@ mod tests {
         assert_eq!(hub.lock().tab_groups(), vec!["Read".to_string(), "Work".to_string()]);
         assert_eq!(hub.lock().tab_views().iter().filter_map(|v| v.group.clone()).collect::<Vec<_>>(), vec!["Read".to_string(), "Work".to_string()]);
         assert_eq!(hub.lock().tab(b).unwrap().summary().group.as_deref(), Some("Read"));
+    }
+
+    #[test]
+    fn spaces_partition_tabs_and_new_tabs_join_the_current_space() {
+        let hub = SharedHub::new();
+        let (default_tab, work_a) = hub.update(|h| {
+            let default_tab = h.create_tab("https://default.test/", Owner::User);
+            h.set_current_space("Work");
+            let work_a = h.create_tab("https://work-a.test/", Owner::User);
+            assert_eq!(h.space_tab_ids(), vec![work_a]);
+            (default_tab, work_a)
+        });
+        assert_eq!(hub.lock().tab(work_a).unwrap().space, "Work");
+        let work_b = hub.update(|h| h.create_tab("https://work-b.test/", Owner::User));
+        hub.update(|h| {
+            assert_eq!(h.space_names(), vec!["".to_string(), "Work".to_string()]);
+            assert_eq!(h.space_tab_ids(), vec![work_a, work_b]);
+            assert_eq!(h.first_tab_in_space("Work"), Some(work_a));
+            assert_eq!(h.set_tab_space(work_b, Some("Personal")).as_deref(), Some("Personal"));
+            assert_eq!(h.space_names(), vec!["".to_string(), "Work".to_string(), "Personal".to_string()]);
+            assert_eq!(h.tab(default_tab).unwrap().summary().space, "");
+            assert_eq!(Hub::normalize_space_name("  A   B ").as_deref(), Some("A B"));
+            assert_eq!(Hub::normalize_space_name("\u{0007}"), None);
+        });
     }
 
     #[test]

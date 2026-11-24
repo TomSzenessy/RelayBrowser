@@ -3,7 +3,21 @@ use gpui::Action;
 use std::collections::HashSet;
 
 fn saved(url: &str, pinned: bool, active: bool, scroll_y: f64) -> SessionTab {
-    SessionTab { url: url.into(), title: format!("T {url}"), pinned, scroll_y, active, position: 0, group: String::new() }
+    SessionTab { url: url.into(), title: format!("T {url}"), pinned, scroll_y, active, position: 0, group: String::new(), space: String::new() }
+}
+
+#[test]
+fn restore_keeps_spaces_and_selects_the_active_tab_space() {
+    let hub = SharedHub::new();
+    let mut a = saved("https://default.example/", false, false, 0.0);
+    a.space = String::new();
+    let mut b = saved("https://work.example/", false, true, 0.0);
+    b.space = "Work".into();
+    let (_, active) = hub.update(|h| restore_into(h, &[a, b]));
+    assert_eq!(hub.lock().tab(active.unwrap()).unwrap().space, "Work");
+    assert_eq!(hub.lock().current_space(), "Work");
+    let snapshot = session_snapshot(&hub.lock(), |_| None);
+    assert_eq!(snapshot.iter().map(|t| t.space.as_str()).collect::<Vec<_>>(), vec!["", "Work"]);
 }
 
 #[test]

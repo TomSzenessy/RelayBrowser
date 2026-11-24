@@ -56,3 +56,4 @@ print|secondary-p
 bottom-bar|secondary-alt-b
 fold-groups|secondary-alt-[
 unfold-groups|secondary-alt-]
+spaces|secondary-shift-e

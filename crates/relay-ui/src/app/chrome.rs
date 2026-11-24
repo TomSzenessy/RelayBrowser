@@ -77,6 +77,34 @@ impl RelayApp {
             .into_any_element()
     }
 
+    /// Current-space pill; opens the space prompt.
+    fn space_chip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let (name, count) = {
+            let h = self.hub.lock();
+            let name = h.current_space().to_string();
+            (if name.is_empty() { "Default".to_string() } else { name }, h.space_tab_ids().len())
+        };
+        div()
+            .id("space-chip")
+            .h(px(22.))
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded(px(5.))
+            .bg(t.well)
+            .text_size(px(10.))
+            .text_color(t.muted)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover).text_color(t.text))
+            .on_click(cx.listener(|app, _, _, cx| app.open_space_prompt(cx)))
+            .child("◫")
+            .child(SharedString::from(name))
+            .child(div().text_color(t.muted).child(SharedString::from(count.to_string())))
+            .into_any_element()
+    }
+
     pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let strip = self.strip;
@@ -85,13 +113,14 @@ impl RelayApp {
         }
         let (active, user, agents, shortcut_map) = {
             let h = self.hub.lock();
-            let active = h.active();
+            let space = h.current_space().to_string();
+            let active = h.active().filter(|id| h.tab(*id).is_some_and(|t| t.space == space));
             let mut user = vec![];
             let mut agents = vec![];
-            for view in h.tab_views() {
+            for view in h.tab_views().into_iter().filter(|v| v.space == space) {
                 if view.owner == Owner::Agent { agents.push(view) } else { user.push(view) }
             }
-            let ids = h.tab_ids();
+            let ids = h.space_tab_ids();
             let mut map: HashMap<TabId, usize> = HashMap::new();
             for (idx, id) in ids.iter().take(8).enumerate() {
                 map.insert(*id, idx + 1);
@@ -165,6 +194,7 @@ impl RelayApp {
                             .child(self.fold_button(if is_left { "«" } else { "»" }, cx)),
                     ),
             );
+            bar = bar.child(self.space_chip(cx));
             // Arc/Search-style Favorites grid for pinned tabs.
             if !pinned.is_empty() {
                 let mut grid = div().flex().flex_wrap().gap_1p5().pb_1();
@@ -237,6 +267,7 @@ impl RelayApp {
                 .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
                 .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
                 .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
+            bar = bar.child(self.space_chip(cx));
             for tab in &pinned {
                 bar = bar.child(self.tab_row(tab, active, false, badge_for(tab.id), cx));
             }
