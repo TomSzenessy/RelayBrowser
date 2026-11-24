@@ -225,15 +225,17 @@ fn strip_header_controls(s: &str) -> String {
 
 /// Format a recorded request as a POSIX-shell-safe `curl` command.
 /// Note: `row.content_type` is the response Content-Type captured by the
-/// bridge, so it is intentionally not emitted as a request header.
+/// bridge, so it is intentionally not emitted as a request header, and `--`
+/// precedes the URL so a leading `-` cannot be parsed as a curl option.
 pub fn network_to_curl(row: &NetworkRow) -> String {
     let method: String = row.method.chars().filter(|c| c.is_ascii_alphabetic()).collect();
     let method = if method.is_empty() { "GET".to_string() } else { method.to_ascii_uppercase() };
     let url = strip_header_controls(&row.full_url);
-    let mut cmd = format!("curl --globoff -X {} {}", posix_quote(&method), posix_quote(&url));
+    let mut cmd = format!("curl --globoff -X {}", posix_quote(&method));
     if let Some(body) = row.request_body.as_deref().filter(|b| !b.is_empty()) {
         cmd.push_str(&format!(" --data-raw {}", posix_quote(body)));
     }
+    cmd.push_str(&format!(" -- {}", posix_quote(&url)));
     cmd
 }
 
@@ -354,18 +356,18 @@ mod tests {
         let t = h.tab(tab).unwrap();
         let row = &network_rows(t, "")[0];
         let curl = network_to_curl(row);
-        assert_eq!(curl, "curl --globoff -X 'POST' 'https://a.test/api/pay' --data-raw '{\"total\":10}'");
+        assert_eq!(curl, "curl --globoff -X 'POST' --data-raw '{\"total\":10}' -- 'https://a.test/api/pay'");
         assert!(!curl.contains("Content-Type"), "response content_type must not be sent as a request header: {curl}");
 
-        // Negative test: single quotes, newlines, brackets, and shell metacharacters in URL/method/body
-        // cannot break out of POSIX single-quoting or trigger curl URL globbing.
+        // Negative test: single quotes, newlines, brackets, leading-dash URLs, and shell metacharacters
+        // cannot break out of POSIX single-quoting or be parsed as curl option flags.
         let hostile = NetworkRow {
             id: "x".into(),
             api: "fetch".into(),
             method: "POST; rm -rf /".into(),
             status: "200".into(),
             url: "evil.test".into(),
-            full_url: "https://evil.test/?ids=[1-3]&q='$(id)'\nrm -rf /".into(),
+            full_url: "-K/etc/passwd?ids=[1-3]&q='$(id)'\nrm -rf /".into(),
             time: "1 ms".into(),
             failed: false,
             content_type: Some("text/html".into()),
@@ -375,11 +377,10 @@ mod tests {
             error: None,
         };
         let safe = network_to_curl(&hostile);
-        assert!(safe.starts_with("curl --globoff -X 'POSTRMRF' "));
+        assert!(safe.starts_with("curl --globoff -X 'POSTRMRF' --data-raw 'a'\\''b$(whoami)' -- '-K/etc/passwd"));
         assert!(!safe.contains('\n') && !safe.contains('\r'), "control chars stripped from URL: {safe}");
         assert!(safe.contains("ids=[1-3]"), "bracketed query preserved with --globoff: {safe}");
         assert!(safe.contains("'\\''$(id)'\\''"), "single quotes escaped: {safe}");
-        assert!(safe.contains("--data-raw 'a'\\''b$(whoami)'"), "body single quotes escaped: {safe}");
     }
 
     #[test]
