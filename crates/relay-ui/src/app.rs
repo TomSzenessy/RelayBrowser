@@ -4371,6 +4371,59 @@ impl RelayApp {
         )
     }
 
+    fn challenge_handoff(&self) -> Option<(TabId, relay_bridge::Challenge)> {
+        let active = self.active()?;
+        let tab = self.hub.lock();
+        let t = tab.tab(active)?;
+        t.challenge.clone().map(|c| (active, c))
+    }
+
+    fn render_challenge_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let (tab_id, challenge) = self.challenge_handoff().unwrap_or((0, relay_bridge::Challenge::Captcha));
+        div()
+            .id("challenge-banner")
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .py_2()
+            .bg(t.warn.opacity(0.16))
+            .border_b_1()
+            .border_color(t.warn)
+            .text_size(px(12.))
+            .text_color(t.text)
+            .child(div().flex_1().child(SharedString::from(format!(
+                "Agent is waiting for you — finish the {} in this tab, then continue",
+                match challenge {
+                    relay_bridge::Challenge::Captcha => "CAPTCHA",
+                    relay_bridge::Challenge::TwoFactor => "two-factor check",
+                }
+            ))))
+            .child(
+                div()
+                    .id("challenge-continue")
+                    .px_2()
+                    .py_0p5()
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(t.warn)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .on_click(cx.listener(move |app, _, _, cx| {
+                        app.hub.update(|h| {
+                            if let Some(tab) = h.tab_mut(tab_id) {
+                                tab.challenge = None;
+                            }
+                        });
+                        app.toast("Agent may continue");
+                        app.focus_active_page();
+                        cx.notify();
+                    }))
+                    .child("Continue"),
+            )
+    }
+
     fn render_agent_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         div()
@@ -4763,6 +4816,8 @@ impl Render for RelayApp {
         root = root.child(main);
         if self.hub.agents_paused() {
             root = root.child(self.render_agent_banner(cx));
+        } else if self.challenge_handoff().is_some() {
+            root = root.child(self.render_challenge_banner(cx));
         }
         if !self.app_mode || self.toast.is_some() || self.hints.is_some() {
             root = root.child(self.render_status());

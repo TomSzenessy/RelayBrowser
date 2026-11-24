@@ -405,7 +405,10 @@ action.
 - When the bridge reports a CAPTCHA or 2FA prompt (`challenge`) on any tab,
   agent mutations there (click, type, edit_style) fail with "waiting for a
   human"; reads keep working, and the user can still click through
-  (`Actor::Agent` vs `Actor::User` in `SharedHub::begin`).
+  (`Actor::Agent` vs `Actor::User` in `SharedHub::begin`). The shell shows a
+  "waiting for you" banner above the page; **Continue** clears the challenge
+  and returns focus to the page so the next agent call can proceed. This
+  follows browse's human-handoff pattern without its Chromium/CDP stack.
 - Agent commands count as activity, so tabs an agent is using do not sleep.
   If a tab is already asleep, the next MCP call wakes it and waits for the
   reload.
