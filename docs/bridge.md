@@ -47,7 +47,10 @@ the `data-relay-id` numbers, and they go stale on navigation.
 
 `web_app` is the first asynchronous op: it reads `link[rel=manifest]`, fetches
 and resolves the manifest, fetches the largest PNG icon (2 MB cap), and posts
-the ordinary `result` when it settles. The reply is
+the ordinary `result` when it settles. When an `http(s)` page has no manifest
+(or its manifest cannot be fetched/parsed), `web_app` falls back to
+`document.title`, `location.href`, and the page's PNG favicon so any website
+can be installed as an app. The reply is
 `{available, page_url, name, short_name, start_url, scope, display,
 theme_color, background_color, manifest_url, icon}` or
 `{available: false, reason}`. Rust validates the origin, URL scheme, icon
