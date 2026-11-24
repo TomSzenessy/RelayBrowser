@@ -56,7 +56,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   ring/background.
 - **Library:** a modal over the page for History (`⌘Y`) or Bookmarks
   (`⇧⌘B`): one query line, wrapped selection, row click opens, × deletes, and
-  Bookmarks rows have rename and move prompts (folder path). Esc or click-outside
+  Bookmarks rows have rename and move prompts; Settings can export/import the
+  whole set as Netscape bookmark HTML. Esc or click-outside
   closes and returns focus to the page.
 - **Downloads:** the destination defaults to `~/Downloads/Relay`, can be set
   with `relay config set downloads_dir PATH` or the Settings → General

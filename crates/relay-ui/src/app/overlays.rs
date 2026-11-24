@@ -1422,6 +1422,12 @@ impl RelayApp {
                 if sleep_open {
                     general_card = general_card.child(sleep_menu);
                 }
+                let export_bm = btn("settings-export-bookmarks", "Export…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.export_bookmarks(cx)))
+                    .into_any_element();
+                let import_bm = btn("settings-import-bookmarks", "Import…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.import_bookmarks(cx)))
+                    .into_any_element();
                 let sync_choose = btn("settings-sync-choose", "Choose…".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| app.choose_sync_folder(cx)))
                     .into_any_element();
@@ -1465,6 +1471,7 @@ impl RelayApp {
                     .into_any_element();
                 general_card = general_card.child(row("Browser bookmarks & history", Some("Chrome, Brave, Edge, Arc, Dia, or Chromium"), import_btn));
                 general_card = general_card.child(row("Safari bookmarks & history", Some("Needs Full Disk Access in System Settings → Privacy & Security"), safari_btn));
+                general_card = general_card.child(row("Bookmark HTML", Some("Netscape format used by other browsers"), div().flex().gap_2().child(export_bm).child(import_bm).into_any_element()));
                 general_card = general_card.child(row("Sync folder", Some("Merge this profile on launch, then rewrite it every minute (Dropbox/iCloud)"), sync_control));
                 general_card = general_card.child(row("Back up profile", Some("Write bookmarks, history, and settings to a private JSON file"), backup_btn));
                 general_card = general_card.child(row("Restore profile", Some("Merge a Relay backup; local settings win"), restore_btn));

@@ -2390,6 +2390,55 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn export_bookmarks(&mut self, cx: &mut Context<Self>) {
+        let Some(store) = &self.store else { return };
+        let Ok(bookmarks) = store.bookmarks() else { return };
+        let html = relay_extensions::bookmarks_html::export(&bookmarks);
+        let dir = relay_bridge::paths::relay_home();
+        let rx = cx.prompt_for_new_path(&dir, Some("bookmarks.html"));
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(path))) = rx.await {
+                let res = write_private_file(&path, html.as_bytes());
+                let _ = this.update(cx, |app, cx| {
+                    match res {
+                        Ok(()) => app.toast(format!("Exported bookmarks to {}", path.display())),
+                        Err(e) => app.toast(format!("Bookmark export failed: {e}")),
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn import_bookmarks(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Import bookmark HTML".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(Result::ok).flatten().and_then(|mut paths| paths.pop());
+            let Some(path) = picked else { return };
+            let rows = relay_extensions::bookmarks_html::read(&path).unwrap_or_default();
+            let _ = this.update(cx, |app, cx| {
+                let mut added = 0;
+                if let Some(store) = &app.store {
+                    for b in &rows {
+                        if store.add_bookmark(b).ok() == Some(true) {
+                            added += 1;
+                        }
+                    }
+                }
+                app.refresh_start_page();
+                app.toast(format!("Imported {added} bookmarks"));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn backup_profile(&mut self, cx: &mut Context<Self>) {
         let Some(store) = &self.store else { return };
         let json = match store.export_json() {

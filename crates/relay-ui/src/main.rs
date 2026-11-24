@@ -32,6 +32,8 @@ USAGE:
                                     inspect or update profile settings
   relay export [FILE]               export bookmarks, history, settings, and extensions as JSON
   relay import FILE                 merge a Relay JSON backup into this profile
+  relay export-bookmarks FILE       write bookmarks as Netscape HTML
+  relay import-bookmarks FILE       merge bookmark HTML into this profile
   relay clear-data [--history] [--session] [--bookmarks] [--audit] --yes
                                     delete stored history/session/bookmarks and/or the agent audit log
   relay audit [--limit N]           show the lean log of agent tool calls
@@ -152,6 +154,8 @@ fn main() -> anyhow::Result<()> {
         Some("config") => config(&args[1..]),
         Some("export") => export_profile(args.get(1).map(String::as_str)),
         Some("import") => import_profile(args.get(1).map(String::as_str)),
+        Some("export-bookmarks") => export_bookmarks(args.get(1).map(String::as_str)),
+        Some("import-bookmarks") => import_bookmarks(args.get(1).map(String::as_str)),
         Some("clear-data") => clear_data(&args[1..]),
         Some("audit") => audit(&args[1..]),
         Some("mcp-config") => mcp_config(&args[1..]),
@@ -484,6 +488,28 @@ fn config(args: &[String]) -> anyhow::Result<()> {
         }
         _ => bail!("usage: relay config [list | get KEY | set KEY VALUE]"),
     }
+}
+
+fn export_bookmarks(file: Option<&str>) -> anyhow::Result<()> {
+    let file = std::path::Path::new(file.context("usage: relay export-bookmarks FILE")?);
+    let rows = open_store()?.bookmarks()?;
+    relay_extensions::bookmarks_html::write(file, &rows)?;
+    println!("Exported {} bookmarks to {}", rows.len(), file.display());
+    Ok(())
+}
+
+fn import_bookmarks(file: Option<&str>) -> anyhow::Result<()> {
+    let file = std::path::Path::new(file.context("usage: relay import-bookmarks FILE")?);
+    let rows = relay_extensions::bookmarks_html::read(file)?;
+    let store = open_store()?;
+    let mut added = 0;
+    for b in &rows {
+        if store.add_bookmark(b)? {
+            added += 1;
+        }
+    }
+    println!("Imported {added} of {} bookmarks from {}", rows.len(), file.display());
+    Ok(())
 }
 
 fn import_profile(file: Option<&str>) -> anyhow::Result<()> {
