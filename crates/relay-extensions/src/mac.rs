@@ -9,6 +9,7 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
 use objc2_foundation::{NSDate, NSDictionary, NSError, NSString, NSURL};
+use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep};
 use objc2_web_kit::{
     WKWebExtension, WKWebExtensionContext, WKWebExtensionContextPermissionStatus, WKWebExtensionController,
     WKWebExtensionPermission, WKWebView,
@@ -73,6 +74,24 @@ pub fn extension_options_url(controller: &Retained<WKWebExtensionController>, ui
         if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
             let url = unsafe { ctx.optionsPageURL() }?;
             return Some(url.absoluteString()?.to_string());
+        }
+    }
+    None
+}
+
+/// PNG bytes for the extension's default action icon, if it has one.
+pub fn extension_icon(controller: &Retained<WKWebExtensionController>, uid: &str) -> Option<Vec<u8>> {
+    use objc2_foundation::NSDictionary;
+    for ctx in unsafe { controller.extensionContexts() }.iter() {
+        if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
+            let action = unsafe { ctx.actionForTab(None) }?;
+            let image = unsafe { action.iconForSize(objc2_foundation::CGSize::new(20.0, 20.0)) }?;
+            let tiff = image.TIFFRepresentation()?;
+            let rep = NSBitmapImageRep::initWithData(NSBitmapImageRep::alloc(), &tiff)?;
+            let png = unsafe {
+                rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
+            }?;
+            return Some(png.to_vec());
         }
     }
     None

@@ -354,6 +354,9 @@ pub struct RelayApp {
     tab_icons_only: bool,
     /// Show enabled extensions as a compact toolbar.
     extension_toolbar: bool,
+    /// Cached action icons from WebKit, keyed by extension id.
+    ext_icons: HashMap<String, Arc<Image>>,
+    last_ext_icons: Instant,
     /// Host whose Site Card is open.
     site_card: Option<String>,
     /// Recently activated tabs, newest first; Ctrl+Tab walks this order.
@@ -643,6 +646,8 @@ impl RelayApp {
             show_address_bar,
             tab_icons_only,
             extension_toolbar,
+            ext_icons: HashMap::new(),
+            last_ext_icons: Instant::now(),
             site_card: None,
             mru: Vec::new(),
             profile_name: std::env::var("RELAY_PROFILE").unwrap_or_default(),
@@ -790,6 +795,23 @@ impl RelayApp {
             Ok(()) => self.saved_session = tabs,
             Err(e) => eprintln!("relay: could not save the session: {e}"),
         }
+    }
+
+    fn refresh_extension_icons(&mut self) {
+        let Some(store) = &self.store else { return };
+        let ids: Vec<String> = store.enabled_extensions().unwrap_or_default().into_iter().map(|(id, _, _)| id).collect();
+        if ids.len() == self.ext_icons.len() && ids.iter().all(|id| self.ext_icons.contains_key(id)) {
+            return;
+        }
+        let mut icons = HashMap::new();
+        for id in ids {
+            if let Some(bytes) = self.web.borrow().extension_icon(&id) {
+                if let Some(image) = favicon_decode(&bytes, "png") {
+                    icons.insert(id, Arc::new(image));
+                }
+            }
+        }
+        self.ext_icons = icons;
     }
 
     fn load_installed_extensions(&self) {
@@ -1072,6 +1094,10 @@ impl RelayApp {
             cx.notify();
         }
         self.web.borrow_mut().poll_float_panel();
+        if self.extension_toolbar && self.last_ext_icons.elapsed() > Duration::from_secs(2) {
+            self.last_ext_icons = Instant::now();
+            self.refresh_extension_icons();
+        }
         if let Some(action) = self.web.borrow().take_media_key() {
             if let Some(tab) = self.active() {
                 self.eval_op(tab, Op::Media { action: action.to_string() });

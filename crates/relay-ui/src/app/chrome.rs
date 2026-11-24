@@ -847,6 +847,7 @@ impl RelayApp {
         for ext in exts {
             let id = ext.id;
             let letter = ext.name.chars().next().unwrap_or('?').to_uppercase().collect::<String>();
+            let icon = self.ext_icons.get(&id).cloned();
             bar = bar.child(
                 div()
                     .id(SharedString::from(format!("ext-tool-{id}")))
@@ -861,7 +862,10 @@ impl RelayApp {
                     .cursor_pointer()
                     .hover(|s| s.bg(t.hover))
                     .on_click(cx.listener(move |app, _, _, cx| app.open_extension_popup(&id, cx)))
-                    .child(SharedString::from(letter)),
+                    .child(match icon {
+                        Some(icon) => img(icon).size(px(16.)).into_any_element(),
+                        None => div().child(SharedString::from(letter)).into_any_element(),
+                    }),
             );
         }
         bar = bar.child(

@@ -63,7 +63,8 @@ is an owner decision or a later issue, not an implicit part of #57.
   banner says "Keychain access was denied" rather than a generic failure. Find's
   case mode, PDF export, media keys, download destinations, named-profile
   data stores, the native video panel, extension
-  options/popup panels (popup availability is `presentsPopup`), camera/microphone prompts (including their persisted choices),
+  options/popup panels and their action icons (popup availability is
+  `presentsPopup`), camera/microphone prompts (including their persisted choices),
   and the native find callback are unrelated to this path.
 - Relay records the logins it writes (host, user, path) in the profile. The
   Settings list, fill offers, and Delete act only on those records, so another

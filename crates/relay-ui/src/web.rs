@@ -334,6 +334,11 @@ mod imp {
             self.engine.set_downloads(dir, ask);
         }
 
+        /// PNG bytes for an extension's action icon, if available.
+        pub fn extension_icon(&self, id: &str) -> Option<Vec<u8>> {
+            self.engine.extension_controller().and_then(|c| relay_extensions::mac::extension_icon(c, id))
+        }
+
         /// Show an extension's action popup, if it declares one.
         pub fn open_extension_popup(&mut self, id: &str) -> bool {
             let Some(web) = self.engine.extension_controller().and_then(|c| relay_extensions::mac::extension_popup(c, id)) else {
@@ -446,6 +451,7 @@ mod imp {
         pub fn toggle_float_panel(&mut self, _tab: TabId) {}
         pub fn extension_options_url(&self, _id: &str) -> Option<String> { None }
         pub fn open_extension_popup(&mut self, _id: &str) -> bool { false }
+        pub fn extension_icon(&self, _id: &str) -> Option<Vec<u8>> { None }
         pub fn poll_float_panel(&mut self) {}
         pub fn export_pdf(&self, _tab: TabId) {}
         pub fn delete_saved_login(&self, _url: &str, _username: &str, _path: &str) -> Result<bool, String> {
