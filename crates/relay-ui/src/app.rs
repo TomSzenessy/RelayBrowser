@@ -188,6 +188,45 @@ fn visit_decision(load_seq: u64, title: &str, recorded: Option<&RecordedVisit>) 
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum SettingsTab {
+    #[default]
+    General,
+    Appearance,
+    Privacy,
+    Extensions,
+    Agents,
+    Shortcuts,
+}
+
+impl SettingsTab {
+    pub(super) const ALL: [SettingsTab; 6] = [
+        SettingsTab::General,
+        SettingsTab::Appearance,
+        SettingsTab::Privacy,
+        SettingsTab::Extensions,
+        SettingsTab::Agents,
+        SettingsTab::Shortcuts,
+    ];
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            SettingsTab::General => "General",
+            SettingsTab::Appearance => "Appearance",
+            SettingsTab::Privacy => "Privacy",
+            SettingsTab::Extensions => "Extensions",
+            SettingsTab::Agents => "Agents & MCP",
+            SettingsTab::Shortcuts => "Shortcuts",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SettingsDropdown {
+    SearchEngine,
+    SleepTimeout,
+}
+
 pub struct RelayApp {
     hub: SharedHub,
     web: Rc<RefCell<WebHost>>,
@@ -219,6 +258,9 @@ pub struct RelayApp {
     /// ⌘T opens the palette for a new tab; ⌘K/⌘L target the current tab.
     palette_new_tab: bool,
     settings_open: bool,
+    settings_tab: SettingsTab,
+    settings_dropdown: Option<SettingsDropdown>,
+    ext_busy: bool,
     blocking: bool,
     agent_eval: bool,
     shell_control: bool,
@@ -231,6 +273,7 @@ pub struct RelayApp {
     sidebar_tab: SidebarTab,
     connect_open: bool,
     connect_detected: Vec<(mcp_config::Client, bool)>,
+    connect_copied: Option<(mcp_config::Client, Instant)>,
     downloads_open: bool,
     downloads_selected: usize,
     download_poll_at: std::time::Instant,
@@ -392,6 +435,9 @@ impl RelayApp {
             palette_metrics: Rc::default(),
             palette_new_tab: false,
             settings_open: false,
+            settings_tab: SettingsTab::General,
+            settings_dropdown: None,
+            ext_busy: false,
             blocking,
             agent_eval,
             shell_control,
@@ -404,6 +450,7 @@ impl RelayApp {
             sidebar_tab: SidebarTab::Inspector,
             connect_open: false,
             connect_detected: vec![],
+            connect_copied: None,
             downloads_open: false,
             downloads_selected: 0,
             download_poll_at: std::time::Instant::now(),
@@ -1102,6 +1149,165 @@ impl RelayApp {
         cx.notify();
     }
 
+    pub(super) fn set_tab_strip_placement(&mut self, placement: tabstrip::Placement, cx: &mut Context<Self>) {
+        if self.strip.placement == placement {
+            return;
+        }
+        self.strip.placement = placement;
+        self.persist_strip();
+        self.toast(format!("Tab strip: {}", placement.label()));
+        cx.notify();
+    }
+
+    pub(super) fn remove_extension(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(store) = &self.store {
+            match store.remove_extension(id) {
+                Ok(true) => self.toast("Extension removed (takes effect on next launch)"),
+                Ok(false) => self.toast("Extension not found"),
+                Err(e) => self.toast(format!("Remove failed: {e}")),
+            }
+        }
+        cx.notify();
+    }
+
+    pub(super) fn install_extension_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        if self.ext_busy {
+            self.toast("Extension install already in progress…");
+            return;
+        }
+        let raw = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+        let Some(id) = relay_extensions::crx::extract_extension_id(&raw) else {
+            self.toast("Copy a Chrome Web Store URL or 32-char extension ID first");
+            cx.notify();
+            return;
+        };
+        self.ext_busy = true;
+        self.toast(format!("Installing extension {id}…"));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let id_bg = id.clone();
+            let res: Result<(String, String, std::path::PathBuf), String> = std::thread::spawn(move || {
+                let bytes = relay_extensions::crx::download(&id_bg).map_err(|e| e.to_string())?;
+                let dir = relay_extensions::crx::unpack(&bytes, &id_bg, &relay_bridge::paths::relay_home().join("extensions"))
+                    .map_err(|e| e.to_string())?;
+                relay_extensions::manifest::install_shims(&dir).map_err(|e| e.to_string())?;
+                let m = relay_extensions::manifest::Manifest::read(&dir).map_err(|e| e.to_string())?;
+                let name = m.display_name(&dir);
+                Ok((name, m.version, dir))
+            })
+            .join()
+            .unwrap_or_else(|_| Err("extension installer panicked".into()));
+            let _ = cx.update(|cx| {
+                let _ = this.update(cx, |app, cx| {
+                    app.ext_busy = false;
+                    match res {
+                        Ok((name, version, dir)) => {
+                            if let Some(store) = &app.store {
+                                let _ = store.record_extension(&id, &name, &version, &dir);
+                            }
+                            app.web.borrow().load_extension(&dir, &id, |_| {});
+                            app.toast(format!("Installed {name} {version}"));
+                        }
+                        Err(e) => app.toast(format!("Extension install failed: {e}")),
+                    }
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn import_chrome_extensions(&mut self, cx: &mut Context<Self>) {
+        if self.ext_busy {
+            self.toast("Extension import already in progress…");
+            return;
+        }
+        let Some(profile) = relay_extensions::chrome_import::default_profile() else {
+            self.toast("No Chrome profile found on this Mac");
+            cx.notify();
+            return;
+        };
+        let found = match relay_extensions::chrome_import::read_extensions(&profile) {
+            Ok(list) if !list.is_empty() => list,
+            Ok(_) => {
+                self.toast("No Chrome extensions found to import");
+                cx.notify();
+                return;
+            }
+            Err(e) => {
+                self.toast(format!("Could not read Chrome extensions: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        let existing: HashSet<String> = self
+            .store
+            .as_ref()
+            .and_then(|s| s.enabled_extensions().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        let to_install: Vec<String> = found
+            .into_iter()
+            .map(|e| e.id)
+            .filter(|id| relay_extensions::crx::is_extension_id(id) && !existing.contains(id))
+            .collect();
+        if to_install.is_empty() {
+            self.toast("All Chrome extensions are already imported");
+            cx.notify();
+            return;
+        }
+        self.ext_busy = true;
+        self.toast(format!("Importing {} Chrome extension(s)…", to_install.len()));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let results: Vec<Result<(String, String, String, std::path::PathBuf), String>> = std::thread::spawn(move || {
+                let root = relay_bridge::paths::relay_home().join("extensions");
+                to_install
+                    .into_iter()
+                    .map(|id| {
+                        let bytes = relay_extensions::crx::download(&id).map_err(|e| e.to_string())?;
+                        let dir = relay_extensions::crx::unpack(&bytes, &id, &root).map_err(|e| e.to_string())?;
+                        relay_extensions::manifest::install_shims(&dir).map_err(|e| e.to_string())?;
+                        let m = relay_extensions::manifest::Manifest::read(&dir).map_err(|e| e.to_string())?;
+                        let name = m.display_name(&dir);
+                        Ok((id, name, m.version, dir))
+                    })
+                    .collect()
+            })
+            .join()
+            .unwrap_or_default();
+            let _ = cx.update(|cx| {
+                let _ = this.update(cx, |app, cx| {
+                    app.ext_busy = false;
+                    let mut ok_count = 0usize;
+                    let mut fail_count = 0usize;
+                    for r in results {
+                        match r {
+                            Ok((id, name, version, dir)) => {
+                                if let Some(store) = &app.store {
+                                    let _ = store.record_extension(&id, &name, &version, &dir);
+                                }
+                                app.web.borrow().load_extension(&dir, &id, |_| {});
+                                ok_count += 1;
+                            }
+                            Err(_) => fail_count += 1,
+                        }
+                    }
+                    let msg = if fail_count == 0 {
+                        format!("Imported {ok_count} Chrome extension(s)")
+                    } else {
+                        format!("Imported {ok_count} extension(s) ({fail_count} unavailable on Web Store)")
+                    };
+                    app.toast(msg);
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+
     fn persist_strip(&self) {
         if let Some(store) = &self.store {
             let _ = store.set_setting("tabs_position", self.strip.position_setting());
@@ -1568,6 +1774,7 @@ impl RelayApp {
 
     fn close_settings(&mut self) {
         self.settings_open = false;
+        self.settings_dropdown = None;
         self.confirm_clear_history = false;
         self.focus_active_page();
     }

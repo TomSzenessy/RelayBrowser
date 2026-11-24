@@ -745,12 +745,36 @@
       .then(blobToDataUrl)
       .catch(function () { return null; });
   }
+  function fallbackWebApp() {
+    if (!/^https?:$/i.test(location.protocol)) {
+      return Promise.resolve({ available: false, reason: "Only http(s) pages can be installed as apps." });
+    }
+    var host = (location.hostname || "").replace(/^www\./, "");
+    return favicon().then(function (icon) {
+      return {
+        available: true,
+        page_url: location.href,
+        name: (document.title || host || "Web App").slice(0, 200),
+        short_name: host.slice(0, 80),
+        start_url: location.href,
+        scope: location.origin + "/",
+        display: "standalone",
+        theme_color: "",
+        background_color: "",
+        manifest_url: "",
+        icon: icon && icon.available && icon.mime === "image/png" ? icon.data : null
+      };
+    });
+  }
   function webApp() {
+    if (!/^https?:$/i.test(location.protocol)) {
+      return { available: false, reason: "Only http(s) pages can be installed as apps." };
+    }
     var link = document.querySelector('link[rel~="manifest"]');
     var href = link && link.getAttribute("href");
-    if (!href) return { available: false, reason: "This page does not declare a web app manifest." };
+    if (!href) return fallbackWebApp();
     var manifestUrl = absoluteUrl(href);
-    if (!manifestUrl) return { available: false, reason: "The page's web app manifest is not an http(s) URL." };
+    if (!manifestUrl) return fallbackWebApp();
     return fetchWithTimeout(manifestUrl, 6000)
       .then(function (r) { return r.json(); })
       .then(function (m) {
@@ -772,8 +796,8 @@
           };
         });
       })
-      .catch(function (e) {
-        return { available: false, reason: "Could not read the web app manifest: " + String(e && e.message || e) };
+      .catch(function () {
+        return fallbackWebApp();
       });
   }
 

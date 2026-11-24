@@ -22,6 +22,23 @@ pub fn is_extension_id(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| (b'a'..=b'p').contains(&b))
 }
 
+/// Extract a 32-character Chrome extension id from either a raw id or a
+/// Chrome Web Store URL (e.g. `https://chromewebstore.google.com/detail/name/<id>`).
+pub fn extract_extension_id(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if is_extension_id(trimmed) {
+        return Some(trimmed.to_string());
+    }
+    let without_query = trimmed.split(['?', '#']).next().unwrap_or(trimmed);
+    for segment in without_query.split('/').rev() {
+        let lower = segment.to_ascii_lowercase();
+        if is_extension_id(&lower) {
+            return Some(lower);
+        }
+    }
+    None
+}
+
 /// The Web Store's public update endpoint for one extension.
 pub fn download_url(id: &str) -> Result<String, Error> {
     if !is_extension_id(id) {
@@ -318,5 +335,20 @@ mod tests {
     fn url_requires_a_real_id() {
         assert!(download_url("../../etc").is_err());
         assert!(download_url(ID).unwrap().contains("x=id%3Dcjpalhdlnbpafiamejdnhcphjbkeiagm%26uc"));
+    }
+
+    #[test]
+    fn extract_extension_id_accepts_raw_and_cws_urls() {
+        assert_eq!(extract_extension_id(ID).as_deref(), Some(ID));
+        assert_eq!(
+            extract_extension_id(&format!("https://chromewebstore.google.com/detail/ublock-origin/{ID}?hl=en")).as_deref(),
+            Some(ID)
+        );
+        assert_eq!(
+            extract_extension_id(&format!("https://chrome.google.com/webstore/detail/name/{ID}#top")).as_deref(),
+            Some(ID)
+        );
+        assert_eq!(extract_extension_id("https://example.com/not-an-extension"), None);
+        assert_eq!(extract_extension_id(""), None);
     }
 }

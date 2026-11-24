@@ -94,7 +94,7 @@ impl AccentChoice {
         }
     }
 
-    fn color(self, dark: bool) -> (Hsla, Hsla) {
+    pub(crate) fn color(self, dark: bool) -> (Hsla, Hsla) {
         let (accent, overlay) = match (self, dark) {
             (Self::Blue, true) => (0x5b8cff, 0x5b8cff33),
             (Self::Blue, false) => (0x2f6bff, 0x2f6bff24),
