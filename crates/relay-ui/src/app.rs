@@ -19,6 +19,7 @@ use gpui::{
 };
 use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
 use relay_extensions::store::{SessionTab, Store, WebAppRecord};
+use relay_webkit::downloads::FOLDER_LABEL;
 use relay_webkit::sleep::SleepPolicy;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -1876,7 +1877,8 @@ impl RelayApp {
             return;
         }
         if self.downloads_open {
-            let len = self.hub.lock().downloads().len();
+            let len = self.hub.lock().downloads_in_panel_order().len();
+            self.downloads_selected = self.downloads_selected.min(len.saturating_sub(1));
             match k.key.as_str() {
                 "escape" => self.close_downloads(),
                 "up" => self.downloads_selected = self.downloads_selected.saturating_sub(1),
@@ -3346,7 +3348,7 @@ impl RelayApp {
     }
 
     fn activate_selected_download(&mut self, cx: &mut Context<Self>) {
-        let Some(d) = self.hub.lock().downloads().into_iter().nth(self.downloads_selected) else { return };
+        let Some(d) = self.hub.lock().downloads_in_panel_order().into_iter().nth(self.downloads_selected) else { return };
         match d.state {
             relay_bridge::DownloadState::Downloading => {
                 self.web.borrow_mut().apply(BrowserRequest::CancelDownload { tab: d.tab, id: d.id });
@@ -3492,12 +3494,47 @@ impl RelayApp {
 
     fn render_downloads(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let downloads = self.hub.lock().downloads();
+        let downloads = self.hub.lock().downloads_in_panel_order();
+        let active = downloads.iter().filter(|d| DownloadGroup::of(&d.state) == DownloadGroup::Active).count();
+        let finished = downloads.len() - active;
         let mut rows = div().flex().flex_col();
         if downloads.is_empty() {
-            rows = rows.child(div().px_4().py_6().text_size(px(13.)).text_color(t.muted).child("No downloads yet"));
+            rows = rows.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_1()
+                    .px_4()
+                    .py_8()
+                    .child(div().text_size(px(13.)).text_color(t.text).child("No downloads yet"))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(t.muted)
+                            .child(SharedString::from(format!("Downloads save to {FOLDER_LABEL}"))),
+                    ),
+            );
         }
+        let mut shown: Option<DownloadGroup> = None;
         for (idx, d) in downloads.into_iter().enumerate() {
+            let group = DownloadGroup::of(&d.state);
+            if shown != Some(group) {
+                let count = match group {
+                    DownloadGroup::Active => active,
+                    DownloadGroup::Finished => finished,
+                };
+                rows = rows.child(
+                    div()
+                        .px_4()
+                        .pt_3()
+                        .pb_1()
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .child(SharedString::from(format!("{} ({count})", group.label().to_uppercase()))),
+                );
+                shown = Some(group);
+            }
             let selected = idx == self.downloads_selected;
             let state = match &d.state {
                 relay_bridge::DownloadState::Downloading => match (d.received, d.total) {
@@ -3510,13 +3547,17 @@ impl RelayApp {
                 relay_bridge::DownloadState::Failed(e) => format!("Failed: {e}"),
             };
             let path = d.path.clone();
+            let destination = match path.as_deref() {
+                Some(path) => display_path(path),
+                None => format!("Saving to {FOLDER_LABEL}…"),
+            };
             rows = rows.child(
                 div()
                     .id(SharedString::from(format!("download-{}", d.id)))
                     .flex()
                     .items_center()
                     .gap_3()
-                    .min_h(px(40.))
+                    .min_h(px(52.))
                     .px_4()
                     .py_1()
                     .border_b_1()
@@ -3530,7 +3571,8 @@ impl RelayApp {
                             .gap_0p5()
                             .overflow_hidden()
                             .child(div().text_size(px(12.)).text_color(t.text).whitespace_nowrap().text_ellipsis().child(SharedString::from(d.filename)))
-                            .child(div().text_size(px(10.)).text_color(t.muted).whitespace_nowrap().text_ellipsis().child(SharedString::from(format!("{state} · {}", d.url)))),
+                            .child(div().text_size(px(10.)).text_color(t.muted).whitespace_nowrap().text_ellipsis().child(SharedString::from(format!("{state} · {}", d.url))))
+                            .child(div().text_size(px(10.)).text_color(t.muted).whitespace_nowrap().text_ellipsis().child(SharedString::from(destination))),
                     )
                     .child(
                         div()
@@ -4491,6 +4533,48 @@ fn restore_into(hub: &mut Hub, saved: &[SessionTab]) -> (Vec<(TabId, String, f64
     (restored, active)
 }
 
+/// Which Downloads-panel section a row belongs to. The hub returns rows
+/// already in this order, so the panel inserts a heading only when the group
+/// changes and keyboard selection follows the same sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownloadGroup {
+    Active,
+    Finished,
+}
+
+impl DownloadGroup {
+    fn of(state: &relay_bridge::DownloadState) -> Self {
+        match state {
+            relay_bridge::DownloadState::Downloading => Self::Active,
+            _ => Self::Finished,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Finished => "Finished",
+        }
+    }
+}
+
+/// Show a destination path the way the row prints it: the home directory
+/// becomes `~`. The row ellipsizes anything longer, so the panel's width does
+/// not depend on the path.
+fn shorten_home(path: &str, home: &str) -> String {
+    if !home.is_empty() && path == home {
+        return "~".into();
+    }
+    if !home.is_empty() && path.strip_prefix(home).is_some_and(|rest| rest.starts_with('/')) {
+        return format!("~{}", &path[home.len()..]);
+    }
+    path.to_string()
+}
+
+fn display_path(path: &str) -> String {
+    shorten_home(path, &std::env::var("HOME").unwrap_or_default())
+}
+
 fn human_bytes(bytes: u64) -> String {
     if bytes >= 1024 * 1024 * 1024 {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
@@ -4964,5 +5048,34 @@ mod tests {
         // A reserved/conflicting override is skipped and leaves the default.
         let skipped = Keymap::from_setting(Some("find=secondary-k"));
         assert_eq!(skipped.key(ActionId::Find), ActionId::Find.default_key());
+    }
+
+    #[test]
+    fn download_rows_show_active_then_finished_in_selection_order() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://x.test/", Owner::User));
+        let (a, b, c) = hub.update(|h| {
+            (h.begin_download(tab, "https://x.test/a", "a"), h.begin_download(tab, "https://x.test/b", "b"), h.begin_download(tab, "https://x.test/c", "c"))
+        });
+        hub.update(|h| {
+            h.set_download_destination(b, "b.zip", "/Users/u/Downloads/Relay/b.zip");
+            h.finish_download(b);
+            h.fail_download(a, "network");
+        });
+        let rows = hub.lock().downloads_in_panel_order();
+        let groups: Vec<_> = rows.iter().map(|d| DownloadGroup::of(&d.state)).collect();
+        assert_eq!(groups, vec![DownloadGroup::Active, DownloadGroup::Finished, DownloadGroup::Finished]);
+        assert_eq!(rows.iter().map(|d| d.id).collect::<Vec<_>>(), vec![c, a, b], "one order for rows, headings, and the selected index");
+        assert_eq!((DownloadGroup::Active.label(), DownloadGroup::Finished.label()), ("Active", "Finished"));
+        assert_eq!(rows[2].path.as_deref().map(|p| shorten_home(p, "/Users/u")).as_deref(), Some("~/Downloads/Relay/b.zip"));
+    }
+
+    #[test]
+    fn destination_rows_shorten_home_and_leave_unrelated_paths_alone() {
+        assert_eq!(shorten_home("/Users/u/Downloads/Relay/a.zip", "/Users/u"), "~/Downloads/Relay/a.zip");
+        assert_eq!(shorten_home("/Users/u", "/Users/u"), "~");
+        assert_eq!(shorten_home("/Users/other/x", "/Users/u"), "/Users/other/x");
+        assert_eq!(shorten_home("/Users/u2/x", "/Users/u"), "/Users/u2/x", "a shared prefix is not the home directory");
+        assert_eq!(shorten_home("/tmp/a", ""), "/tmp/a");
     }
 }

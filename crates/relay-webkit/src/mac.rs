@@ -5,6 +5,7 @@
 //! VERIFY-ON-MAC: type-checked for aarch64-apple-darwin on Linux; behaviour is
 //! verified only by running the app on macOS (see docs/verification.md).
 
+use crate::downloads::download_destination;
 use crate::sleep::{restore_scroll_script, SleptTab};
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -783,35 +784,6 @@ fn teardown(t: &WebTab) {
     }
     t.view.removeFromSuperview();
     let _ = &t.handler;
-}
-
-/// Put downloads in `~/Downloads/Relay`, sanitize the suggested name, and
-/// add a numeric suffix rather than overwrite an existing file.
-fn download_destination(suggested: &str) -> (String, String) {
-    let raw = suggested.rsplit(['/', '\\']).next().unwrap_or("download");
-    let mut name: String = raw.chars().map(|c| if c.is_control() || c == ':' { '_' } else { c }).collect();
-    name = name.trim_matches('.').to_string();
-    if name.is_empty() {
-        name = "download".into();
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let dir = std::path::PathBuf::from(home).join("Downloads").join("Relay");
-    let _ = std::fs::create_dir_all(&dir);
-    let mut path = dir.join(&name);
-    if path.exists() {
-        let (stem, ext) = match name.rsplit_once('.') {
-            Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
-            _ => (name.clone(), String::new()),
-        };
-        for n in 1..10_000 {
-            let candidate = dir.join(format!("{stem} ({n}){ext}"));
-            if !candidate.exists() {
-                path = candidate;
-                break;
-            }
-        }
-    }
-    (path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(name), path.to_string_lossy().into_owned())
 }
 
 fn jpeg_from_image(img: &NSImage) -> Option<Vec<u8>> {

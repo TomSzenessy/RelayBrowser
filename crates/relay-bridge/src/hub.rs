@@ -908,6 +908,16 @@ impl Hub {
         self.downloads.values().cloned().collect()
     }
 
+    /// Rows in the Downloads panel's display order: running downloads first,
+    /// then finished ones (done, cancelled, failed), each group oldest first.
+    /// One order for rows, headings, and keyboard selection, so moving a row
+    /// between groups never reorders it within its group.
+    pub fn downloads_in_panel_order(&self) -> Vec<Download> {
+        let mut rows: Vec<Download> = self.downloads.values().cloned().collect();
+        rows.sort_by_key(|d| (d.state != DownloadState::Downloading, d.id));
+        rows
+    }
+
     pub fn clear_finished_downloads(&mut self) -> usize {
         let before = self.downloads.len();
         self.downloads.retain(|_, d| d.state == DownloadState::Downloading);
@@ -1287,6 +1297,25 @@ mod tests {
         assert_eq!(rows[1].state, DownloadState::Failed("network".into()));
         assert_eq!(hub.update(|h| h.clear_finished_downloads()), 2);
         assert!(hub.lock().downloads().is_empty());
+    }
+
+    #[test]
+    fn panel_order_puts_running_rows_first_then_finished_oldest_first() {
+        let hub = SharedHub::new();
+        let tab = hub.update(|h| h.create_tab("https://x.test/", Owner::User));
+        let (a, b, c) = hub.update(|h| {
+            (h.begin_download(tab, "https://x.test/a", "a"), h.begin_download(tab, "https://x.test/b", "b"), h.begin_download(tab, "https://x.test/c", "c"))
+        });
+        hub.update(|h| {
+            h.finish_download(b);
+            h.fail_download(a, "network");
+        });
+        let ids = |rows: Vec<Download>| rows.into_iter().map(|d| d.id).collect::<Vec<_>>();
+        assert_eq!(ids(hub.lock().downloads_in_panel_order()), vec![c, a, b], "running c first, then finished a and b by id");
+        hub.update(|h| h.finish_download(c));
+        assert_eq!(ids(hub.lock().downloads_in_panel_order()), vec![a, b, c], "all finished: insertion order");
+        hub.update(|h| h.clear_finished_downloads());
+        assert!(hub.lock().downloads_in_panel_order().is_empty());
     }
 
     #[test]
