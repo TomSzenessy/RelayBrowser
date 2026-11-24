@@ -180,13 +180,18 @@ struct SpacePrompt {
 }
 
 /// A minimal chat with the configured OpenAI-compatible endpoint.
+struct PendingAi {
+    prompt: String,
+    history: Vec<(bool, String)>,
+}
+
 struct AiChat {
     messages: Vec<(bool, String)>,
     input: String,
     busy: bool,
     error: Option<String>,
     /// Set while visible page text is being collected for the next question.
-    pending: Option<String>,
+    pending: Option<PendingAi>,
     pending_at: Option<Instant>,
 }
 
@@ -2239,17 +2244,17 @@ impl RelayApp {
             return;
         }
         let page = self.hub.lock().page_text(tab, &url);
-        if let Some(chat) = self.ai_chat.as_mut() {
-            chat.input.clear();
-            chat.error = None;
-            chat.messages.push((true, prompt.clone()));
-            chat.busy = true;
-        }
+        let Some(chat) = self.ai_chat.as_mut() else { return };
+        let history = chat.messages.clone();
+        chat.input.clear();
+        chat.error = None;
+        chat.messages.push((true, prompt.clone()));
+        chat.busy = true;
         match page {
-            Some(page) => self.dispatch_ai(prompt, page, url, title, cx),
+            Some(page) => self.dispatch_ai(prompt, page, url, title, history, cx),
             None => {
                 if let Some(chat) = self.ai_chat.as_mut() {
-                    chat.pending = Some(prompt);
+                    chat.pending = Some(PendingAi { prompt, history });
                     chat.pending_at = Some(Instant::now());
                 }
                 self.eval_op(tab, Op::PageText);
@@ -2258,7 +2263,15 @@ impl RelayApp {
         }
     }
 
-    fn dispatch_ai(&mut self, prompt: String, page: String, url: String, title: String, cx: &mut Context<Self>) {
+    fn dispatch_ai(
+        &mut self,
+        prompt: String,
+        page: String,
+        url: String,
+        title: String,
+        history: Vec<(bool, String)>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(key) = ai_key(self.store.as_ref()) else {
             if let Some(chat) = self.ai_chat.as_mut() {
                 chat.busy = false;
@@ -2282,7 +2295,7 @@ impl RelayApp {
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { relay_extensions::ai::complete(&config, &key, &url, &title, &page, &prompt) })
+                .spawn(async move { relay_extensions::ai::complete(&config, &key, &url, &title, &page, &prompt, &history) })
                 .await;
             let _ = this.update(cx, |app, cx| {
                 if let Some(chat) = app.ai_chat.as_mut() {
@@ -2299,7 +2312,7 @@ impl RelayApp {
     }
 
     fn maybe_send_ai(&mut self, cx: &mut Context<Self>) {
-        let Some(prompt) = self.ai_chat.as_ref().and_then(|c| c.pending.clone()) else { return };
+        let Some(pending) = self.ai_chat.as_ref().and_then(|c| c.pending.as_ref()).map(|p| PendingAi { prompt: p.prompt.clone(), history: p.history.clone() }) else { return };
         let Some(tab) = self.active() else { return };
         let (url, title) = self.hub.lock().tab(tab).map(|t| (t.url.clone(), t.title.clone())).unwrap_or_default();
         let page = self.hub.lock().page_text(tab, &url);
@@ -2311,7 +2324,7 @@ impl RelayApp {
             chat.pending = None;
             chat.pending_at = None;
         }
-        self.dispatch_ai(prompt, page.unwrap_or_default(), url, title, cx);
+        self.dispatch_ai(pending.prompt, page.unwrap_or_default(), url, title, pending.history, cx);
     }
 
     fn open_profile_prompt(&mut self, cx: &mut Context<Self>) {

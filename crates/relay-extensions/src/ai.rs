@@ -25,27 +25,43 @@ pub fn normalize_endpoint(raw: &str) -> Option<String> {
 }
 
 #[derive(serde::Serialize)]
-struct Message<'a> {
-    role: &'a str,
-    content: &'a str,
+struct Message {
+    role: &'static str,
+    content: String,
 }
 
 #[derive(serde::Serialize)]
-struct Request<'a> {
-    model: &'a str,
-    messages: Vec<Message<'a>>,
+struct Request {
+    model: String,
+    messages: Vec<Message>,
     stream: bool,
 }
 
-pub fn request_body(model: &str, url: &str, title: &str, page: &str, prompt: &str) -> String {
+const MAX_HISTORY_TURNS: usize = 10;
+const MAX_HISTORY_BYTES: usize = 24_000;
+
+/// Build the chat-completions body. Prior turns are included (last 10, capped)
+/// so follow-up questions keep context; the page text is attached only to the
+/// current question.
+pub fn request_body(model: &str, url: &str, title: &str, page: &str, prompt: &str, history: &[(bool, String)]) -> String {
     let system = "You are Relay's concise browser assistant. Answer in plain text. The user's page URL, title, and visible page text are provided.";
+    let mut messages = vec![Message { role: "system", content: system.to_string() }];
+    let mut used = 0usize;
+    let start = history.len().saturating_sub(MAX_HISTORY_TURNS);
+    for (user, text) in &history[start..] {
+        if used >= MAX_HISTORY_BYTES {
+            break;
+        }
+        let text = text.chars().take(8_000).collect::<String>();
+        used += text.len();
+        if text.trim().is_empty() {
+            continue;
+        }
+        messages.push(Message { role: if *user { "user" } else { "assistant" }, content: text });
+    }
     let user = format!("Page: {title}\nURL: {url}\n\nVisible page text:\n{page}\n\nQuestion: {prompt}");
-    serde_json::to_string(&Request {
-        model,
-        messages: vec![Message { role: "system", content: system }, Message { role: "user", content: &user }],
-        stream: false,
-    })
-    .unwrap_or_else(|_| "{}".into())
+    messages.push(Message { role: "user", content: user });
+    serde_json::to_string(&Request { model: model.to_string(), messages, stream: false }).unwrap_or_else(|_| "{}".into())
 }
 
 pub fn parse_reply(json: &str) -> Result<String, String> {
@@ -74,12 +90,20 @@ pub fn parse_reply(json: &str) -> Result<String, String> {
 /// One blocking completion. `endpoint` is a base URL like
 /// `https://api.openai.com/v1`; the key is sent only in the Authorization
 /// header. Runs off the main thread by the caller.
-pub fn complete(config: &AiConfig, key: &str, url: &str, title: &str, page: &str, prompt: &str) -> Result<String, String> {
+pub fn complete(
+    config: &AiConfig,
+    key: &str,
+    url: &str,
+    title: &str,
+    page: &str,
+    prompt: &str,
+    history: &[(bool, String)],
+) -> Result<String, String> {
     let endpoint = normalize_endpoint(&config.endpoint).ok_or("AI endpoint must be an http(s) URL")?;
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(60))).build(),
     );
-    let body = request_body(&config.model, url, title, page, prompt);
+    let body = request_body(&config.model, url, title, page, prompt, history);
     let mut res = agent
         .post(&format!("{endpoint}/chat/completions"))
         .header("Authorization", &format!("Bearer {key}"))
@@ -103,13 +127,28 @@ mod tests {
     fn endpoint_and_body_are_bounded() {
         assert_eq!(normalize_endpoint(" https://api.test/v1/ ").as_deref(), Some("https://api.test/v1"));
         assert!(normalize_endpoint("file:///etc/passwd").is_none());
-        let body = request_body("m", "https://a.test/", "A \"page\"", "visible body", "why?");
+        let body = request_body("m", "https://a.test/", "A \"page\"", "visible body", "why?", &[]);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["model"], "m");
         assert_eq!(v["messages"][0]["role"], "system");
         let user = v["messages"][1]["content"].as_str().unwrap();
         assert!(user.contains("A \"page\"") && user.contains("visible body"));
         assert_eq!(v["stream"], false);
+    }
+
+    #[test]
+    fn prior_turns_are_bounded_and_keep_roles() {
+        let history: Vec<(bool, String)> = (0..20)
+            .map(|i| (i % 2 == 0, format!("turn {i} {}", "x".repeat(1000))))
+            .collect();
+        let body = request_body("m", "https://a.test/", "T", "page", "now", &history);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let messages = v["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages.iter().filter(|m| m["role"] == "assistant").count(), 5, "last 10 turns only");
+        assert!(messages.len() <= 12);
+        assert_eq!(messages.last().unwrap()["role"], "user");
+        assert!(messages.last().unwrap()["content"].as_str().unwrap().contains("Question: now"));
     }
 
     #[test]
