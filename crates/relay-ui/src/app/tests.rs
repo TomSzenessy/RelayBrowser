@@ -110,6 +110,14 @@ fn byte_size_reads_naturally() {
 }
 
 #[test]
+fn collapsed_group_setting_ignores_blanks_and_duplicates() {
+    let parsed = collapsed_group_names(Some(" Work, Read,,Work , "));
+    assert_eq!(parsed.len(), 2);
+    assert!(parsed.contains("Work") && parsed.contains("Read"));
+    assert!(collapsed_group_names(None).is_empty());
+}
+
+#[test]
 fn favicon_reply_is_validated_before_decoding() {
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU2l4wAAAABJRU5ErkJggg==";
     assert!(favicon_image(&serde_json::json!({"available": true, "mime": "image/png", "data": format!("data:image/png;base64,{png}")})).is_some());

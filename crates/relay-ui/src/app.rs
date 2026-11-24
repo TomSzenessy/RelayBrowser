@@ -513,10 +513,10 @@ impl RelayApp {
         let tab_glyphs = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_glyphs").ok().flatten()).as_deref());
         let compact_tabs = !setting_enabled(store.as_ref().and_then(|s| s.setting("compact_tabs").ok().flatten()).as_deref());
         let show_bookmarks_bar = setting_enabled(store.as_ref().and_then(|s| s.setting("bookmarks_bar").ok().flatten()).as_deref());
-        let collapsed_groups: HashSet<String> = store
+        let collapsed_groups = store
             .as_ref()
             .and_then(|s| s.setting("collapsed_groups").ok().flatten())
-            .map(|raw| raw.split(',').map(str::trim).filter(|g| !g.is_empty()).map(str::to_string).collect())
+            .map(|raw| collapsed_group_names(Some(&raw)))
             .unwrap_or_default();
         let always_show_close = setting_enabled(store.as_ref().and_then(|s| s.setting("always_show_close").ok().flatten()).as_deref());
         let default_zoom = store
@@ -3444,6 +3444,12 @@ fn human_bytes(bytes: u64) -> String {
     } else {
         format!("{bytes} B")
     }
+}
+
+/// Parse the comma-separated `collapsed_groups` setting. Names cannot contain
+/// commas (the hub normalizer maps them to spaces), so splitting is stable.
+pub(crate) fn collapsed_group_names(raw: Option<&str>) -> HashSet<String> {
+    raw.unwrap_or("").split(',').map(str::trim).filter(|g| !g.is_empty()).map(str::to_string).collect()
 }
 
 pub(crate) fn setting_enabled(value: Option<&str>) -> bool {

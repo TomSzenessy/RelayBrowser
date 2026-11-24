@@ -212,8 +212,8 @@ Behaviour that is not a single action:
   cover logins Relay itself wrote. See [login-autofill.md](./login-autofill.md).
 - **Tab groups:** a group heading is a 24 pt row with a chevron, colour dot,
   name, and count. Collapsed groups show only the heading; names are capped at
-  40 characters and persist in `collapsed_groups`. Group names survive session
-  restore.
+  40 characters and persist in `collapsed_groups`; a unit test covers the
+  stored list parser. Group names survive session restore.
 - **Tab bar:** `×` closes (hover/active), a middle click closes, `♪` marks
   playing audio, `pin` a pinned tab, and `zz` a sleeping one. Pinned tabs sit
   at the top, never auto-sleep, and ⌘W sleeps them instead of closing.
