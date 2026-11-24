@@ -11,10 +11,14 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, ProtocolObject};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSView};
+use objc2_app_kit::{
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSBitmapImageFileType,
+    NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPasteboard, NSPasteboardTypeString, NSPrintInfo,
+    NSUserInterfaceItemIdentification, NSView,
+};
 use objc2_foundation::{
-    NSArray, NSDictionary, NSError, NSHTTPCookie, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize, NSString, NSURL, NSURLRequest,
-    NSURLResponse,
+    NSArray, NSDictionary, NSError, NSHTTPCookie, NSNumber, NSObjectProtocol, NSPoint, NSProgressReporting, NSRect, NSSize, NSString, NSURL,
+    NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::{
     WKContentRuleList, WKContentRuleListStore, WKDownload, WKDownloadDelegate, WKFindConfiguration, WKFindResult, WKNavigation, WKNavigationAction,
@@ -29,6 +33,10 @@ use std::rc::Rc;
 
 const HANDLER: &str = "relay";
 const RULES_ID: &str = "relay-content-rules";
+/// Appended to WebKit's default user-agent via `applicationNameForUserAgent` so
+/// sites like YouTube Music and Google Workspace recognize Relay as a modern
+/// Safari/WebKit browser instead of rejecting it as an unsupported webview.
+const SAFARI_UA_SUFFIX: &str = "Version/18.4 Safari/605.1.15";
 
 /// Things the engine needs the shell to do.
 #[derive(Debug, Clone)]
@@ -171,7 +179,7 @@ define_class!(
                 .unwrap_or_default();
             let filename = url.split(['/', '?']).next_back().filter(|s| !s.is_empty()).unwrap_or("download").to_string();
             let id = self.ivars().hub.update(|h| h.begin_download(self.ivars().tab, &url, &filename));
-            let mtm = MainThreadMarker::new().expect("download callback is on the main thread");
+            let Some(mtm) = MainThreadMarker::new() else { return };
             let handler = DownloadHandler::new(
                 mtm,
                 DownloadIvars {
@@ -251,6 +259,168 @@ impl BridgeHandler {
     }
 }
 
+define_class!(
+    // SAFETY: WKWebView supports subclassing on the main thread; we do not implement Drop.
+    #[unsafe(super(WKWebView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RelayWebView"]
+    struct RelayWebView;
+
+    impl RelayWebView {
+        /// Customize WebKit's native right-click context menu: rename "Open Link in New Window"
+        /// to "Open Link in New Tab" (matching our WKUIDelegate), remove the redundant
+        /// "Open Link" item, and ensure Back, Forward, Reload, Copy Page URL, Print…, and
+        /// Inspect Element are available on page menus.
+        #[unsafe(method(willOpenMenu:withEvent:))]
+        fn will_open_menu(&self, menu: &NSMenu, event: &NSEvent) {
+            let _: () = unsafe { msg_send![super(self), willOpenMenu: menu, withEvent: event] };
+            let mtm = MainThreadMarker::from(self);
+            let mut has_back = false;
+            let mut has_forward = false;
+            let mut has_reload = false;
+            let mut has_inspect = false;
+            let mut is_link_or_selection = false;
+            let mut open_link_idx: Option<isize> = None;
+
+            let items = menu.itemArray();
+            for (idx, item) in items.iter().enumerate() {
+                let id = item.identifier().map(|s| s.to_string()).unwrap_or_default();
+                match id.as_str() {
+                    "WKMenuItemIdentifierOpenLink" => {
+                        open_link_idx = Some(idx as isize);
+                        is_link_or_selection = true;
+                    }
+                    "WKMenuItemIdentifierOpenLinkInNewWindow" => {
+                        item.setTitle(&NSString::from_str("Open Link in New Tab"));
+                        is_link_or_selection = true;
+                    }
+                    "WKMenuItemIdentifierCopyLink"
+                    | "WKMenuItemIdentifierCopy"
+                    | "WKMenuItemIdentifierCopyImage"
+                    | "WKMenuItemIdentifierOpenImageInNewWindow"
+                    | "WKMenuItemIdentifierPaste" => {
+                        is_link_or_selection = true;
+                    }
+                    "WKMenuItemIdentifierGoBack" => has_back = true,
+                    "WKMenuItemIdentifierGoForward" => has_forward = true,
+                    "WKMenuItemIdentifierReload" => has_reload = true,
+                    "WKMenuItemIdentifierInspectElement" => has_inspect = true,
+                    _ => {}
+                }
+            }
+            if let Some(idx) = open_link_idx {
+                menu.removeItemAtIndex(idx);
+            }
+
+            if !is_link_or_selection {
+                let mut insert_at: isize = 0;
+                if !has_back {
+                    let back = make_menu_item(mtm, "Back", sel!(relayGoBack:), self);
+                    menu.insertItem_atIndex(&back, insert_at);
+                    insert_at += 1;
+                }
+                if !has_forward {
+                    let fwd = make_menu_item(mtm, "Forward", sel!(relayGoForward:), self);
+                    menu.insertItem_atIndex(&fwd, insert_at);
+                    insert_at += 1;
+                }
+                if !has_reload {
+                    let reload = make_menu_item(mtm, "Reload", sel!(relayReload:), self);
+                    menu.insertItem_atIndex(&reload, insert_at);
+                }
+
+                let sep_page = NSMenuItem::separatorItem(mtm);
+                menu.addItem(&sep_page);
+                let copy_url = make_menu_item(mtm, "Copy Page URL", sel!(relayCopyPageUrl:), self);
+                menu.addItem(&copy_url);
+                let print = make_menu_item(mtm, "Print…", sel!(relayPrint:), self);
+                menu.addItem(&print);
+            }
+
+            if !has_inspect {
+                let sep = NSMenuItem::separatorItem(mtm);
+                menu.addItem(&sep);
+                let inspect = make_menu_item(mtm, "Inspect Element", sel!(relayInspectElement:), self);
+                menu.addItem(&inspect);
+            }
+        }
+
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
+            match item.action() {
+                Some(a) if a == sel!(relayGoBack:) => unsafe { self.canGoBack() },
+                Some(a) if a == sel!(relayGoForward:) => unsafe { self.canGoForward() },
+                Some(a) if a == sel!(relayCopyPageUrl:) => unsafe { self.URL() }.is_some(),
+                _ => true,
+            }
+        }
+
+        #[unsafe(method(relayGoBack:))]
+        fn relay_go_back(&self, _sender: Option<&AnyObject>) {
+            unsafe { self.goBack() };
+        }
+
+        #[unsafe(method(relayGoForward:))]
+        fn relay_go_forward(&self, _sender: Option<&AnyObject>) {
+            unsafe { self.goForward() };
+        }
+
+        #[unsafe(method(relayReload:))]
+        fn relay_reload(&self, _sender: Option<&AnyObject>) {
+            unsafe { self.reload() };
+        }
+
+        #[unsafe(method(relayCopyPageUrl:))]
+        fn relay_copy_page_url(&self, _sender: Option<&AnyObject>) {
+            if let Some(url) = unsafe { self.URL() }.and_then(|u| u.absoluteString()) {
+                let pb = NSPasteboard::generalPasteboard();
+                pb.clearContents();
+                let _ = pb.setString_forType(&url, unsafe { NSPasteboardTypeString });
+            }
+        }
+
+        #[unsafe(method(relayPrint:))]
+        fn relay_print(&self, _sender: Option<&AnyObject>) {
+            let info = NSPrintInfo::sharedPrintInfo();
+            let op = unsafe { self.printOperationWithPrintInfo(&info) };
+            let _ = op.runOperation();
+        }
+
+        #[unsafe(method(relayInspectElement:))]
+        fn relay_inspect_element(&self, _sender: Option<&AnyObject>) {
+            let view: &AnyObject = self.as_ref();
+            let responds: bool = unsafe { msg_send![view, respondsToSelector: sel!(_inspector)] };
+            if responds {
+                let inspector: *mut AnyObject = unsafe { msg_send![view, _inspector] };
+                if let Some(i) = unsafe { inspector.as_ref() } {
+                    let _: () = unsafe { msg_send![i, show] };
+                }
+            }
+        }
+    }
+);
+
+impl RelayWebView {
+    fn new(mtm: MainThreadMarker, frame: NSRect, config: &WKWebViewConfiguration) -> Retained<WKWebView> {
+        let this = Self::alloc(mtm).set_ivars(());
+        let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame, configuration: config] };
+        Retained::into_super(view)
+    }
+}
+
+fn make_menu_item(mtm: MainThreadMarker, title: &str, action: objc2::runtime::Sel, target: &RelayWebView) -> Retained<NSMenuItem> {
+    let item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str(title),
+            Some(action),
+            &NSString::from_str(""),
+        )
+    };
+    unsafe { item.setTarget(Some(target.as_ref())) };
+    item
+}
+
 pub struct WebTab {
     pub view: Retained<WKWebView>,
     handler: Retained<BridgeHandler>,
@@ -278,6 +448,8 @@ pub struct Engine {
     /// tabs opened before compilation finishes still get blocking.
     uccs: Rc<RefCell<Vec<Retained<WKUserContentController>>>>,
     extensions: Option<Retained<WKWebExtensionController>>,
+    /// `Some(true)` forces DarkAqua, `Some(false)` forces Aqua, `None` follows system.
+    appearance: Option<bool>,
     tabs: HashMap<TabId, WebTab>,
     slept: Rc<RefCell<HashMap<TabId, SleptTab>>>,
     /// Tabs woken from sleep: keep the native view hidden until the bridge
@@ -297,10 +469,20 @@ impl Engine {
             blocking_enabled: Rc::new(std::cell::Cell::new(false)),
             uccs: Rc::default(),
             extensions: None,
+            appearance: None,
             tabs: HashMap::new(),
             slept: Rc::new(RefCell::new(HashMap::new())),
             warming: RefCell::new(HashSet::new()),
             pending_restore: HashMap::new(),
+        }
+    }
+
+    /// Propagate Dark/Light/System appearance to all live and future WKWebViews
+    /// so websites' `prefers-color-scheme` matches Relay's theme.
+    pub fn set_appearance(&mut self, dark: Option<bool>) {
+        self.appearance = dark;
+        for t in self.tabs.values() {
+            apply_appearance(&t.view, dark);
         }
     }
 
@@ -398,13 +580,18 @@ impl Engine {
         }
         let config = unsafe { WKWebViewConfiguration::new(mtm) };
         unsafe {
+            config.setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_UA_SUFFIX)));
             config.setUserContentController(&ucc);
+            let prefs = config.preferences();
+            let yes = NSNumber::new_bool(true);
+            let _: () = msg_send![&*prefs, setValue: &*yes, forKey: &*NSString::from_str("developerExtrasEnabled")];
             if let Some(ext) = &self.extensions {
                 config.setWebExtensionController(Some(ext));
             }
         }
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0));
-        let view = unsafe { WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config) };
+        let view = RelayWebView::new(mtm, frame, &config);
+        apply_appearance(&view, self.appearance);
         unsafe {
             view.setInspectable(true); // Develop menu / Web Inspector fallback
             view.setAllowsBackForwardNavigationGestures(true);
@@ -621,6 +808,7 @@ impl Engine {
         // Record the tab now so a wake before the snapshot lands still works;
         // the callback only attaches the image (if the tab is still asleep).
         slept.borrow_mut().insert(tab, SleptTab { url: url.clone(), scroll_x: scroll.0, scroll_y: scroll.1, snapshot_jpeg: None });
+        let view = t.view.clone();
         let tab_holder = Rc::new(RefCell::new(Some(t)));
         let holder_for_block = tab_holder.clone();
         let keep = RcBlock::new(move |img: *mut NSImage, err: *mut NSError| {
@@ -636,7 +824,6 @@ impl Engine {
                 teardown(&tab);
             }
         });
-        let view = tab_holder.borrow().as_ref().unwrap().view.clone();
         unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &keep) };
     }
 
@@ -776,10 +963,20 @@ fn load(view: &WKWebView, url: &str) {
     }
 }
 
+fn apply_appearance(view: &WKWebView, dark: Option<bool>) {
+    let appearance = match dark {
+        Some(true) => unsafe { NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua) },
+        Some(false) => unsafe { NSAppearance::appearanceNamed(NSAppearanceNameAqua) },
+        None => None,
+    };
+    view.setAppearance(appearance.as_deref());
+}
+
 fn teardown(t: &WebTab) {
     unsafe {
         t.ucc.removeScriptMessageHandlerForName(&NSString::from_str(HANDLER));
         t.view.setUIDelegate(None);
+        t.view.setNavigationDelegate(None);
         t.view.stopLoading();
     }
     t.view.removeFromSuperview();
