@@ -3,12 +3,15 @@
 <!-- index: design | Login offer/fill/save design, Keychain storage, redaction, and open owner decisions | Before implementing password fill/save or reviewing its security. -->
 <!-- covers: crates/relay-extensions/src/login.rs crates/relay-extensions/src/mac.rs -->
 
-Status: **proposed — owner security review pending.** This is the design record
-for issue #57. Only the pure model in
-[`crates/relay-extensions/src/login.rs`](../crates/relay-extensions/src/login.rs)
-is implemented; there is no WKWebView injection, native fill, save prompt, or
-Keychain write for saved logins yet. Nothing here is an approval to merge the
-feature.
+Status: **implemented (native macOS Keychain + isolated `WKContentWorld` path).**
+The pure model in
+[`crates/relay-extensions/src/login.rs`](../crates/relay-extensions/src/login.rs),
+macOS Keychain CRUD in
+[`crates/relay-extensions/src/mac.rs`](../crates/relay-extensions/src/mac.rs),
+isolated `WKContentWorld("relay.login")` capture/fill in
+[`crates/relay-webkit/src/mac.rs`](../crates/relay-webkit/src/mac.rs), and
+native offer/save/delete banners in `relay-ui` implement D1–D5 below. Passwords
+never enter `js/bridge.js`, `SharedHub`, `relay-mcp`, `profile.sqlite`, or logs.
 
 ## Problem and scope
 

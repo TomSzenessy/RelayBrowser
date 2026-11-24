@@ -972,18 +972,89 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
+                let login_sw = switch("settings-login-offers", self.login_offers_enabled, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.login_offers_enabled = !app.login_offers_enabled;
+                        if !app.login_offers_enabled {
+                            app.login_fill_prompt = None;
+                            if let Some((tab, _, _)) = app.login_save_prompt.take() {
+                                app.web.borrow().decline_save_login(tab);
+                            }
+                        }
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("login_offers", if app.login_offers_enabled { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
                 let privacy_card = div()
                     .flex()
                     .flex_col()
                     .child(row("Ad & tracker blocking", Some("Native WebKit content-rule blocker"), blocking_sw))
+                    .child(row("Keychain login autofill & save", Some("Offer to fill and save logins in macOS Keychain (never sent to agents)"), login_sw))
                     .child(row("Browsing history & saved session", Some("Removes all visited pages and open session tabs"), clear_btn));
-                div()
+                let active_url = self
+                    .active()
+                    .and_then(|id| self.hub.lock().tab(id).map(|s| s.url.clone()))
+                    .unwrap_or_default();
+                let saved_here = if active_url.is_empty() {
+                    vec![]
+                } else {
+                    self.web.borrow().list_login_candidates(&active_url)
+                };
+                let mut col = div()
                     .flex()
                     .flex_col()
                     .gap_4()
                     .child(div().text_size(px(16.)).text_color(t.text).child("Privacy"))
-                    .child(card(privacy_card))
-                    .into_any_element()
+                    .child(card(privacy_card));
+                if !saved_here.is_empty() {
+                    let mut logins_card = div().flex().flex_col();
+                    for (idx, (user, path)) in saved_here.into_iter().enumerate() {
+                        let u_del = user.clone();
+                        let p_del = path.clone();
+                        let url_del = active_url.clone();
+                        let label = if user.is_empty() { "(saved password)".to_string() } else { user };
+                        logins_card = logins_card.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .px_4()
+                                .py_2p5()
+                                .border_b_1()
+                                .border_color(t.border)
+                                .child(div().text_size(px(13.)).text_color(t.text).child(SharedString::from(label)))
+                                .child(
+                                    div()
+                                        .id(("login-del", idx))
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded(px(5.))
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .text_size(px(11.))
+                                        .text_color(t.error)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover))
+                                        .on_click(cx.listener(move |app, _, _, cx| {
+                                            let res = app.web.borrow().delete_saved_login(&url_del, &u_del, &p_del);
+                                            match res {
+                                                Ok(true) => app.toast("Deleted login from Keychain"),
+                                                Ok(false) => app.toast("Login not found in Keychain"),
+                                                Err(e) => app.toast(e),
+                                            }
+                                            cx.notify();
+                                        }))
+                                        .child("Delete"),
+                                ),
+                        );
+                    }
+                    col = col
+                        .child(div().text_size(px(12.)).text_color(t.muted).child("SAVED LOGINS ON THIS SITE"))
+                        .child(card(logins_card));
+                }
+                col.into_any_element()
             }
             SettingsTab::Extensions => {
                 let installed = self.store.as_ref().and_then(|s| s.enabled_extensions().ok()).unwrap_or_default();

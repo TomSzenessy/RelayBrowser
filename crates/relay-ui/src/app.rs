@@ -268,6 +268,13 @@ pub struct RelayApp {
     settings_dropdown: Option<SettingsDropdown>,
     ext_busy: bool,
     blocking: bool,
+    login_offers_enabled: bool,
+    /// Non-secret autofill offer: `(tab, url, form_idx, vec![(username, path)])`.
+    login_fill_prompt: Option<(TabId, String, usize, Vec<(String, String)>)>,
+    /// Non-secret save-login offer: `(tab, url, username)`. Password stays inside Engine.
+    login_save_prompt: Option<(TabId, String, String)>,
+    /// `(origin_display, username)` declined in this session; never re-prompted.
+    declined_login_saves: HashSet<(String, String)>,
     agent_eval: bool,
     shell_control: bool,
     agent_widget: Option<(String, String)>,
@@ -419,6 +426,7 @@ impl RelayApp {
         web.set_appearance(Some(web_dark));
         let keymap = Keymap::from_setting(store.as_ref().and_then(|s| s.setting("keybindings").ok().flatten()).as_deref());
         let show_tab_numbers = setting_enabled(store.as_ref().and_then(|s| s.setting("tab_numbers").ok().flatten()).as_deref());
+        let login_offers_enabled = setting_enabled(store.as_ref().and_then(|s| s.setting("login_offers").ok().flatten()).as_deref());
         let bookmarked_urls: HashSet<String> = store
             .as_ref()
             .and_then(|s| s.bookmarks().ok())
@@ -452,6 +460,10 @@ impl RelayApp {
             settings_dropdown: None,
             ext_busy: false,
             blocking,
+            login_offers_enabled,
+            login_fill_prompt: None,
+            login_save_prompt: None,
+            declined_login_saves: HashSet::new(),
             agent_eval,
             shell_control,
             agent_widget,
@@ -648,6 +660,26 @@ impl RelayApp {
                 WebEvent::Found { tab, found } => {
                     if let Some(f) = self.find.as_mut().filter(|f| f.tab == tab) {
                         f.found = Some(found);
+                    }
+                }
+                WebEvent::LoginFocus { tab, url, form_idx } => {
+                    if self.login_offers_enabled {
+                        let candidates = self.web.borrow().list_login_candidates(&url);
+                        if !candidates.is_empty() {
+                            self.login_fill_prompt = Some((tab, url, form_idx, candidates));
+                        }
+                    }
+                }
+                WebEvent::LoginSaveOffer { tab, url, username } => {
+                    let origin_key = relay_extensions::login::Origin::parse(&url).ok().map(|o| o.to_string());
+                    let allowed = self.login_offers_enabled
+                        && origin_key
+                            .as_ref()
+                            .is_some_and(|ok| !self.declined_login_saves.contains(&(ok.clone(), username.clone())));
+                    if allowed {
+                        self.login_save_prompt = Some((tab, url, username));
+                    } else {
+                        self.web.borrow().decline_save_login(tab);
                     }
                 }
                 WebEvent::Slept(tab) => {
@@ -1020,6 +1052,9 @@ impl RelayApp {
         if self.find.as_ref().is_some_and(|f| f.tab != tab) {
             self.find = None;
         }
+        if self.login_fill_prompt.as_ref().is_some_and(|(t, _, _, _)| *t != tab) {
+            self.login_fill_prompt = None;
+        }
         // Hints belong to the tab they were drawn on; do not leave them armed
         // for the next tab (Esc would then focus the old page).
         if let Some(h) = self.hints.take() {
@@ -1078,6 +1113,13 @@ impl RelayApp {
         }
         if self.hovered_tab == Some(tab) {
             self.hovered_tab = None;
+        }
+        if self.login_fill_prompt.as_ref().is_some_and(|(t, _, _, _)| *t == tab) {
+            self.login_fill_prompt = None;
+        }
+        if self.login_save_prompt.as_ref().is_some_and(|(t, _, _)| *t == tab) {
+            self.login_save_prompt = None;
+            self.web.borrow().decline_save_login(tab);
         }
         self.snapshots.remove(&tab);
         self.compat_tabs.remove(&tab);
@@ -2789,6 +2831,12 @@ impl Render for RelayApp {
             root = root.child(self.render_agent_banner(cx));
         } else if self.challenge_handoff().is_some() {
             root = root.child(self.render_challenge_banner(cx));
+        }
+        if let Some(banner) = self.render_login_fill_banner(cx) {
+            root = root.child(banner);
+        }
+        if let Some(banner) = self.render_login_save_banner(cx) {
+            root = root.child(banner);
         }
         if !self.app_mode || self.toast.is_some() || self.hints.is_some() {
             root = root.child(self.render_status(cx));
