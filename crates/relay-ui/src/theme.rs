@@ -128,13 +128,19 @@ pub struct Theme {
     pub scrim: Hsla,
 }
 
-impl Theme {
-    pub fn for_choice(appearance: WindowAppearance, choice: ThemeChoice, accent: AccentChoice) -> Self {
-        let dark = match choice {
+impl ThemeChoice {
+    pub fn is_dark(self, appearance: WindowAppearance) -> bool {
+        match self {
             ThemeChoice::System => matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark),
             ThemeChoice::Light => false,
             ThemeChoice::Dark => true,
-        };
+        }
+    }
+}
+
+impl Theme {
+    pub fn for_choice(appearance: WindowAppearance, choice: ThemeChoice, accent: AccentChoice) -> Self {
+        let dark = choice.is_dark(appearance);
         let mut theme = if dark { Self::dark() } else { Self::light() };
         let (color, active) = accent.color(dark);
         theme.accent = color;
@@ -258,6 +264,11 @@ mod tests {
         assert_eq!(AccentChoice::Orange.next(), AccentChoice::Blue);
         assert_eq!(Theme::for_choice(WindowAppearance::Dark, ThemeChoice::System, AccentChoice::Blue).background, Theme::dark().background);
         assert_eq!(Theme::for_choice(WindowAppearance::Light, ThemeChoice::Dark, AccentChoice::Blue).background, Theme::dark().background);
+        assert!(ThemeChoice::Dark.is_dark(WindowAppearance::Light));
+        assert!(!ThemeChoice::Light.is_dark(WindowAppearance::Dark));
+        assert!(ThemeChoice::System.is_dark(WindowAppearance::Dark));
+        assert!(ThemeChoice::System.is_dark(WindowAppearance::VibrantDark));
+        assert!(!ThemeChoice::System.is_dark(WindowAppearance::Light));
     }
 
     #[test]

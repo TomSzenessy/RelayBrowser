@@ -197,6 +197,7 @@ pub struct RelayApp {
     theme: Theme,
     theme_choice: ThemeChoice,
     accent_choice: AccentChoice,
+    last_web_dark: Option<bool>,
     /// Decoded tab icons by host; `None` means the fetch failed and retrying
     /// the same host this session is pointless.
     favicons: HashMap<String, Option<Arc<Image>>>,
@@ -307,7 +308,7 @@ impl RelayApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let web = WebHost::new(hub.clone(), window);
+        let mut web = WebHost::new(hub.clone(), window);
         let search = store.as_ref().and_then(|s| s.setting("search").ok().flatten()).unwrap_or_else(|| palette::DEFAULT_SEARCH.to_string());
         let blocking = setting_enabled(store.as_ref().and_then(|s| s.setting("blocking").ok().flatten()).as_deref());
         let agent_eval = setting_enabled(store.as_ref().and_then(|s| s.setting("agent_eval").ok().flatten()).as_deref());
@@ -362,6 +363,8 @@ impl RelayApp {
             .and_then(|s| s.setting("accent").ok().flatten())
             .and_then(|v| AccentChoice::parse(&v))
             .unwrap_or_default();
+        let web_dark = theme_choice.is_dark(window.appearance());
+        web.set_appearance(Some(web_dark));
         let keymap = Keymap::from_setting(store.as_ref().and_then(|s| s.setting("keybindings").ok().flatten()).as_deref());
         let mut app = Self {
             hub,
@@ -372,6 +375,7 @@ impl RelayApp {
             theme: Theme::for_choice(window.appearance(), theme_choice, accent_choice),
             theme_choice,
             accent_choice,
+            last_web_dark: Some(web_dark),
             favicons: cached_favicons(),
             favicon_pending: HashSet::new(),
             shortcuts: None,
@@ -2198,6 +2202,11 @@ impl Render for RelayApp {
         self.palette_input_active = false;
         if self.palette.is_some() && !self.focus.is_focused(window) {
             window.focus(&self.focus);
+        }
+        let web_dark = self.theme_choice.is_dark(window.appearance());
+        if self.last_web_dark != Some(web_dark) {
+            self.last_web_dark = Some(web_dark);
+            self.web.borrow_mut().set_appearance(Some(web_dark));
         }
         self.theme = Theme::for_choice(window.appearance(), self.theme_choice, self.accent_choice);
         let title = if self.title_cache.0 == self.seen_version {
