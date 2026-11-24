@@ -119,8 +119,11 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   in the active tab; the native MediaPlayer handlers only enqueue a request,
   which the shell maps to `Op::media` on its main-thread pump.
 - **Extensions:** enabled extensions appear as a compact right-aligned
-  toolbar (WebKit action icons, initial fallback, plus a gear); clicking one opens its action popup,
-  and **Show extension toolbar** in Settings can hide the row. Settings → Extensions has an inline Chrome Web Store
+  toolbar (WebKit action icons, initial fallback, bounded 4-char action badge
+  text/unread state from `WKWebExtensionAction`, plus a gear); clicking one
+  opens its action popup and clears unread state,
+  and **Show extension toolbar** in Settings can hide the row (disabled
+  extensions show no badge, and the toolbar stays hidden when no extensions are enabled). Settings → Extensions has an inline Chrome Web Store
   URL/ID field, a clipboard fallback, enable/disable, permission text, and
   load-error text, an **Options** button for extensions that declare an
   options page, and a **Popup** button that presents the default action's

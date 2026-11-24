@@ -884,10 +884,12 @@ impl RelayApp {
             let id = ext.id;
             let letter = ext.name.chars().next().unwrap_or('?').to_uppercase().collect::<String>();
             let icon = self.ext_icons.get(&id).cloned();
+            let badge = self.ext_badges.get(&id).cloned();
             bar = bar.child(
                 div()
                     .id(SharedString::from(format!("ext-tool-{id}")))
-                    .size(px(20.))
+                    .relative()
+                    .size(px(22.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -901,6 +903,28 @@ impl RelayApp {
                     .child(match icon {
                         Some(icon) => img(icon).size(px(16.)).into_any_element(),
                         None => div().child(SharedString::from(letter)).into_any_element(),
+                    })
+                    .when_some(badge, |d, b| {
+                        let (bg, fg) = if b.unread {
+                            (t.accent, gpui::Hsla::from(gpui::rgb(0xffffff)))
+                        } else {
+                            (t.raised, t.text)
+                        };
+                        d.child(
+                            div()
+                                .absolute()
+                                .bottom(px(-2.))
+                                .right(px(-3.))
+                                .px(px(3.))
+                                .rounded_full()
+                                .bg(bg)
+                                .border_1()
+                                .border_color(t.surface)
+                                .text_size(px(8.))
+                                .line_height(px(10.))
+                                .text_color(fg)
+                                .child(SharedString::from(b.text)),
+                        )
                     }),
             );
         }

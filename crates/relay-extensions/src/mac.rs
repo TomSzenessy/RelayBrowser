@@ -101,7 +101,7 @@ pub fn extension_icon(controller: &Retained<WKWebExtensionController>, uid: &str
 
 /// A ready-to-show action popup for the extension, if it declares one. The
 /// caller presents the web view; no tab adapter is needed for the default
-/// action.
+/// action. Presenting the popup clears the action's unread badge flag.
 pub fn extension_popup(controller: &Retained<WKWebExtensionController>, uid: &str) -> Option<Retained<WKWebView>> {
     for ctx in unsafe { controller.extensionContexts() }.iter() {
         if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
@@ -109,7 +109,23 @@ pub fn extension_popup(controller: &Retained<WKWebExtensionController>, uid: &st
             if !unsafe { action.presentsPopup() } {
                 return None;
             }
-            return unsafe { action.popupWebView() };
+            let view = unsafe { action.popupWebView() }?;
+            unsafe { action.setHasUnreadBadgeText(false) };
+            return Some(view);
+        }
+    }
+    None
+}
+
+/// Bounded badge text and unread flag for the extension's default action.
+pub fn extension_badge(controller: &Retained<WKWebExtensionController>, uid: &str) -> Option<crate::ExtensionBadge> {
+    for ctx in unsafe { controller.extensionContexts() }.iter() {
+        if unsafe { ctx.uniqueIdentifier() }.to_string() == uid {
+            let action = unsafe { ctx.actionForTab(None) }?;
+            let raw = unsafe { action.badgeText() }.to_string();
+            let text = crate::sanitize_badge_text(&raw)?;
+            let unread = unsafe { action.hasUnreadBadgeText() };
+            return Some(crate::ExtensionBadge { text, unread });
         }
     }
     None

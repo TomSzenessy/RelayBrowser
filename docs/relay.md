@@ -549,6 +549,11 @@ glyph name). The active space tints the tab strip and bookmarks bar; every
 swatch and gradient endpoint is verified WCAG AA against `text` and `muted` in
 `theme.rs`, and unknown values fall back to default without losing the space.
 
+Enabled WebExtensions surface their `WKWebExtensionAction` badge text (trimmed,
+control-stripped, bounded to 4 chars) and unread flag on the extension toolbar;
+presenting the action popup clears unread state, disabled extensions carry no
+badge, and the toolbar stays hidden when empty.
+
 ## Session restore
 
 With `restore_session` on (the default; `relay config set restore_session off`),

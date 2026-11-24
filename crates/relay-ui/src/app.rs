@@ -506,6 +506,8 @@ pub struct RelayApp {
     extension_toolbar: bool,
     /// Cached action icons from WebKit, keyed by extension id.
     ext_icons: HashMap<String, Arc<Image>>,
+    /// Cached action badge text and unread state, keyed by enabled extension id.
+    ext_badges: HashMap<String, relay_extensions::ExtensionBadge>,
     /// Optional shared folder for a merge-on-launch profile sync.
     sync_folder: String,
     /// Advertise the active page for Handoff (opt-in).
@@ -851,6 +853,7 @@ impl RelayApp {
             tab_icons_only,
             extension_toolbar,
             ext_icons: HashMap::new(),
+            ext_badges: HashMap::new(),
             sync_folder,
             handoff,
             ai_endpoint,
@@ -1025,6 +1028,13 @@ impl RelayApp {
     fn refresh_extension_icons(&mut self) {
         let Some(store) = &self.store else { return };
         let ids: Vec<String> = store.enabled_extensions().unwrap_or_default().into_iter().map(|(id, _, _)| id).collect();
+        let mut badges = HashMap::new();
+        for id in &ids {
+            if let Some(badge) = self.web.borrow().extension_badge(id) {
+                badges.insert(id.clone(), badge);
+            }
+        }
+        self.ext_badges = badges;
         if ids.len() == self.ext_icons.len() && ids.iter().all(|id| self.ext_icons.contains_key(id)) {
             return;
         }
@@ -2476,6 +2486,10 @@ impl RelayApp {
 
     fn open_extension_popup(&mut self, id: &str, cx: &mut Context<Self>) {
         if self.web.borrow_mut().open_extension_popup(id) {
+            if let Some(badge) = self.ext_badges.get_mut(id) {
+                badge.unread = false;
+            }
+            self.refresh_extension_icons();
             self.toast("Opened extension popup");
         } else {
             self.toast("This extension has no action popup");
