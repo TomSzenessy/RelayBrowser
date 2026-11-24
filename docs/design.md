@@ -167,7 +167,8 @@ Behaviour that is not a single action:
 - **Sidebar:** ⌘⌥I opens / closes it; × collapses it, and the Agent / Inspector
   tabs switch panes.
 - **Paused agents:** ⇧⌘. pauses or resumes every agent tool call and shows a
-  tinted banner with Resume.
+  tinted banner with Resume. A CAPTCHA/2FA challenge on the active page shows a
+  separate "Agent is waiting for you" banner with Continue.
 - **Tab bar:** `×` closes (hover/active), a middle click closes, `♪` marks
   playing audio, `pin` a pinned tab, and `zz` a sleeping one. Pinned tabs sit
   at the top, never auto-sleep, and ⌘W sleeps them instead of closing.

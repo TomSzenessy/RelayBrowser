@@ -41,6 +41,14 @@ the Rust implementation is its own (`tabstrip.rs`, `webapp.rs`, `app_menus`).
   fold, icon-only rail, drag resize). Not copied: its SwiftUI implementation,
   spaces, sync, AI pages, and updater. License and commit recorded so nothing
   is mistaken for Relay code.
+- **anomalyco/browse** (MIT; cloned locally for study, not committed, 2026-11-24,
+  default branch `dev`) — a Chromium extension plus a native MCP relay. Borrowed
+  ideas: agent tabs are group-scoped with `allowedOrigins`/`readOnly` options;
+  a human handoff pauses the agent and continues after an explicit **Continue**;
+  tool profiles are chosen from the MCP client name; stable refs and
+  compact tool descriptions. Relay implements the handoff banner and
+  client-aware shell grants, but not Chromium/CDP, QuickJS `execute`, remote
+  relays, pairing, or self-update. No code copied.
 - **h4ckf0r0day/obscura** (Apache-2.0; cloned locally for study, not
   committed, at `fef52749`; Rust headless browser for agents)
   — not an engine to embed; a reference for the agent surface. Borrowed ideas:
