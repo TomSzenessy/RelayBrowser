@@ -730,11 +730,14 @@ a failed fetch is not retried for that host this session.
 
 `⌘⇧A` toggles the dockable Agent panel (`Web` | `API` | `MCP`), which uses a
 matching Apple-style sidebar toggle icon on its own edge and can be dragged by
-its `⋮⋮` handle to Left, Right, Top, or Bottom — or stacked with the Tab Strip
-on any occupied edge (`agent_panel_edge`, `tabs_position`, `dock_stack_order`).
-- **Web** hosts a persistent `WKWebView` (`companion_view`) for Claude, ChatGPT,
-  or Gemini using the user's browser session (no API key), plus one-click
-  **Copy Page** (`⌘⇧M` Markdown) and **Open in Tab (`↗`)**.
+its `⋮⋮` handle (strictly below the macOS titlebar) to Left, Right, Top, or
+Bottom — or stacked with the Tab Strip on any occupied edge (`agent_panel_edge`,
+`tabs_position`, `dock_stack_order`), and resized smoothly via edge splitters
+(`tabs_width`, `agent_width`, `agent_height`).
+- **Web** hosts a persistent `WKWebView` (`companion_view`) with a `WKUIDelegate`
+  for OAuth popups, `drawsBackground = false`, cosmetic Google One Tap iframe
+  hiding, Back/Reload controls, one-click **Copy Page** (`⌘⇧M` Markdown), and
+  **Open in Tab (`↗`)** for Claude, ChatGPT, or Gemini using the user's session.
 - **API** streams side-by-side answers from Anthropic Claude (`/v1/messages` +
   `x-api-key`) or OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, LM
   Studio) using a macOS Keychain key.

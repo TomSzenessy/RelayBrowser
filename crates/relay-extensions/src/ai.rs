@@ -169,9 +169,7 @@ pub fn complete(
     history: &[(bool, String)],
 ) -> Result<String, String> {
     let endpoint = normalize_endpoint(&config.endpoint).ok_or("AI endpoint must be an http(s) URL")?;
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(60))).build(),
-    );
+    let agent = crate::https_agent(std::time::Duration::from_secs(60));
     let mut res = if is_anthropic_endpoint(&endpoint) {
         let body = anthropic_request_body(&config.model, url, title, page, prompt, history, false);
         agent
@@ -237,9 +235,7 @@ fn stream_inner(
     use std::io::BufRead;
     use std::sync::atomic::Ordering;
     let endpoint = normalize_endpoint(&config.endpoint).ok_or("AI endpoint must be an http(s) URL")?;
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(120))).build(),
-    );
+    let agent = crate::https_agent(std::time::Duration::from_secs(120));
     let mut res = if is_anthropic_endpoint(&endpoint) {
         let body = anthropic_request_body(&config.model, url, title, page, prompt, history, true);
         agent

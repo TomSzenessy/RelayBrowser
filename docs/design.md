@@ -28,11 +28,14 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   with soft hairline definition and shadow; on macOS, each tab's `WKWebView`
   lives inside a dedicated rounded container `NSView` clipped to continuous
   10 pt squircle corners, and split panes separate via a clean 6 pt shell gap).
-- **Modular 4-edge docking & stacking:** both the Tab Strip and the Agent panel
-  can be dragged by their `⋮⋮` header grip to any window edge (**Left**,
+- **Modular 4-edge docking, stacking & resizing:** both the Tab Strip and the Agent panel
+  can be dragged by their `⋮⋮` header grip (positioned strictly below the 34 pt macOS
+  titlebar drag zone so dragging a panel never moves the window) to any window edge (**Left**,
   **Right**, **Top**, or **Bottom**) — or dropped onto the upper/lower (or
   left/right) half of an occupied edge to stack both panels one above another
-  or side-by-side. Placement and stack order persist in `tabs_position`,
+  or side-by-side. Interactive 6 pt splitters on each open edge resize sidebars
+  and horizontal Agent docks smoothly (`tabs_width`, `agent_width`, `agent_height`).
+  Placement and stack order persist in `tabs_position`,
   `tabs_folded`, `agent_panel_edge`, and `dock_stack_order`.
 - **Consistent Apple-style sidebar icons & hotkey tooltips:** both the Tab
   Strip and the Agent panel use matching geometric Apple sidebar toggle icons

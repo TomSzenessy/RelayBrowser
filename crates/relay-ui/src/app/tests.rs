@@ -1020,3 +1020,18 @@ fn shared_hub_tab_space_lookup_before_update_does_not_deadlock() {
     assert_eq!(hub.lock().current_space(), "Work");
     let _ = t1;
 }
+
+#[test]
+fn panel_resize_clamps_stay_within_usable_bounds() {
+    assert_eq!(clamp_tabs_width(50.0), 160.0);
+    assert_eq!(clamp_tabs_width(260.0), 260.0);
+    assert_eq!(clamp_tabs_width(900.0), 440.0);
+
+    assert_eq!(clamp_agent_width(100.0), 240.0);
+    assert_eq!(clamp_agent_width(400.0), 400.0);
+    assert_eq!(clamp_agent_width(1200.0), 640.0);
+
+    assert_eq!(clamp_agent_height(40.0), 160.0);
+    assert_eq!(clamp_agent_height(300.0), 300.0);
+    assert_eq!(clamp_agent_height(900.0), 520.0);
+}

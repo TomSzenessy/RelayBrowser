@@ -54,11 +54,7 @@ pub fn download(id: &str) -> Result<Vec<u8>, Error> {
 }
 
 fn download_from(url: &str, timeout: std::time::Duration) -> Result<Vec<u8>, Error> {
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_global(Some(timeout))
-            .build(),
-    );
+    let agent = crate::https_agent(timeout);
     let mut res = agent.get(url).call().map_err(|e| Error::Http(format!("{url}: {e}")))?;
     if let Some(len) = res.body().content_length() {
         if len > MAX_CRX_BYTES {

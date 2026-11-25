@@ -16,6 +16,22 @@ pub mod mac;
 /// Polyfills injected into extension contexts (chrome.sidePanel, chrome.offscreen, ...).
 pub const CHROME_SHIMS_JS: &str = include_str!("../../../js/chrome-shims.js");
 
+/// Build a `ureq` agent explicitly bound to the compiled `NativeTls` provider.
+///
+/// `ureq` 3.x defaults `TlsProvider` to `Rustls` even when only `native-tls` is
+/// enabled, which otherwise panics on the first `https://` request.
+pub(crate) fn https_agent(timeout: std::time::Duration) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
+        .build();
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .tls_config(tls)
+            .timeout_global(Some(timeout))
+            .build(),
+    )
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("io: {0}")]
@@ -70,5 +86,18 @@ mod badge_tests {
         assert_eq!(sanitize_badge_text(" 7 "), Some("7".into()));
         assert_eq!(sanitize_badge_text("999+"), Some("999+".into()));
         assert_eq!(sanitize_badge_text("123456789"), Some("123…".into()));
+    }
+
+    #[test]
+    fn https_agent_uses_native_tls_without_panicking_on_https() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let agent = https_agent(std::time::Duration::from_millis(400));
+        // Previously panicked with "provider is Rustls but feature is not enabled: rustls".
+        // Now returns a clean connection error without panicking.
+        let err = agent.get(&format!("https://127.0.0.1:{port}/")).call().unwrap_err();
+        let msg = err.to_string();
+        assert!(!msg.contains("Rustls"), "unexpected rustls error: {msg}");
     }
 }

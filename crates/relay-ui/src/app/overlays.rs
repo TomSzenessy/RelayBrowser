@@ -1544,15 +1544,18 @@ impl RelayApp {
             let track_bg = if on {
                 if danger { t.error } else { t.accent }
             } else {
-                t.well
+                t.border
             };
             div()
                 .id(id)
-                .w(px(36.))
-                .h(px(20.))
+                .flex_shrink_0()
+                .w(px(38.))
+                .h(px(22.))
                 .p(px(2.))
                 .rounded_full()
                 .bg(track_bg)
+                .border_1()
+                .border_color(if on { track_bg } else { t.muted.opacity(0.35) })
                 .flex()
                 .items_center()
                 .when(on, |d| d.justify_end())
@@ -1566,7 +1569,7 @@ impl RelayApp {
                 .flex_col()
                 .gap_0p5()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(180.))
                 .pr_4()
                 .child(div().text_size(px(13.)).text_color(t.text).child(title));
             if let Some(sub) = subtitle {
@@ -1576,10 +1579,29 @@ impl RelayApp {
                 .flex()
                 .items_center()
                 .justify_between()
+                .gap_3()
                 .px_4()
                 .py_3()
                 .child(left)
-                .child(control)
+                .child(div().flex_shrink_0().child(control))
+        };
+        let stacked_row = |title: &'static str, subtitle: Option<&'static str>, control: gpui::AnyElement| {
+            let mut box_div = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(div().text_size(px(13.)).text_color(t.text).child(title))
+                        .when_some(subtitle, |d, sub| d.child(div().text_size(px(11.)).text_color(t.muted).child(sub))),
+                );
+            box_div = box_div.child(control);
+            box_div
         };
         let card = |content: gpui::Div| {
             content
@@ -1777,25 +1799,24 @@ impl RelayApp {
                     .on_click(cx.listener(|app, _, _, cx| app.use_icloud_sync(cx)))
                     .into_any_element();
                 let sync_control = div()
-                    .max_w(px(340.))
+                    .w_full()
                     .flex()
                     .items_center()
+                    .justify_between()
                     .gap_2()
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(10.))
+                            .text_size(px(11.))
                             .font_family("Menlo")
                             .text_color(t.muted)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .child(if self.sync_folder.is_empty() { "Off".to_string() } else { app_downloads_label(&self.sync_folder) }),
+                            .child(if self.sync_folder.is_empty() { "Not configured (Off)".to_string() } else { app_downloads_label(&self.sync_folder) }),
                     )
-                    .child(sync_choose)
-                    .child(sync_now)
-                    .child(sync_icloud)
+                    .child(div().flex().items_center().gap_2().flex_shrink_0().child(sync_choose).child(sync_now).child(sync_icloud))
                     .into_any_element();
                 let backup_btn = btn("settings-backup", "Back up…".into(), false)
                     .on_click(cx.listener(|app, _, _, cx| app.backup_profile(cx)))
@@ -1816,13 +1837,13 @@ impl RelayApp {
                     }))
                     .into_any_element();
                 general_card = general_card.child(row("Browser bookmarks & history", Some("Chrome, Brave, Edge, Arc, Dia, or Chromium"), import_btn));
-                general_card = general_card.child(row(
+                general_card = general_card.child(stacked_row(
                     "Safari bookmarks & history",
                     Some("Direct import needs Full Disk Access; or choose Safari's File → Export Browsing Data file"),
                     div().flex().gap_2().child(safari_btn).child(safari_file_btn).into_any_element(),
                 ));
                 general_card = general_card.child(row("Bookmark HTML", Some("Netscape format used by other browsers"), div().flex().gap_2().child(export_bm).child(import_bm).into_any_element()));
-                general_card = general_card.child(row("Sync folder", Some("Merge this profile on launch, then rewrite it every minute (Dropbox/iCloud)"), sync_control));
+                general_card = general_card.child(stacked_row("Sync folder", Some("Merge this profile on launch, then rewrite it every minute (Dropbox/iCloud)"), sync_control));
                 general_card = general_card.child(row("Back up profile", Some("Write bookmarks, history, and settings to a private JSON file"), backup_btn));
                 general_card = general_card.child(row("Restore profile", Some("Merge a Relay backup; local settings win"), restore_btn));
                 let default_btn = btn("settings-default-browser", "Make default".into(), false)
@@ -1851,15 +1872,16 @@ impl RelayApp {
                     .on_click(cx.listener(|app, _, _, cx| app.choose_download_folder(cx)))
                     .into_any_element();
                 let downloads_path = div()
-                    .max_w(px(300.))
+                    .w_full()
                     .flex()
                     .items_center()
+                    .justify_between()
                     .gap_2()
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(10.))
+                            .text_size(px(11.))
                             .font_family("Menlo")
                             .text_color(t.muted)
                             .overflow_hidden()
@@ -1867,9 +1889,9 @@ impl RelayApp {
                             .text_ellipsis()
                             .child(SharedString::from(app_downloads_label(&self.downloads_dir))),
                     )
-                    .child(choose_downloads)
+                    .child(div().flex_shrink_0().child(choose_downloads))
                     .into_any_element();
-                general_card = general_card.child(row("Downloads folder", Some("Set with relay config set downloads_dir PATH"), downloads_path));
+                general_card = general_card.child(stacked_row("Downloads folder", Some("Set with relay config set downloads_dir PATH"), downloads_path));
                 general_card = general_card.child(row("Ask where to save each file", Some("Show a save panel for every download"), ask_downloads_sw));
                 let sections = self.start_sections();
                 for (id, section) in [
@@ -2048,7 +2070,7 @@ impl RelayApp {
                     );
                 }
                 let dark = t.background.l < 0.5;
-                let mut bg_row = div().flex().flex_wrap().items_center().justify_end().gap_1p5();
+                let mut bg_row = div().flex().flex_wrap().items_center().gap_1p5();
                 for preset in theme::StartBackground::PRESETS {
                     let active = self.start_bg == preset;
                     let swatch = preset.background(dark, t.page);
@@ -2094,8 +2116,8 @@ impl RelayApp {
                     .flex_col()
                     .child(row("Theme", Some("System follows macOS and syncs website prefers-color-scheme"), theme_seg.into_any_element()))
                     .child(row("Accent colour", None, accent_row.into_any_element()))
-                    .child(row("Blank-tab background", Some("Solid, gradient, or a local image file (never loaded remotely)"), bg_row.into_any_element()))
-                    .child(row("Tab strip position", Some("Left, Top, Right, or Bottom (⇧⌘S) — or drag the ⋮⋮ grip to dock/stack"), strip_seg.into_any_element()))
+                    .child(stacked_row("Blank-tab background", Some("Solid, gradient, or a local image file (never loaded remotely)"), bg_row.into_any_element()))
+                    .child(row("Tab strip position", Some("Left, Top, Right, or Bottom (⇧⌘S) — or drag ⋮⋮"), strip_seg.into_any_element()))
                     .child(row("Agent panel position", Some("Dock on any edge or drag ⋮⋮ onto another panel to stack"), agent_seg.into_any_element()))
                     .child(row("Show tab strip", Some("Hide to maximize page area; ⌘S toggles anytime"), strip_visible))
                     .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw))
@@ -2138,6 +2160,11 @@ impl RelayApp {
                         if let Some(store) = &app.store {
                             let _ = store.set_setting("bookmarks_icons_only", if app.bookmarks_icons_only { "on" } else { "off" });
                         }
+                        if app.show_bookmarks_bar {
+                            app.toast(if app.bookmarks_icons_only { "Bookmarks bar: icons only" } else { "Bookmarks bar: icons and titles" });
+                        } else {
+                            app.toast("Saved — turn on 'Show the bookmarks bar' above to display it");
+                        }
                         cx.notify();
                     }))
                     .into_any_element();
@@ -2146,6 +2173,11 @@ impl RelayApp {
                         app.bookmarks_new_tab_only = !app.bookmarks_new_tab_only;
                         if let Some(store) = &app.store {
                             let _ = store.set_setting("bookmarks_new_tab_only", if app.bookmarks_new_tab_only { "on" } else { "off" });
+                        }
+                        if app.show_bookmarks_bar {
+                            app.toast(if app.bookmarks_new_tab_only { "Bookmarks bar shown only on new tabs" } else { "Bookmarks bar shown on all tabs" });
+                        } else {
+                            app.toast("Saved — turn on 'Show the bookmarks bar' above to display it");
                         }
                         cx.notify();
                     }))
@@ -2164,6 +2196,17 @@ impl RelayApp {
                         app.show_bookmarks_bar = !app.show_bookmarks_bar;
                         if let Some(store) = &app.store {
                             let _ = store.set_setting("bookmarks_bar", if app.show_bookmarks_bar { "on" } else { "off" });
+                        }
+                        if app.show_bookmarks_bar {
+                            app.refresh_start_page();
+                            let count = app.bookmarks_bar.len();
+                            app.toast(if count == 0 {
+                                "Bookmarks bar enabled (press ⌘D on any page to add a bookmark)".to_string()
+                            } else {
+                                format!("Bookmarks bar enabled ({count} bookmark{} ready)", if count == 1 { "" } else { "s" })
+                            });
+                        } else {
+                            app.toast("Bookmarks bar hidden");
                         }
                         cx.notify();
                     }))
@@ -2311,7 +2354,7 @@ impl RelayApp {
                 let content = div()
                     .flex()
                     .flex_col()
-                    .child(row("Default page zoom", Some("Sites without their own saved zoom open at this size"), zoom_seg.into_any_element()))
+                    .child(stacked_row("Default page zoom", Some("Sites without their own saved zoom open at this size"), zoom_seg.into_any_element()))
                     .child(div().px_4().py_3().child(notes));
                 div()
                     .flex()
@@ -2629,17 +2672,11 @@ impl RelayApp {
                     .flex_col()
                     .child(row("Show extension toolbar", Some("Enabled extensions as a compact row above the page"), toolbar_sw))
                     .child(row("Import Chrome extensions", Some("Fetches your Chrome extensions via CRX3 and loads them in WebKit (macOS 15.4+)"), import_ext_btn))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_4()
-                            .py_3()
-                            .child(div().flex_1().min_w_0().flex().flex_col().gap_0p5().child(div().text_size(px(13.)).text_color(t.text).child("Install by URL or ID")).child(div().text_size(px(11.)).text_color(t.muted).child("Type or paste a Chrome Web Store address, then Install; this grants every requested permission and host pattern")))
-                            .child(ext_field)
-                            .child(div().flex_shrink_0().child(ext_install_btn)),
-                    )
+                    .child(stacked_row(
+                        "Install by URL or ID",
+                        Some("Type or paste a Chrome Web Store address, then Install; this grants every requested permission and host pattern"),
+                        div().w_full().flex().items_center().gap_2().child(ext_field).child(div().flex_shrink_0().child(ext_install_btn)).into_any_element(),
+                    ))
                     .child(row("Install from Clipboard", Some("Copy any CWS URL or 32-char ID, then Install"), paste_ext_btn))
                     .child(row("Browse Chrome Web Store", Some("Find extensions, copy their URL, and install directly"), store_btn));
                 let mut list_card = div().flex().flex_col();
@@ -3161,8 +3198,8 @@ impl RelayApp {
         let panel = div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(56.)).bg(t.scrim).child(
             div()
                 .id("settings")
-                .w(px(860.))
-                .h(px(600.))
+                .w(px(900.))
+                .h(px(620.))
                 .flex()
                 .flex_row()
                 .rounded(px(14.))

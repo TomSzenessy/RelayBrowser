@@ -17,7 +17,7 @@ use gpui::{
     actions, canvas, div, fill, img, point, prelude::*, px, relative, size, App, Bounds, ClipboardItem, Context, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle, GlobalElementId, Hsla, Image, ImageFormat,
     ease_out_quint, Animation, AnimationExt, InspectorElementId, KeyBinding, KeyDownEvent, LayoutId, Menu, MenuItem,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, ObjectFit, PathPromptOptions, Pixels,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathPromptOptions, Pixels,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
 use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
@@ -225,6 +225,34 @@ impl PanelKind {
 /// GPUI drag payload when repositioning a dockable panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PanelDrag(pub(super) PanelKind);
+
+/// Which docked edge is currently being drag-resized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ResizeEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ResizeDrag {
+    pub(super) edge: ResizeEdge,
+    pub(super) start_pos: f32,
+    pub(super) start_size: f32,
+}
+
+pub(super) fn clamp_tabs_width(w: f32) -> f32 {
+    w.clamp(160.0, 440.0)
+}
+
+pub(super) fn clamp_agent_width(w: f32) -> f32 {
+    w.clamp(240.0, 640.0)
+}
+
+pub(super) fn clamp_agent_height(h: f32) -> f32 {
+    h.clamp(160.0, 520.0)
+}
 
 /// Order when both `Tabs` and `Agent` are docked on the same edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -682,6 +710,12 @@ pub struct RelayApp {
     agent_edge: tabstrip::Placement,
     /// Ordering when both Tabs and Agent are docked on the same edge.
     stack_order: StackOrder,
+    /// User-resized widths/height for dockable panels (persisted).
+    tabs_width: f32,
+    agent_width: f32,
+    agent_height: f32,
+    /// Active drag-resize session for an edge splitter.
+    resizing: Option<ResizeDrag>,
     tab_switcher: Option<TabSwitcher>,
     ai_stream: Option<std::sync::mpsc::Receiver<relay_extensions::ai::StreamEvent>>,
     ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -913,6 +947,27 @@ impl RelayApp {
             .and_then(|v| tabstrip::Placement::parse(&v))
             .unwrap_or(tabstrip::Placement::Right);
         let stack_order = StackOrder::parse(store.as_ref().and_then(|s| s.setting("dock_stack_order").ok().flatten()).as_deref());
+        let tabs_width = store
+            .as_ref()
+            .and_then(|s| s.setting("tabs_width").ok().flatten())
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(clamp_tabs_width)
+            .unwrap_or_else(|| {
+                let initial = strip.width();
+                if initial > 0.0 { initial } else { tabstrip::VERTICAL_WIDTH }
+            });
+        let agent_width = store
+            .as_ref()
+            .and_then(|s| s.setting("agent_width").ok().flatten())
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(clamp_agent_width)
+            .unwrap_or(360.0);
+        let agent_height = store
+            .as_ref()
+            .and_then(|s| s.setting("agent_height").ok().flatten())
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(clamp_agent_height)
+            .unwrap_or(280.0);
         let extension_toolbar = setting_enabled(store.as_ref().and_then(|s| s.setting("extension_toolbar").ok().flatten()).as_deref());
         let sync_folder = store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default();
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
@@ -954,11 +1009,9 @@ impl RelayApp {
             store.as_ref().and_then(|s| s.setting("status_bar_position").ok().flatten()).as_deref(),
             store.as_ref().and_then(|s| s.setting("bottom_bar").ok().flatten()).as_deref(),
         );
-        let bookmarked_urls: HashSet<String> = store
-            .as_ref()
-            .and_then(|s| s.bookmarks().ok())
-            .map(|list| list.into_iter().map(|b| b.url).collect())
-            .unwrap_or_default();
+        let saved_bookmarks = store.as_ref().and_then(|s| s.bookmarks().ok()).unwrap_or_default();
+        let bookmarked_urls: HashSet<String> = saved_bookmarks.iter().map(|b| b.url.clone()).collect();
+        let bookmarks_bar: Vec<(String, String)> = saved_bookmarks.into_iter().take(16).map(|b| (b.title, b.url)).collect();
         web.set_login_capture(login_save_enabled);
         let mut app = Self {
             hub,
@@ -1029,6 +1082,10 @@ impl RelayApp {
             web_ai_provider,
             agent_edge,
             stack_order,
+            tabs_width,
+            agent_width,
+            agent_height,
+            resizing: None,
             tab_switcher: None,
             ai_stream: None,
             ai_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1046,7 +1103,7 @@ impl RelayApp {
             confirm_close_multiple,
             tab_switch_order,
             close_confirm: None,
-            bookmarks_bar: vec![],
+            bookmarks_bar,
             default_zoom,
             status_bar_position,
             login_fill_prompt: None,
@@ -2293,6 +2350,85 @@ impl RelayApp {
         cx.notify();
     }
 
+    fn edge_has_agent(&self, edge: ResizeEdge) -> bool {
+        let placement = match edge {
+            ResizeEdge::Left => tabstrip::Placement::Left,
+            ResizeEdge::Right => tabstrip::Placement::Right,
+            ResizeEdge::Top => tabstrip::Placement::Top,
+            ResizeEdge::Bottom => tabstrip::Placement::Bottom,
+        };
+        !self.app_mode && self.inspector_open && self.agent_edge == placement
+    }
+
+    pub(super) fn start_resize(&mut self, edge: ResizeEdge, ev: &MouseDownEvent, cx: &mut Context<Self>) {
+        let has_agent = self.edge_has_agent(edge);
+        let (start_pos, start_size) = match edge {
+            ResizeEdge::Left | ResizeEdge::Right => (
+                f32::from(ev.position.x),
+                if has_agent { self.agent_width } else { self.tabs_width },
+            ),
+            ResizeEdge::Top | ResizeEdge::Bottom => (f32::from(ev.position.y), self.agent_height),
+        };
+        self.resizing = Some(ResizeDrag { edge, start_pos, start_size });
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn update_resize(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some(drag) = self.resizing else { return };
+        if !ev.dragging() {
+            self.finish_resize(cx);
+            return;
+        }
+        let has_agent = self.edge_has_agent(drag.edge);
+        match drag.edge {
+            ResizeEdge::Left => {
+                let delta = f32::from(ev.position.x) - drag.start_pos;
+                if has_agent {
+                    self.agent_width = clamp_agent_width(drag.start_size + delta);
+                } else {
+                    self.tabs_width = clamp_tabs_width(drag.start_size + delta);
+                }
+            }
+            ResizeEdge::Right => {
+                let delta = drag.start_pos - f32::from(ev.position.x);
+                if has_agent {
+                    self.agent_width = clamp_agent_width(drag.start_size + delta);
+                } else {
+                    self.tabs_width = clamp_tabs_width(drag.start_size + delta);
+                }
+            }
+            ResizeEdge::Top => {
+                let delta = f32::from(ev.position.y) - drag.start_pos;
+                self.agent_height = clamp_agent_height(drag.start_size + delta);
+            }
+            ResizeEdge::Bottom => {
+                let delta = drag.start_pos - f32::from(ev.position.y);
+                self.agent_height = clamp_agent_height(drag.start_size + delta);
+            }
+        }
+        cx.notify();
+    }
+
+    fn finish_resize(&mut self, cx: &mut Context<Self>) {
+        let Some(drag) = self.resizing.take() else { return };
+        if let Some(store) = &self.store {
+            match drag.edge {
+                ResizeEdge::Left | ResizeEdge::Right => {
+                    if self.edge_has_agent(drag.edge) {
+                        let _ = store.set_setting("agent_width", &format!("{:.0}", self.agent_width));
+                    } else {
+                        let _ = store.set_setting("tabs_width", &format!("{:.0}", self.tabs_width));
+                    }
+                }
+                ResizeEdge::Top | ResizeEdge::Bottom => {
+                    let _ = store.set_setting("agent_height", &format!("{:.0}", self.agent_height));
+                }
+            }
+        }
+        cx.notify();
+    }
+
     pub(super) fn refresh_connect_detected(&mut self) {
         let mut clients: Vec<(mcp_config::Client, bool)> = mcp_config::Client::ALL.iter().map(|&c| (c, c.is_installed())).collect();
         clients.sort_by_key(|(_, detected)| !*detected);
@@ -2527,7 +2663,13 @@ impl RelayApp {
                                 });
                                 ok_count += 1;
                             }
-                            Err(_) => fail_count += 1,
+                            Err(e) => {
+                                fail_count += 1;
+                                let mut errs = app.ext_errors.borrow_mut();
+                                if errs.len() < 8 {
+                                    errs.push(e);
+                                }
+                            }
                         }
                     }
                     let msg = if fail_count == 0 {
@@ -5253,9 +5395,10 @@ impl Render for RelayApp {
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
         let overlay_open = self.has_modal_overlay();
         let dragging_panel = cx.has_active_drag();
-        let hide_native = overlay_open || dragging_panel;
+        let resizing_panel = self.resizing.is_some();
+        let hide_native = overlay_open || dragging_panel || resizing_panel;
         if hide_native {
-            // Keep native views from covering overlays or intercepting panel drops.
+            // Keep native views from covering overlays or stealing resize/panel-drop drags.
             self.web.borrow().layout(&[]);
             self.web.borrow().layout_companion(None);
             self.placements.borrow_mut().clear();
@@ -5292,7 +5435,24 @@ impl Render for RelayApp {
         let bottom_panels = panels_on(tabstrip::Placement::Bottom);
 
         let browser_card = if hide_native {
-            div().flex_1().h_full().bg(t.page).into_any_element()
+            let mut blank = div().flex_1().h_full().bg(t.page);
+            if resizing_panel {
+                let dim = match self.resizing.map(|r| r.edge) {
+                    Some(ResizeEdge::Left) => format!("{} px", if left_panels.contains(&PanelKind::Agent) { self.agent_width } else { self.tabs_width } as i32),
+                    Some(ResizeEdge::Right) => format!("{} px", if right_panels.contains(&PanelKind::Agent) { self.agent_width } else { self.tabs_width } as i32),
+                    Some(ResizeEdge::Top | ResizeEdge::Bottom) => format!("{} px", self.agent_height as i32),
+                    None => String::new(),
+                };
+                blank = blank
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(t.accent.opacity(0.45))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().px_3().py_1().rounded(px(8.)).bg(t.raised).text_size(px(12.)).text_color(t.muted).child(SharedString::from(dim)));
+            }
+            blank.into_any_element()
         } else {
             let ext_bar = if self.extension_toolbar && !self.app_mode { self.render_extension_toolbar(cx) } else { None };
             let show_bm_bar = bookmarks_bar_shown(self.show_bookmarks_bar, self.bookmarks_new_tab_only, self.active().is_some()) && !self.app_mode;
@@ -5351,24 +5511,13 @@ impl Render for RelayApp {
             }
         };
 
-        // Leave a 34px top titlebar clearance above the center card whenever
-        // there is no top dock AND either the left or right sidebar toggle
-        // pill is floating in the top corner (or macOS traffic lights need space),
-        // so WKWebView never overlaps corner sidebar toggle buttons.
-        let need_top_clearance = top_panels.is_empty()
-            && (left_panels.is_empty()
-                || (show_strip && self.strip.folded)
-                || !agent_visible);
+        // Keep a clean 34px top macOS titlebar drag strip above the center card
+        // whenever there is no top dock, matching both sidebar headers so panel
+        // drag handles sit strictly below AppKit's native window-drag zone.
         let stage = if self.app_mode {
             div().flex_1().min_w_0().h_full().flex().overflow_hidden().child(browser_card)
         } else {
-            let pad_top = if !top_panels.is_empty() {
-                px(2.)
-            } else if need_top_clearance {
-                px(34.)
-            } else {
-                px(8.)
-            };
+            let pad_top = if !top_panels.is_empty() { px(2.) } else { px(34.) };
             let pad_bottom = if !bottom_panels.is_empty() { px(2.) } else { px(8.) };
             let pad_left = if !left_panels.is_empty() { px(0.) } else { px(8.) };
             let pad_right = if !right_panels.is_empty() { px(0.) } else { px(8.) };
@@ -5399,27 +5548,28 @@ impl Render for RelayApp {
                 return Some(el);
             }
             let mut container = if vertical {
-                let width = if panels.contains(&PanelKind::Agent) { 300. } else { this.strip.width() };
+                let width = if panels.contains(&PanelKind::Agent) { this.agent_width } else { this.tabs_width };
                 div()
                     .w(px(width))
                     .h_full()
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .pt(if edge == tabstrip::Placement::Left { px(34.) } else { px(8.) })
+                    .pt(px(34.))
                     .pb_1()
                     .overflow_hidden()
             } else {
-                let height = if panels.contains(&PanelKind::Agent) { 240. } else { this.strip.height() };
+                let height = if panels.contains(&PanelKind::Agent) { this.agent_height } else { this.strip.height() + 30. };
                 div()
                     .w_full()
                     .h(px(height))
                     .flex()
                     .flex_row()
                     .gap_1()
-                    .pl(if edge == tabstrip::Placement::Top { px(78.) } else { px(8.) })
+                    .pt(if edge == tabstrip::Placement::Top { px(30.) } else { px(4.) })
+                    .pl(px(8.))
                     .pr_2()
-                    .py_1()
+                    .pb_1()
                     .overflow_hidden()
             };
             for (idx, kind) in panels.iter().enumerate() {
@@ -5439,26 +5589,81 @@ impl Render for RelayApp {
             Some(container.into_any_element())
         };
 
+        let make_splitter = |edge: ResizeEdge, active: bool, cx: &mut Context<Self>| -> gpui::AnyElement {
+            let vertical = matches!(edge, ResizeEdge::Left | ResizeEdge::Right);
+            let id = match edge {
+                ResizeEdge::Left => "resize-left",
+                ResizeEdge::Right => "resize-right",
+                ResizeEdge::Top => "resize-top",
+                ResizeEdge::Bottom => "resize-bottom",
+            };
+            let handle = div()
+                .id(id)
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .on_mouse_down(MouseButton::Left, cx.listener(move |app, ev: &MouseDownEvent, _, cx| {
+                    app.start_resize(edge, ev, cx);
+                }));
+            if vertical {
+                handle
+                    .w(px(6.))
+                    .h_full()
+                    .cursor_col_resize()
+                    .hover(|s| s.bg(t.accent.opacity(0.28)))
+                    .when(active, |d| d.bg(t.accent.opacity(0.45)))
+                    .child(div().w(px(1.5)).h(px(36.)).rounded_full().bg(if active { t.accent } else { t.border.opacity(0.6) }))
+                    .into_any_element()
+            } else {
+                handle
+                    .h(px(6.))
+                    .w_full()
+                    .cursor_row_resize()
+                    .hover(|s| s.bg(t.accent.opacity(0.28)))
+                    .when(active, |d| d.bg(t.accent.opacity(0.45)))
+                    .child(div().h(px(1.5)).w(px(36.)).rounded_full().bg(if active { t.accent } else { t.border.opacity(0.6) }))
+                    .into_any_element()
+            }
+        };
+
         let left_el = render_edge_group(self, tabstrip::Placement::Left, &left_panels, cx);
         let right_el = render_edge_group(self, tabstrip::Placement::Right, &right_panels, cx);
         let top_el = render_edge_group(self, tabstrip::Placement::Top, &top_panels, cx);
         let bottom_el = render_edge_group(self, tabstrip::Placement::Bottom, &bottom_panels, cx);
 
+        let left_resizable = !left_panels.is_empty() && !(left_panels == [PanelKind::Tabs] && self.tab_icons_only);
+        let right_resizable = !right_panels.is_empty() && !(right_panels == [PanelKind::Tabs] && self.tab_icons_only);
+        let top_resizable = top_panels.contains(&PanelKind::Agent);
+        let bottom_resizable = bottom_panels.contains(&PanelKind::Agent);
+
         let mut workspace = div().flex_1().min_h_0().flex().overflow_hidden();
         if let Some(el) = left_el {
             workspace = workspace.child(el);
+            if left_resizable {
+                workspace = workspace.child(make_splitter(ResizeEdge::Left, self.resizing.is_some_and(|r| r.edge == ResizeEdge::Left), cx));
+            }
         }
         workspace = workspace.child(stage);
         if let Some(el) = right_el {
+            if right_resizable {
+                workspace = workspace.child(make_splitter(ResizeEdge::Right, self.resizing.is_some_and(|r| r.edge == ResizeEdge::Right), cx));
+            }
             workspace = workspace.child(el);
         }
 
         let mut main = div().flex_1().min_h_0().flex().flex_col().overflow_hidden();
         if let Some(el) = top_el {
             main = main.child(el);
+            if top_resizable {
+                main = main.child(make_splitter(ResizeEdge::Top, self.resizing.is_some_and(|r| r.edge == ResizeEdge::Top), cx));
+            }
         }
         main = main.child(workspace);
         if let Some(el) = bottom_el {
+            if bottom_resizable {
+                main = main.child(make_splitter(ResizeEdge::Bottom, self.resizing.is_some_and(|r| r.edge == ResizeEdge::Bottom), cx));
+            }
             main = main.child(el);
         }
 
@@ -5472,6 +5677,16 @@ impl Render for RelayApp {
             .bg(shell_bg)
             .text_color(t.text)
             .font_family(".SystemUIFont")
+            .on_mouse_move(cx.listener(|app, ev: &MouseMoveEvent, _, cx| {
+                if app.resizing.is_some() {
+                    app.update_resize(ev, cx);
+                }
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|app, _: &MouseUpEvent, _, cx| {
+                if app.resizing.is_some() {
+                    app.finish_resize(cx);
+                }
+            }))
             .on_modifiers_changed(cx.listener(|app, event: &ModifiersChangedEvent, _, cx| {
                 let held = event.modifiers.platform;
                 if app.cmd_held != held {
@@ -5730,6 +5945,32 @@ impl Render for RelayApp {
         }
         if self.downloads_open {
             root = root.child(self.render_downloads(cx));
+        }
+        if overlay_open {
+            if let Some((msg, _)) = &self.toast {
+                root = root.child(
+                    div()
+                        .absolute()
+                        .bottom(px(22.))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .px_3p5()
+                                .py_1p5()
+                                .rounded(px(10.))
+                                .bg(t.surface)
+                                .border_1()
+                                .border_color(t.accent.opacity(0.6))
+                                .shadow_lg()
+                                .text_size(px(12.))
+                                .text_color(t.text)
+                                .child(SharedString::from(msg.clone())),
+                        ),
+                );
+            }
         }
         root
     }

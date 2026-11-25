@@ -185,6 +185,14 @@ mod imp {
             self.engine.set_companion_url(url);
         }
 
+        pub fn companion_go_back(&self) {
+            self.engine.companion_go_back();
+        }
+
+        pub fn companion_reload(&self) {
+            self.engine.companion_reload();
+        }
+
         pub fn layout_companion(&self, bounds: Option<Bounds<Pixels>>) {
             let Some(shell) = &self.shell else { return };
             let rect = bounds.map(|b| {
@@ -455,6 +463,8 @@ mod imp {
         pub fn set_corner_style(&mut self, _radius: f64, _round_top: bool, _round_bottom: bool) {}
         pub fn toggle_web_inspector(&self, _tab: TabId) {}
         pub fn set_companion_url(&mut self, _url: &str) {}
+        pub fn companion_go_back(&self) {}
+        pub fn companion_reload(&self) {}
         pub fn layout_companion(&self, _bounds: Option<Bounds<Pixels>>) {}
         pub fn find(&self, _tab: TabId, _text: &str, _backwards: bool, _case_sensitive: bool) {}
         pub fn slept_scroll_y(&self, _tab: TabId) -> Option<f64> {

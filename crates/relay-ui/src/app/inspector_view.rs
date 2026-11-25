@@ -125,7 +125,7 @@ impl RelayApp {
             .justify_between()
             .gap_1()
             .px_2()
-            .pt(if stacked { px(4.) } else if edge == tabstrip::Placement::Left { px(34.) } else { px(8.) })
+            .pt(if stacked { px(4.) } else if vertical { px(34.) } else if edge == tabstrip::Placement::Top { px(32.) } else { px(6.) })
             .pb_1p5()
             .on_drag(PanelDrag(PanelKind::Agent), move |_, _, _, cx| {
                 cx.new(|_| PanelDragGhost { label: "Agent".into(), theme: t })
@@ -143,12 +143,9 @@ impl RelayApp {
         if stacked {
             panel = panel.flex_1().min_w_0().min_h_0().w_full().h_full();
         } else if vertical {
-            panel = panel.w(px(360.)).h_full();
+            panel = panel.w(px(self.agent_width)).h_full();
         } else {
-            panel = panel
-                .w_full()
-                .h(px(290.))
-                .when(edge == tabstrip::Placement::Top, |d| d.pl(px(74.)));
+            panel = panel.w_full().h(px(self.agent_height));
         }
         panel.child(head).child(body).into_any_element()
     }
@@ -221,6 +218,50 @@ impl RelayApp {
                     )
                     .child(
                         div()
+                            .id("web-ai-back")
+                            .w(px(22.))
+                            .h(px(22.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.))
+                            .bg(t.well)
+                            .text_size(px(11.))
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .tooltip(move |_, cx| {
+                                cx.new(|_| ShortcutTooltip { label: "Back".into(), shortcut: "".into(), theme: t }).into()
+                            })
+                            .on_click(cx.listener(|app, _, _, _| {
+                                app.web.borrow().companion_go_back();
+                            }))
+                            .child("←"),
+                    )
+                    .child(
+                        div()
+                            .id("web-ai-reload")
+                            .w(px(22.))
+                            .h(px(22.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(6.))
+                            .bg(t.well)
+                            .text_size(px(11.))
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .tooltip(move |_, cx| {
+                                cx.new(|_| ShortcutTooltip { label: "Reload".into(), shortcut: "".into(), theme: t }).into()
+                            })
+                            .on_click(cx.listener(|app, _, _, _| {
+                                app.web.borrow().companion_reload();
+                            }))
+                            .child("↻"),
+                    )
+                    .child(
+                        div()
                             .id("web-ai-popout")
                             .w(px(22.))
                             .h(px(22.))
@@ -251,7 +292,7 @@ impl RelayApp {
 
         let web = self.web.clone();
         let renders = web.borrow().renders_pages();
-        let hide_companion = self.has_modal_overlay() || cx.has_active_drag();
+        let hide_companion = self.has_modal_overlay() || cx.has_active_drag() || self.resizing.is_some();
         let view_host = div()
             .flex_1()
             .min_h_0()

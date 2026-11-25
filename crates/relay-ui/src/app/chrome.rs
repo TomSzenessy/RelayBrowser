@@ -242,9 +242,9 @@ impl RelayApp {
                 .gap_1()
                 .px_2()
                 .pb_2()
-                .pt(if stacked { px(4.) } else if is_left { px(34.) } else { px(8.) })
+                .pt(if stacked { px(4.) } else { px(34.) })
                 .when(stacked, |d| d.w_full().flex_1().min_h_0())
-                .when(!stacked, |d| d.w(px(if icons_only { 54. } else { strip.width() })).h_full());
+                .when(!stacked, |d| d.w(px(if icons_only { 54. } else { self.tabs_width })).h_full());
             if icons_only {
                 bar = bar.child(
                     div()
@@ -387,10 +387,12 @@ impl RelayApp {
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .pl(if stacked { px(4.) } else if is_top { px(78.) } else { px(10.) })
+                .pl(if stacked { px(4.) } else { px(10.) })
                 .pr_2()
+                .when(!stacked && is_top, |d| d.pt(px(30.)).h(px(strip.height() + 30.)))
+                .when(!stacked && !is_top, |d| d.h(px(strip.height())))
                 .when(stacked, |d| d.flex_1().min_w_0().h_full())
-                .when(!stacked, |d| d.h(px(strip.height())).w_full())
+                .when(!stacked, |d| d.w_full())
                 .on_drag(PanelDrag(PanelKind::Tabs), move |_, _, _, cx| {
                     cx.new(|_| PanelDragGhost { label: "Tabs".into(), theme: t })
                 })

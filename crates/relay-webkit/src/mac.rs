@@ -1144,6 +1144,51 @@ pub enum EditCommand {
     SelectAll,
 }
 
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RelayCompanionUIDelegate"]
+    struct CompanionUiDelegate;
+
+    unsafe impl NSObjectProtocol for CompanionUiDelegate {}
+
+    unsafe impl WKUIDelegate for CompanionUiDelegate {
+        #[unsafe(method_id(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:))]
+        fn create_web_view(
+            &self,
+            web_view: &WKWebView,
+            _configuration: &WKWebViewConfiguration,
+            action: &WKNavigationAction,
+            _features: &WKWindowFeatures,
+        ) -> Option<Retained<WKWebView>> {
+            // Load OAuth/sign-in popups (e.g. "Continue with Google" in Claude/ChatGPT)
+            // directly inside the docked companion view so login works smoothly.
+            let request = unsafe { action.request() };
+            unsafe {
+                let _ = web_view.loadRequest(&request);
+            }
+            None
+        }
+    }
+);
+
+impl CompanionUiDelegate {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// Cosmetic style injected into the docked Web AI companion view so cross-origin
+/// Google One Tap iframes do not flash a solid white rectangle over dark AI UIs.
+const COMPANION_CSS_JS: &str = r#"(function(){
+  if (document.getElementById('relay-companion-style')) return;
+  const s = document.createElement('style');
+  s.id = 'relay-companion-style';
+  s.textContent = '#credential_picker_container, div[id^="credential_picker"], iframe[src*="accounts.google.com/gsi"] { display: none !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }';
+  (document.head || document.documentElement).appendChild(s);
+})();"#;
+
 pub struct Engine {
     mtm: MainThreadMarker,
     hub: SharedHub,
@@ -1195,6 +1240,7 @@ pub struct Engine {
     /// Persistent docked Web AI companion view (Claude / ChatGPT / Gemini) shown
     /// inside the Agent panel when the user chooses Web mode.
     companion_view: Option<Retained<WKWebView>>,
+    companion_delegate: Option<Retained<CompanionUiDelegate>>,
     companion_url: String,
 }
 
@@ -1236,6 +1282,7 @@ impl Engine {
             round_top_corners: true,
             round_bottom_corners: true,
             companion_view: None,
+            companion_delegate: None,
             companion_url: String::new(),
         }
     }
@@ -1280,16 +1327,52 @@ impl Engine {
             if let Some(store) = &self.profile_store {
                 config.setWebsiteDataStore(store);
             }
+            let ucc = config.userContentController();
+            let script = WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
+                WKUserScript::alloc(mtm),
+                &NSString::from_str(COMPANION_CSS_JS),
+                WKUserScriptInjectionTime::AtDocumentStart,
+                true,
+            );
+            ucc.addUserScript(&script);
+            let script_end = WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
+                WKUserScript::alloc(mtm),
+                &NSString::from_str(COMPANION_CSS_JS),
+                WKUserScriptInjectionTime::AtDocumentEnd,
+                true,
+            );
+            ucc.addUserScript(&script_end);
         }
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(320.0, 500.0));
         let view = unsafe { WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config) };
+        let delegate = CompanionUiDelegate::new(mtm);
         apply_appearance(&view, self.appearance);
         apply_corner_style(&view, 10.0, true, true);
         unsafe {
+            let no = NSNumber::new_bool(false);
+            let _: () = msg_send![&*view, setValue: &*no, forKey: &*NSString::from_str("drawsBackground")];
+            view.setUIDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*delegate)));
             view.setAllowsBackForwardNavigationGestures(true);
         }
         load(&view, url);
+        self.companion_delegate = Some(delegate);
         self.companion_view = Some(view);
+    }
+
+    pub fn companion_go_back(&self) {
+        if let Some(view) = &self.companion_view {
+            unsafe {
+                let _ = view.goBack();
+            }
+        }
+    }
+
+    pub fn companion_reload(&self) {
+        if let Some(view) = &self.companion_view {
+            unsafe {
+                let _ = view.reload();
+            }
+        }
     }
 
     /// Position or hide the docked Web AI companion view inside `parent`.
