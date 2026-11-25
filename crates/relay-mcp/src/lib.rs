@@ -1623,8 +1623,8 @@ fn validate_shell_setting(key: &str, value: &str) -> Result<(), ErrorData> {
             validate_shortcuts(v).map_err(|e| ErrorData::invalid_params(e, None))?;
         }
         "tabs_position" => {
-            if !matches!(v, "left" | "top" | "right") {
-                return Err(ErrorData::invalid_params("tabs_position must be left, top, or right", None));
+            if !matches!(v, "left" | "top" | "right" | "bottom") {
+                return Err(ErrorData::invalid_params("tabs_position must be left, top, right, or bottom", None));
             }
         }
         "mcp" | "shell_control" | "agent_eval" | "mcp_socket" | "mcp_socket_path" | "clear_data" | "clear-data" => {
@@ -1900,7 +1900,7 @@ mod shell_tests {
             ("search", "file:///tmp/%s"),
             ("search", "https://search.test/no-placeholder"),
             ("sleep_minutes", "1441"),
-            ("tabs_position", "bottom"),
+            ("tabs_position", "center"),
             ("blocking", "maybe"),
         ] {
             let mut args = theme_plan("dark");
@@ -1912,6 +1912,7 @@ mod shell_tests {
             ("blocking", "on"),
             ("sleep_minutes", "15"),
             ("tabs_position", "top"),
+            ("tabs_position", "bottom"),
             ("restore_session", "false"),
         ] {
             assert!(validate_shell_setting(key, value).is_ok(), "{key}={value}");

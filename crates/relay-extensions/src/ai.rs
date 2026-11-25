@@ -1,9 +1,20 @@
-//! Minimal OpenAI-compatible chat client. The key never enters settings or
-//! logs; the browser sends only the URL/title and the user's question.
+//! Minimal AI chat client supporting OpenAI-compatible endpoints AND native
+//! Anthropic Claude Messages API (`https://api.anthropic.com/v1`). The key
+//! never enters settings or logs; the browser sends only the URL/title,
+//! optional visible page text, and the user's question.
 
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1";
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
+pub const ANTHROPIC_ENDPOINT: &str = "https://api.anthropic.com/v1";
+pub const ANTHROPIC_DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
 const MAX_REPLY_BYTES: usize = 512 * 1024;
+
+/// True when `endpoint` targets Anthropic's native Messages API (`/messages`)
+/// rather than OpenAI's `/chat/completions`.
+pub fn is_anthropic_endpoint(endpoint: &str) -> bool {
+    let lower = endpoint.trim().to_ascii_lowercase();
+    lower.starts_with("https://api.anthropic.com") || lower.starts_with("http://api.anthropic.com")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiConfig {
@@ -72,22 +83,72 @@ pub fn request_body(
     serde_json::to_string(&Request { model: model.to_string(), messages, stream }).unwrap_or_else(|_| "{}".into())
 }
 
+#[derive(serde::Serialize)]
+struct AnthropicRequest {
+    model: String,
+    max_tokens: u32,
+    system: String,
+    messages: Vec<Message>,
+    stream: bool,
+}
+
+/// Build an Anthropic `/v1/messages` request body.
+pub fn anthropic_request_body(
+    model: &str,
+    url: &str,
+    title: &str,
+    page: &str,
+    prompt: &str,
+    history: &[(bool, String)],
+    stream: bool,
+) -> String {
+    let system = "You are Relay's concise browser assistant. Answer in plain text. The user's page URL, title, and visible page text are provided.";
+    let mut messages = Vec::new();
+    let mut used = 0usize;
+    let start = history.len().saturating_sub(MAX_HISTORY_TURNS);
+    for (user, text) in &history[start..] {
+        if used >= MAX_HISTORY_BYTES {
+            break;
+        }
+        let text = text.chars().take(8_000).collect::<String>();
+        used += text.len();
+        if text.trim().is_empty() {
+            continue;
+        }
+        messages.push(Message { role: if *user { "user" } else { "assistant" }, content: text });
+    }
+    let user = format!("Page: {title}\nURL: {url}\n\nVisible page text:\n{page}\n\nQuestion: {prompt}");
+    messages.push(Message { role: "user", content: user });
+    serde_json::to_string(&AnthropicRequest {
+        model: model.to_string(),
+        max_tokens: 4096,
+        system: system.to_string(),
+        messages,
+        stream,
+    })
+    .unwrap_or_else(|_| "{}".into())
+}
+
 pub fn parse_reply(json: &str) -> Result<String, String> {
     let value: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("AI reply was not JSON: {e}"))?;
-    let content = value
+    let openai_content = value
         .get("choices")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("message"))
         .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| {
-            value
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| "AI reply had no message content".into())
-        })?;
+        .and_then(|c| c.as_str());
+    let anthropic_content = value
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.iter().find_map(|block| block.get("text").and_then(|t| t.as_str())));
+    let content = openai_content.or(anthropic_content).ok_or_else(|| {
+        value
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| "AI reply had no message content".into())
+    })?;
     let text = content.trim();
     if text.is_empty() {
         return Err("AI returned an empty answer".into());
@@ -111,13 +172,24 @@ pub fn complete(
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(60))).build(),
     );
-    let body = request_body(&config.model, url, title, page, prompt, history, false);
-    let mut res = agent
-        .post(&format!("{endpoint}/chat/completions"))
-        .header("Authorization", &format!("Bearer {key}"))
-        .header("Content-Type", "application/json")
-        .send(body)
-        .map_err(|e| format!("AI request failed: {e}"))?;
+    let mut res = if is_anthropic_endpoint(&endpoint) {
+        let body = anthropic_request_body(&config.model, url, title, page, prompt, history, false);
+        agent
+            .post(&format!("{endpoint}/messages"))
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .send(body)
+            .map_err(|e| format!("AI request failed: {e}"))?
+    } else {
+        let body = request_body(&config.model, url, title, page, prompt, history, false);
+        agent
+            .post(&format!("{endpoint}/chat/completions"))
+            .header("Authorization", &format!("Bearer {key}"))
+            .header("Content-Type", "application/json")
+            .send(body)
+            .map_err(|e| format!("AI request failed: {e}"))?
+    };
     let status = res.status();
     let text = res.body_mut().read_to_string().map_err(|e| format!("AI response read failed: {e}"))?;
     if !status.is_success() {
@@ -168,13 +240,24 @@ fn stream_inner(
     let agent = ureq::Agent::new_with_config(
         ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(120))).build(),
     );
-    let body = request_body(&config.model, url, title, page, prompt, history, true);
-    let mut res = agent
-        .post(&format!("{endpoint}/chat/completions"))
-        .header("Authorization", &format!("Bearer {key}"))
-        .header("Content-Type", "application/json")
-        .send(body)
-        .map_err(|e| format!("AI request failed: {e}"))?;
+    let mut res = if is_anthropic_endpoint(&endpoint) {
+        let body = anthropic_request_body(&config.model, url, title, page, prompt, history, true);
+        agent
+            .post(&format!("{endpoint}/messages"))
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .send(body)
+            .map_err(|e| format!("AI request failed: {e}"))?
+    } else {
+        let body = request_body(&config.model, url, title, page, prompt, history, true);
+        agent
+            .post(&format!("{endpoint}/chat/completions"))
+            .header("Authorization", &format!("Bearer {key}"))
+            .header("Content-Type", "application/json")
+            .send(body)
+            .map_err(|e| format!("AI request failed: {e}"))?
+    };
     if !res.status().is_success() {
         let text = res.body_mut().read_to_string().unwrap_or_default();
         return Err(format!("AI endpoint returned {}: {}", res.status(), text.chars().take(300).collect::<String>()));
@@ -218,13 +301,17 @@ fn parse_sse_line(line: &str) -> Result<Option<String>, String> {
     if let Some(error) = value.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
         return Err(error.to_string());
     }
-    Ok(value
+    let openai = value
         .get("choices")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("delta"))
         .and_then(|d| d.get("content"))
-        .and_then(|c| c.as_str())
-        .map(str::to_string))
+        .and_then(|c| c.as_str());
+    let anthropic = value
+        .get("delta")
+        .and_then(|d| d.get("text"))
+        .and_then(|c| c.as_str());
+    Ok(openai.or(anthropic).map(str::to_string))
 }
 
 #[cfg(test)]
@@ -262,6 +349,7 @@ mod tests {
     #[test]
     fn sse_deltas_and_done_are_parsed() {
         assert_eq!(parse_sse_line(r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#).unwrap().as_deref(), Some("hi"));
+        assert_eq!(parse_sse_line(r#"data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"claude"}}"#).unwrap().as_deref(), Some("claude"));
         assert_eq!(parse_sse_line("data: [DONE]").unwrap().as_deref(), Some(""));
         assert_eq!(parse_sse_line(": keep-alive").unwrap(), None);
         assert!(parse_sse_line(r#"data: {"error":{"message":"bad"}}"#).is_err());
@@ -270,6 +358,14 @@ mod tests {
     #[test]
     fn replies_and_errors_are_explained() {
         assert_eq!(parse_reply(r#"{"choices":[{"message":{"content":"hello"}}]}"#).unwrap(), "hello");
+        assert_eq!(parse_reply(r#"{"content":[{"type":"text","text":"from claude"}]}"#).unwrap(), "from claude");
+        assert!(is_anthropic_endpoint("https://api.anthropic.com/v1"));
+        assert!(!is_anthropic_endpoint("https://api.openai.com/v1"));
+        let abody = anthropic_request_body("claude-sonnet-4-20250514", "https://a.test/", "T", "body", "q?", &[], true);
+        let av: serde_json::Value = serde_json::from_str(&abody).unwrap();
+        assert_eq!(av["max_tokens"], 4096);
+        assert!(av["system"].as_str().unwrap().contains("Relay"));
+        assert_eq!(av["messages"][0]["role"], "user");
         assert!(parse_reply(r#"{"error":{"message":"bad key"}}"#).unwrap_err().contains("bad key"));
         assert!(parse_reply("not json").unwrap_err().contains("JSON"));
         assert!(parse_reply(r#"{"choices":[{"message":{"content":"  "}}]}"#).is_err());

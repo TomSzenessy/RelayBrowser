@@ -390,9 +390,21 @@ fn validate_config_value(key: &str, value: &str) -> anyhow::Result<String> {
             }
             Ok(format!("{zoom:.2}"))
         }
-        "tabs_position" => match trimmed.to_ascii_lowercase().as_str() {
-            "left" | "top" | "right" => Ok(trimmed.to_ascii_lowercase()),
-            _ => bail!("invalid tabs_position {value:?}: expected left, top, or right"),
+        "tabs_position" | "agent_panel_edge" => match trimmed.to_ascii_lowercase().as_str() {
+            "left" | "top" | "right" | "bottom" => Ok(trimmed.to_ascii_lowercase()),
+            _ => bail!("invalid {key} {value:?}: expected left, top, right, or bottom"),
+        },
+        "dock_stack_order" => match trimmed.to_ascii_lowercase().as_str() {
+            "tabs_first" | "agent_first" => Ok(trimmed.to_ascii_lowercase()),
+            _ => bail!("invalid dock_stack_order {value:?}: expected tabs_first or agent_first"),
+        },
+        "agent_mode" => match trimmed.to_ascii_lowercase().as_str() {
+            "web" | "api" | "mcp" => Ok(trimmed.to_ascii_lowercase()),
+            _ => bail!("invalid agent_mode {value:?}: expected web, api, or mcp"),
+        },
+        "web_ai_provider" => match trimmed.to_ascii_lowercase().as_str() {
+            "claude" | "chatgpt" | "gemini" => Ok(trimmed.to_ascii_lowercase()),
+            _ => bail!("invalid web_ai_provider {value:?}: expected claude, chatgpt, or gemini"),
         },
         "sleep_minutes" => {
             let mins: u64 = trimmed

@@ -3,7 +3,7 @@
 //! the same `SharedHub` the MCP server reads; MCP requests reach WebKit via
 //! the pump loop below.
 
-use crate::inspector::{self, ConsoleRow, ElementRow, NetworkRow, Panel, Tree};
+use crate::inspector;
 use crate::keymap::{self, ActionId, Keymap};
 use crate::library::{Library, Mode};
 use crate::mcp_config;
@@ -20,7 +20,7 @@ use gpui::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, ObjectFit, PathPromptOptions, Pixels,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
 };
-use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, ConsoleLevel, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
+use relay_bridge::{host_of, is_http_url, is_openable_url, BrowserRequest, Hub, NodeId, Op, Owner, SharedHub, TabId, TabView};
 use relay_extensions::store::{SessionTab, Store, WebAppRecord};
 use relay_webkit::downloads::FOLDER_LABEL;
 use relay_webkit::sleep::SleepPolicy;
@@ -123,42 +123,193 @@ use palette_view::PaletteTextMetrics;
 use palette_view::palette_text_runs;
 
 
-/// Inspector row data built once per hub version/tab/panel/filter, then
-/// painted without walking the DOM or formatting network/console entries
-/// again on every frame.
-#[derive(Debug)]
-enum InspectorRows {
-    Elements(Vec<ElementRow>),
-    Network(Vec<NetworkRow>),
-    Console(Vec<ConsoleRow>),
-    Cookies(Vec<relay_bridge::Cookie>),
-    Empty(&'static str),
+/// Active mode inside the dockable Agent panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum AgentMode {
+    #[default]
+    Web,
+    Api,
+    Mcp,
 }
 
-#[derive(Debug)]
-struct InspectorCache {
-    version: u64,
-    tab: TabId,
-    panel: Panel,
-    tree_epoch: u64,
-    console_min: ConsoleLevel,
-    failed_only: bool,
-    rows: InspectorRows,
-}
+impl AgentMode {
+    pub(super) const ALL: [AgentMode; 3] = [Self::Web, Self::Api, Self::Mcp];
 
-/// The ⌘F bar: what is being searched in which tab, and the last answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SidebarTab {
-    Agent,
-    Inspector,
-}
-
-impl SidebarTab {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Agent => "agents",
-            Self::Inspector => "inspector",
+    pub(super) fn parse(raw: Option<&str>) -> Self {
+        match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("api") => Self::Api,
+            Some("mcp") | Some("agents") => Self::Mcp,
+            _ => Self::Web,
         }
+    }
+
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Web => "web",
+            Self::Api => "api",
+            Self::Mcp => "mcp",
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Web => "Web",
+            Self::Api => "API",
+            Self::Mcp => "MCP",
+        }
+    }
+}
+
+/// Web AI service hosted inside the docked companion web view (uses the user's
+/// existing browser session, no API key required).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum WebAiProvider {
+    #[default]
+    Claude,
+    ChatGpt,
+    Gemini,
+}
+
+impl WebAiProvider {
+    pub(super) const ALL: [WebAiProvider; 3] = [Self::Claude, Self::ChatGpt, Self::Gemini];
+
+    pub(super) fn parse(raw: Option<&str>) -> Self {
+        match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("chatgpt") => Self::ChatGpt,
+            Some("gemini") => Self::Gemini,
+            _ => Self::Claude,
+        }
+    }
+
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::ChatGpt => "chatgpt",
+            Self::Gemini => "gemini",
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude",
+            Self::ChatGpt => "ChatGPT",
+            Self::Gemini => "Gemini",
+        }
+    }
+
+    pub(super) fn url(self) -> &'static str {
+        match self {
+            Self::Claude => "https://claude.ai",
+            Self::ChatGpt => "https://chatgpt.com",
+            Self::Gemini => "https://gemini.google.com",
+        }
+    }
+}
+
+/// A dockable chrome panel that can be dragged to any edge or stacked with the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PanelKind {
+    Tabs,
+    Agent,
+}
+
+impl PanelKind {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Tabs => "Tabs",
+            Self::Agent => "Agent",
+        }
+    }
+}
+
+/// GPUI drag payload when repositioning a dockable panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PanelDrag(pub(super) PanelKind);
+
+/// Order when both `Tabs` and `Agent` are docked on the same edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum StackOrder {
+    #[default]
+    TabsFirst,
+    AgentFirst,
+}
+
+impl StackOrder {
+    pub(super) fn parse(raw: Option<&str>) -> Self {
+        match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("agent_first") => Self::AgentFirst,
+            _ => Self::TabsFirst,
+        }
+    }
+
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::TabsFirst => "tabs_first",
+            Self::AgentFirst => "agent_first",
+        }
+    }
+}
+
+/// Hover tooltip showing an action name and its keyboard shortcut to gently teach hotkeys.
+pub(super) struct ShortcutTooltip {
+    pub(super) label: SharedString,
+    pub(super) shortcut: SharedString,
+    pub(super) theme: Theme,
+}
+
+impl Render for ShortcutTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        div()
+            .px_2p5()
+            .py_1()
+            .rounded(px(7.))
+            .bg(t.raised)
+            .border_1()
+            .border_color(t.border)
+            .shadow_md()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().text_size(px(11.)).text_color(t.text).child(self.label.clone()))
+            .when(!self.shortcut.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded(px(4.))
+                        .bg(t.well)
+                        .font_family("Menlo")
+                        .text_size(px(10.))
+                        .text_color(t.muted)
+                        .child(self.shortcut.clone()),
+                )
+            })
+    }
+}
+
+/// Translucent floating badge rendered under the cursor while dragging a panel.
+pub(super) struct PanelDragGhost {
+    pub(super) label: SharedString,
+    pub(super) theme: Theme,
+}
+
+impl Render for PanelDragGhost {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        div()
+            .px_3()
+            .py_1p5()
+            .rounded(px(8.))
+            .bg(t.raised)
+            .border_1()
+            .border_color(t.accent)
+            .shadow_lg()
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .child(div().text_size(px(11.)).text_color(t.accent).child("⋮⋮"))
+            .child(div().text_size(px(12.)).text_color(t.text).child(self.label.clone()))
     }
 }
 
@@ -374,12 +525,11 @@ pub(super) enum SettingsTab {
     Extensions,
     Agents,
     Shortcuts,
-    Ai,
     About,
 }
 
 impl SettingsTab {
-    pub(super) const ALL: [SettingsTab; 11] = [
+    pub(super) const ALL: [SettingsTab; 10] = [
         SettingsTab::General,
         SettingsTab::Appearance,
         SettingsTab::Tabs,
@@ -389,7 +539,6 @@ impl SettingsTab {
         SettingsTab::Extensions,
         SettingsTab::Agents,
         SettingsTab::Shortcuts,
-        SettingsTab::Ai,
         SettingsTab::About,
     ];
 
@@ -402,9 +551,8 @@ impl SettingsTab {
             SettingsTab::Passwords => "Passwords",
             SettingsTab::Privacy => "Privacy",
             SettingsTab::Extensions => "Extensions",
-            SettingsTab::Agents => "Agents & MCP",
+            SettingsTab::Agents => "AI & Agents",
             SettingsTab::Shortcuts => "Shortcuts",
-            SettingsTab::Ai => "AI",
             SettingsTab::About => "About",
         }
     }
@@ -516,14 +664,24 @@ pub struct RelayApp {
     ai_model: String,
     ai_key_draft: String,
     ai_focus: u8,
+    /// Character index of the editing caret inside the focused AI Settings field.
+    ai_cursor: usize,
+    /// Whether the entire focused AI Settings field is selected (⌘A).
+    ai_selected_all: bool,
     ai_has_key: bool,
     /// Send visible page text as AI context (opt-out privacy switch).
     ai_page_context: bool,
     ai_chat: Option<AiChat>,
-    /// Whether the docked Agent sidebar's chat composer currently owns typing.
+    /// Whether the docked Agent panel's API chat composer currently owns typing.
     agent_input_focused: bool,
-    /// Whether the MCP & permissions drawer in the Agent sidebar is expanded.
-    agent_mcp_expanded: bool,
+    /// Active mode inside the dockable Agent panel (`Web` | `API` | `MCP`).
+    agent_mode: AgentMode,
+    /// Active Web AI service inside `AgentMode::Web` (Claude / ChatGPT / Gemini).
+    web_ai_provider: WebAiProvider,
+    /// Which window edge the Agent panel is docked to (Left / Right / Top / Bottom).
+    agent_edge: tabstrip::Placement,
+    /// Ordering when both Tabs and Agent are docked on the same edge.
+    stack_order: StackOrder,
     tab_switcher: Option<TabSwitcher>,
     ai_stream: Option<std::sync::mpsc::Receiver<relay_extensions::ai::StreamEvent>>,
     ai_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -567,9 +725,8 @@ pub struct RelayApp {
     confirm_clear_history: bool,
     confirm_clear_site_data: bool,
     sources: Sources,
+    /// Whether the dockable Agent panel is currently open.
     inspector_open: bool,
-    sidebar_tab: SidebarTab,
-    connect_open: bool,
     connect_detected: Vec<(mcp_config::Client, bool)>,
     connect_copied: Option<(mcp_config::Client, Instant)>,
     downloads_open: bool,
@@ -580,14 +737,6 @@ pub struct RelayApp {
     float_tabs: std::rc::Rc<std::cell::RefCell<HashMap<TabId, bool>>>,
     /// History/Bookmarks modal; `None` when closed.
     library: Option<Library>,
-    panel: Panel,
-    tree: Tree,
-    tree_epoch: u64,
-    inspector_cache: Option<InspectorCache>,
-    console_min: ConsoleLevel,
-    network_failed_only: bool,
-    selected_element: Option<(TabId, u64, NodeId)>,
-    selected_network: Option<(TabId, u64, String)>,
     split: Option<TabId>,
     closed: Vec<String>,
     hints: Option<Hints>,
@@ -753,8 +902,17 @@ impl RelayApp {
             .as_ref()
             .and_then(|s| s.setting("ai_model").ok().flatten())
             .unwrap_or_else(|| relay_extensions::ai::DEFAULT_MODEL.to_string());
+        let ai_cursor = ai_endpoint.chars().count();
         let ai_has_key = ai_key(store.as_ref()).is_some();
         let ai_page_context = setting_enabled(store.as_ref().and_then(|s| s.setting("ai_page_context").ok().flatten()).as_deref());
+        let agent_mode = AgentMode::parse(store.as_ref().and_then(|s| s.setting("agent_mode").ok().flatten()).as_deref());
+        let web_ai_provider = WebAiProvider::parse(store.as_ref().and_then(|s| s.setting("web_ai_provider").ok().flatten()).as_deref());
+        let agent_edge = store
+            .as_ref()
+            .and_then(|s| s.setting("agent_panel_edge").ok().flatten())
+            .and_then(|v| tabstrip::Placement::parse(&v))
+            .unwrap_or(tabstrip::Placement::Right);
+        let stack_order = StackOrder::parse(store.as_ref().and_then(|s| s.setting("dock_stack_order").ok().flatten()).as_deref());
         let extension_toolbar = setting_enabled(store.as_ref().and_then(|s| s.setting("extension_toolbar").ok().flatten()).as_deref());
         let sync_folder = store.as_ref().and_then(|s| s.setting("sync_folder").ok().flatten()).unwrap_or_default();
         let bookmarks_icons_only = setting_on("bookmarks_icons_only");
@@ -861,11 +1019,16 @@ impl RelayApp {
             ai_model,
             ai_key_draft: String::new(),
             ai_focus: 0,
+            ai_cursor,
+            ai_selected_all: false,
             ai_has_key,
             ai_page_context,
             ai_chat: Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None }),
             agent_input_focused: false,
-            agent_mcp_expanded: false,
+            agent_mode,
+            web_ai_provider,
+            agent_edge,
+            stack_order,
             tab_switcher: None,
             ai_stream: None,
             ai_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -898,8 +1061,6 @@ impl RelayApp {
             confirm_clear_site_data: false,
             sources: Sources::default(),
             inspector_open: false,
-            sidebar_tab: SidebarTab::Inspector,
-            connect_open: false,
             connect_detected: vec![],
             connect_copied: None,
             downloads_open: false,
@@ -908,14 +1069,6 @@ impl RelayApp {
             reader_tabs: HashSet::new(),
             float_tabs: std::rc::Rc::default(),
             library: None,
-            panel: Panel::Elements,
-            tree: Tree::default(),
-            tree_epoch: 0,
-            inspector_cache: None,
-            console_min: ConsoleLevel::Log,
-            network_failed_only: false,
-            selected_element: None,
-            selected_network: None,
             split: None,
             closed: vec![],
             hints: None,
@@ -1320,7 +1473,9 @@ impl RelayApp {
                 }
                 relay_bridge::ShellChange::Sidebar { open, tab } => {
                     self.inspector_open = open;
-                    self.sidebar_tab = if tab == "agents" { SidebarTab::Agent } else { SidebarTab::Inspector };
+                    if !tab.is_empty() {
+                        self.agent_mode = AgentMode::parse(Some(&tab));
+                    }
                     shell_changed = true;
                 }
                 relay_bridge::ShellChange::Widget { title, body } => {
@@ -1757,8 +1912,10 @@ impl RelayApp {
                 self.site_card = None;
             }
         }
-        if let Some(space) = self.hub.lock().tab_space(tab).map(str::to_string) {
-            if self.hub.lock().current_space() != space {
+        let tab_space = self.hub.lock().tab_space(tab).map(str::to_string);
+        if let Some(space) = tab_space {
+            let current_space = self.hub.lock().current_space().to_string();
+            if current_space != space {
                 self.hub.update(|h| h.set_current_space(&space));
                 self.persist_active_space();
             }
@@ -1798,7 +1955,6 @@ impl RelayApp {
             || self.settings_open
             || self.library.is_some()
             || self.shortcuts.is_some()
-            || self.connect_open
             || self.downloads_open
             || self.group_prompt.is_some()
             || self.space_prompt.is_some()
@@ -1815,7 +1971,7 @@ impl RelayApp {
         if self.active() != Some(tab)
             || self.has_modal_overlay()
             || self.hints.is_some()
-            || (self.inspector_open && self.sidebar_tab == SidebarTab::Agent && self.agent_input_focused)
+            || (self.inspector_open && self.agent_mode == AgentMode::Api && self.agent_input_focused)
         {
             self.focus_pending = None;
             return;
@@ -2054,20 +2210,149 @@ impl RelayApp {
     }
 
     pub(super) fn toggle_agent_sidebar(&mut self, cx: &mut Context<Self>) {
-        if self.inspector_open && self.sidebar_tab == SidebarTab::Agent {
+        if self.inspector_open {
             self.inspector_open = false;
             self.agent_input_focused = false;
-            self.hub.set_sidebar(false, self.sidebar_tab.as_str());
+            self.web.borrow().layout_companion(None);
+            self.hub.set_sidebar(false, self.agent_mode.as_str());
             self.focus_active_page();
         } else {
             self.inspector_open = true;
-            self.sidebar_tab = SidebarTab::Agent;
-            self.hub.set_sidebar(true, self.sidebar_tab.as_str());
+            self.hub.set_sidebar(true, self.agent_mode.as_str());
             if self.ai_chat.is_none() {
                 self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
             }
         }
         cx.notify();
+    }
+
+    pub(super) fn set_agent_mode(&mut self, mode: AgentMode, cx: &mut Context<Self>) {
+        self.agent_mode = mode;
+        if mode != AgentMode::Api {
+            self.agent_input_focused = false;
+        }
+        if mode != AgentMode::Web {
+            self.web.borrow().layout_companion(None);
+        }
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("agent_mode", mode.as_str());
+        }
+        self.hub.set_sidebar(self.inspector_open, mode.as_str());
+        cx.notify();
+    }
+
+    pub(super) fn set_web_ai_provider(&mut self, provider: WebAiProvider, cx: &mut Context<Self>) {
+        self.web_ai_provider = provider;
+        if let Some(store) = &self.store {
+            let _ = store.set_setting("web_ai_provider", provider.as_str());
+        }
+        self.web.borrow_mut().set_companion_url(provider.url());
+        cx.notify();
+    }
+
+    pub(super) fn dock_panel(
+        &mut self,
+        panel: PanelKind,
+        edge: tabstrip::Placement,
+        stack: Option<StackOrder>,
+        cx: &mut Context<Self>,
+    ) {
+        match panel {
+            PanelKind::Tabs => {
+                self.strip.placement = edge;
+                self.strip.folded = false;
+                self.persist_strip();
+            }
+            PanelKind::Agent => {
+                self.agent_edge = edge;
+                self.inspector_open = true;
+                if let Some(store) = &self.store {
+                    let _ = store.set_setting("agent_panel_edge", edge.as_str());
+                }
+            }
+        }
+        if let Some(order) = stack {
+            self.stack_order = order;
+            if let Some(store) = &self.store {
+                let _ = store.set_setting("dock_stack_order", order.as_str());
+            }
+        }
+        let detail = if self.strip.placement == self.agent_edge && !self.strip.folded && self.inspector_open {
+            match (panel, self.stack_order) {
+                (PanelKind::Tabs, StackOrder::TabsFirst) | (PanelKind::Agent, StackOrder::AgentFirst) => {
+                    if edge.is_vertical() { " (top)" } else { " (left)" }
+                }
+                _ => {
+                    if edge.is_vertical() { " (bottom)" } else { " (right)" }
+                }
+            }
+        } else {
+            ""
+        };
+        self.toast(format!("{} docked on {}{}", panel.label(), edge.label(), detail));
+        cx.notify();
+    }
+
+    pub(super) fn refresh_connect_detected(&mut self) {
+        let mut clients: Vec<(mcp_config::Client, bool)> = mcp_config::Client::ALL.iter().map(|&c| (c, c.is_installed())).collect();
+        clients.sort_by_key(|(_, detected)| !*detected);
+        self.connect_detected = clients;
+    }
+
+    pub(super) fn import_passwords_csv(&mut self, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose exported Chrome Passwords CSV".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let picked = rx.await.ok().and_then(Result::ok).flatten().and_then(|mut paths| paths.pop());
+            let Some(path) = picked else { return };
+            let parsed = relay_extensions::chrome_import::read_password_csv(&path);
+            let _ = this.update(cx, |app, cx| {
+                match parsed {
+                    Err(e) => app.toast(format!("Could not read password CSV: {e}")),
+                    Ok(creds) if creds.is_empty() => app.toast("No passwords found in that CSV"),
+                    Ok(creds) => {
+                        #[cfg(target_os = "macos")]
+                        {
+                            let profile = std::env::var("RELAY_PROFILE")
+                                .ok()
+                                .filter(|p| !p.is_empty())
+                                .map(|p| format!("relay-profile:{p}"));
+                            let report = relay_extensions::mac::import_passwords(&creds, profile.as_deref());
+                            if let Some(store) = &app.store {
+                                for c in &creds {
+                                    if let Ok((origin, path_part)) = relay_extensions::login::Origin::parse_with_path(&c.url) {
+                                        let _ = store.record_saved_login(origin.host(), &c.username, &path_part, 0);
+                                    }
+                                }
+                            }
+                            if report.failed.is_empty() {
+                                app.toast(format!(
+                                    "Imported {} passwords into Keychain — delete the plaintext CSV when done",
+                                    report.saved
+                                ));
+                            } else {
+                                app.toast(format!(
+                                    "Imported {} of {} passwords ({} failed)",
+                                    report.saved,
+                                    creds.len(),
+                                    report.failed.len()
+                                ));
+                            }
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            app.toast(format!("Parsed {} passwords (Keychain import requires macOS)", creds.len()));
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(super) fn set_tab_strip_placement(&mut self, placement: tabstrip::Placement, cx: &mut Context<Self>) {
@@ -2431,12 +2716,62 @@ impl RelayApp {
             cx.notify();
             return;
         }
+        if self.settings_open && self.settings_tab == SettingsTab::Agents {
+            let max_len = match self.ai_focus {
+                0 => 300usize,
+                1 => 100usize,
+                _ => 400usize,
+            };
+            match action {
+                EditAction::SelectAll => {
+                    self.ai_selected_all = true;
+                    self.ai_cursor = self.ai_field_str().chars().count();
+                }
+                EditAction::Copy | EditAction::Cut => {
+                    let val = self.ai_field_str().to_string();
+                    if !val.is_empty() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(val));
+                    }
+                    if action == EditAction::Cut {
+                        self.ai_field_mut().clear();
+                        self.ai_cursor = 0;
+                        self.ai_selected_all = false;
+                    }
+                }
+                EditAction::Paste => {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                        let clean: String = text.lines().next().unwrap_or("").trim().to_string();
+                        if !clean.is_empty() {
+                            let mut cursor = self.ai_cursor;
+                            let mut selected_all = self.ai_selected_all;
+                            ai_text_insert(self.ai_field_mut(), &mut cursor, &mut selected_all, &clean, max_len);
+                            self.ai_cursor = cursor;
+                            self.ai_selected_all = selected_all;
+                        }
+                    }
+                }
+                EditAction::Undo | EditAction::Redo => {}
+            }
+            cx.notify();
+            return;
+        }
+        if self.settings_open && self.settings_tab == SettingsTab::Extensions {
+            if action == EditAction::Paste {
+                if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                    let clean = text.lines().next().unwrap_or("").trim();
+                    let remain = 300usize.saturating_sub(self.ext_input.chars().count());
+                    self.ext_input.extend(clean.chars().take(remain));
+                }
+            }
+            cx.notify();
+            return;
+        }
         if self.agent_input_focused && !self.web.borrow().shell_is_focused() {
             self.agent_input_focused = false;
         }
         if agent_composer_captures_keys(
             self.inspector_open,
-            self.sidebar_tab,
+            self.agent_mode,
             self.agent_input_focused,
             self.has_modal_overlay(),
             self.find.is_some(),
@@ -2659,10 +2994,37 @@ impl RelayApp {
         }
     }
 
+    pub(super) fn ai_field_str(&self) -> &str {
+        match self.ai_focus {
+            0 => &self.ai_endpoint,
+            1 => &self.ai_model,
+            _ => &self.ai_key_draft,
+        }
+    }
+
+    fn ai_field_mut(&mut self) -> &mut String {
+        match self.ai_focus {
+            0 => &mut self.ai_endpoint,
+            1 => &mut self.ai_model,
+            _ => &mut self.ai_key_draft,
+        }
+    }
+
+    pub(super) fn focus_ai_field(&mut self, focus: u8, cx: &mut Context<Self>) {
+        self.ai_focus = focus.min(2);
+        self.ai_cursor = self.ai_field_str().chars().count();
+        self.ai_selected_all = false;
+        self.web.borrow().focus_shell();
+        cx.notify();
+    }
+
     fn set_ai_preset(&mut self, endpoint: &str, model: &str, cx: &mut Context<Self>) {
         self.ai_endpoint = endpoint.to_string();
         self.ai_model = model.to_string();
         self.ai_focus = 2;
+        self.ai_cursor = self.ai_key_draft.chars().count();
+        self.ai_selected_all = false;
+        self.web.borrow().focus_shell();
         cx.notify();
     }
 
@@ -2675,8 +3037,14 @@ impl RelayApp {
         self.ai_endpoint = endpoint;
         self.ai_model = self.ai_model.trim().to_string();
         if self.ai_model.is_empty() {
-            self.ai_model = relay_extensions::ai::DEFAULT_MODEL.to_string();
+            self.ai_model = if relay_extensions::ai::is_anthropic_endpoint(&self.ai_endpoint) {
+                relay_extensions::ai::ANTHROPIC_DEFAULT_MODEL.to_string()
+            } else {
+                relay_extensions::ai::DEFAULT_MODEL.to_string()
+            };
         }
+        self.ai_cursor = self.ai_field_str().chars().count();
+        self.ai_selected_all = false;
         if let Some(store) = &self.store {
             let _ = store.set_setting("ai_endpoint", &self.ai_endpoint);
             let _ = store.set_setting("ai_model", &self.ai_model);
@@ -2741,8 +3109,9 @@ impl RelayApp {
     fn open_ai_chat(&mut self, cx: &mut Context<Self>) {
         self.settings_open = false;
         self.inspector_open = true;
-        self.sidebar_tab = SidebarTab::Agent;
-        self.hub.set_sidebar(true, self.sidebar_tab.as_str());
+        self.agent_mode = AgentMode::Api;
+        self.web.borrow().layout_companion(None);
+        self.hub.set_sidebar(true, self.agent_mode.as_str());
         self.ai_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
         if self.ai_chat.is_none() {
             self.ai_chat = Some(AiChat { messages: Vec::new(), input: String::new(), busy: false, error: None, pending: None, pending_at: None });
@@ -2846,7 +3215,7 @@ impl RelayApp {
         let Some(key) = ai_key(self.store.as_ref()) else {
             if let Some(chat) = self.ai_chat.as_mut() {
                 chat.busy = false;
-                chat.error = Some("No API key; set one in Settings → AI".into());
+                chat.error = Some("No API key; set one in Settings → AI & Agents (or switch to Web mode for Claude/ChatGPT)".into());
             }
             cx.notify();
             return;
@@ -3539,7 +3908,6 @@ impl RelayApp {
             Ok(lib) => {
                 self.palette = None;
                 self.settings_open = false;
-                self.connect_open = false;
                 self.downloads_open = false;
                 self.find = None;
                 self.end_hints();
@@ -3654,7 +4022,6 @@ impl RelayApp {
         let Some(tab) = self.active() else { return };
         self.palette = None;
         self.library = None;
-        self.connect_open = false;
         self.agent_input_focused = false;
         self.end_hints();
         let (query, case_sensitive) = self.find.take().map(|f| (f.query, f.case_sensitive)).unwrap_or_default();
@@ -3732,7 +4099,6 @@ impl RelayApp {
 
     fn open_palette(&mut self, prefill: Option<String>, new_tab: bool) {
         self.library = None;
-        self.connect_open = false;
         self.downloads_open = false;
         self.settings_open = false;
         self.find = None;
@@ -3769,9 +4135,11 @@ impl RelayApp {
         } else {
             self.palette = None;
             self.library = None;
-            self.connect_open = false;
             self.downloads_open = false;
             self.confirm_clear_history = false;
+            self.refresh_connect_detected();
+            self.ai_cursor = self.ai_field_str().chars().count();
+            self.ai_selected_all = false;
             self.settings_open = true;
             self.web.borrow().focus_shell();
         }
@@ -3825,18 +4193,19 @@ impl RelayApp {
             Command::Back => active.into_iter().for_each(|t| self.web.borrow_mut().apply(BrowserRequest::GoBack(t))),
             Command::Forward => active.into_iter().for_each(|t| self.web.borrow_mut().apply(BrowserRequest::GoForward(t))),
             Command::ToggleInspector => {
-                self.inspector_open = !self.inspector_open;
-                self.agent_input_focused = false;
-                self.hub.set_sidebar(self.inspector_open, self.sidebar_tab.as_str());
-                if self.inspector_open {
-                    if let Some(t) = active {
-                        self.web.borrow_mut().apply(BrowserRequest::RefreshCookies(t));
-                    }
+                if let Some(t) = active {
+                    self.web.borrow().toggle_web_inspector(t);
                 } else {
-                    self.focus_active_page();
+                    self.toast("Open a page to inspect it");
                 }
             }
-            Command::WebInspector => active.into_iter().for_each(|t| self.web.borrow_mut().apply(BrowserRequest::OpenWebInspector(t))),
+            Command::WebInspector => {
+                if let Some(t) = active {
+                    self.web.borrow_mut().apply(BrowserRequest::OpenWebInspector(t));
+                } else {
+                    self.toast("Open a page to inspect it");
+                }
+            }
             Command::ToggleSplit => self.toggle_split(),
             Command::LinkHints => self.start_hints(),
             Command::Settings => self.toggle_settings(),
@@ -3865,10 +4234,11 @@ impl RelayApp {
             Command::ToggleSiteBlocking => self.toggle_site_blocking(),
             Command::ToggleCompatMode => self.toggle_compat_mode(),
             Command::CloseDuplicateTabs => self.close_duplicate_tabs(),
-            Command::AskAi => self.open_ai_chat(cx),
+            Command::AskAi => self.toggle_agent_sidebar(cx),
             Command::ShowTabSwitcher => self.open_tab_switcher(cx),
             Command::DuplicateTab => {
-                if let Some(url) = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone())) {
+                let dup_url = self.active().and_then(|t| self.hub.lock().tab(t).map(|s| s.url.clone()));
+                if let Some(url) = dup_url {
                     self.open_url(url, true);
                 }
             }
@@ -4105,7 +4475,7 @@ impl RelayApp {
         }
         if agent_composer_captures_keys(
             self.inspector_open,
-            self.sidebar_tab,
+            self.agent_mode,
             self.agent_input_focused,
             self.has_modal_overlay(),
             self.find.is_some(),
@@ -4263,14 +4633,6 @@ impl RelayApp {
             cx.notify();
             return;
         }
-        if self.connect_open {
-            if k.key == "escape" {
-                self.close_connect();
-            }
-            cx.stop_propagation();
-            cx.notify();
-            return;
-        }
         if self.downloads_open {
             let len = self.hub.lock().downloads_in_panel_order().len();
             self.downloads_selected = self.downloads_selected.min(len.saturating_sub(1));
@@ -4414,31 +4776,77 @@ impl RelayApp {
         if self.settings_open {
             match k.key.as_str() {
                 "escape" => self.close_settings(),
-                _ if self.settings_tab == SettingsTab::Ai => match k.key.as_str() {
-                    "enter" => self.save_ai_settings(cx),
-                    "tab" => self.ai_focus = (self.ai_focus + 1) % 3,
-                    "backspace" => match self.ai_focus {
-                        0 => {
-                            self.ai_endpoint.pop();
+                _ if self.settings_tab == SettingsTab::Agents => {
+                    let max_len = match self.ai_focus {
+                        0 => 300usize,
+                        1 => 100usize,
+                        _ => 400usize,
+                    };
+                    match k.key.as_str() {
+                        "enter" => self.save_ai_settings(cx),
+                        "tab" => {
+                            let next = if k.modifiers.shift { (self.ai_focus + 2) % 3 } else { (self.ai_focus + 1) % 3 };
+                            self.focus_ai_field(next, cx);
                         }
-                        1 => {
-                            self.ai_model.pop();
+                        "left" => {
+                            let len = self.ai_field_str().chars().count();
+                            let cur = self.ai_cursor.min(len);
+                            if self.ai_selected_all || k.modifiers.secondary() {
+                                self.ai_cursor = 0;
+                            } else {
+                                self.ai_cursor = cur.saturating_sub(1);
+                            }
+                            self.ai_selected_all = false;
+                        }
+                        "right" => {
+                            let len = self.ai_field_str().chars().count();
+                            let cur = self.ai_cursor.min(len);
+                            if self.ai_selected_all || k.modifiers.secondary() {
+                                self.ai_cursor = len;
+                            } else {
+                                self.ai_cursor = (cur + 1).min(len);
+                            }
+                            self.ai_selected_all = false;
+                        }
+                        "home" => {
+                            self.ai_cursor = 0;
+                            self.ai_selected_all = false;
+                        }
+                        "end" => {
+                            self.ai_cursor = self.ai_field_str().chars().count();
+                            self.ai_selected_all = false;
+                        }
+                        "backspace" => {
+                            let mut cursor = self.ai_cursor;
+                            let mut selected_all = self.ai_selected_all;
+                            if k.modifiers.secondary() || k.modifiers.alt {
+                                self.ai_field_mut().clear();
+                                cursor = 0;
+                                selected_all = false;
+                            } else {
+                                ai_text_backspace(self.ai_field_mut(), &mut cursor, &mut selected_all);
+                            }
+                            self.ai_cursor = cursor;
+                            self.ai_selected_all = selected_all;
+                        }
+                        "delete" => {
+                            let mut cursor = self.ai_cursor;
+                            let mut selected_all = self.ai_selected_all;
+                            ai_text_delete(self.ai_field_mut(), &mut cursor, &mut selected_all);
+                            self.ai_cursor = cursor;
+                            self.ai_selected_all = selected_all;
                         }
                         _ => {
-                            self.ai_key_draft.pop();
-                        }
-                    },
-                    _ => {
-                        if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
-                            match self.ai_focus {
-                                0 if self.ai_endpoint.chars().count() < 300 => self.ai_endpoint.push_str(c),
-                                1 if self.ai_model.chars().count() < 100 => self.ai_model.push_str(c),
-                                2 if self.ai_key_draft.chars().count() < 400 => self.ai_key_draft.push_str(c),
-                                _ => {}
+                            if let Some(c) = k.key_char.as_deref().filter(|_| !k.modifiers.secondary() && !k.modifiers.control) {
+                                let mut cursor = self.ai_cursor;
+                                let mut selected_all = self.ai_selected_all;
+                                ai_text_insert(self.ai_field_mut(), &mut cursor, &mut selected_all, c, max_len);
+                                self.ai_cursor = cursor;
+                                self.ai_selected_all = selected_all;
                             }
                         }
                     }
-                },
+                }
                 _ if self.settings_tab == SettingsTab::Extensions => match k.key.as_str() {
                     "enter" => self.install_extension_from_input(cx),
                     "backspace" => {
@@ -4584,6 +4992,17 @@ impl RelayApp {
                 }
             }
             "tabs_folded" => self.strip.folded = setting_enabled(Some(value)),
+            "agent_panel_edge" => {
+                if let Some(placement) = tabstrip::Placement::parse(value) {
+                    self.agent_edge = placement;
+                }
+            }
+            "dock_stack_order" => self.stack_order = StackOrder::parse(Some(value)),
+            "agent_mode" => self.agent_mode = AgentMode::parse(Some(value)),
+            "web_ai_provider" => {
+                self.web_ai_provider = WebAiProvider::parse(Some(value));
+                self.web.borrow_mut().set_companion_url(self.web_ai_provider.url());
+            }
             "bottom_bar" => {
                 self.status_bar_position = if setting_enabled(Some(value)) {
                     StatusBarPosition::Bottom
@@ -4681,7 +5100,6 @@ impl RelayApp {
         self.settings_open = false;
         self.library = None;
         self.shortcuts = None;
-        self.connect_open = false;
         self.find = None;
         self.end_hints();
         self.downloads_open = true;
@@ -4695,32 +5113,26 @@ impl RelayApp {
         self.focus_active_page();
     }
 
-    fn open_connect(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_connect(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
-        self.settings_open = false;
         self.library = None;
         self.shortcuts = None;
         self.downloads_open = false;
         self.find = None;
         self.end_hints();
-        let mut clients: Vec<(mcp_config::Client, bool)> = mcp_config::Client::ALL.iter().map(|&c| (c, c.is_installed())).collect();
-        clients.sort_by_key(|(_, detected)| !*detected);
-        self.connect_detected = clients;
-        self.connect_open = true;
+        self.refresh_connect_detected();
+        self.settings_tab = SettingsTab::Agents;
+        self.ai_cursor = self.ai_field_str().chars().count();
+        self.ai_selected_all = false;
+        self.settings_open = true;
         self.web.borrow().focus_shell();
         cx.notify();
-    }
-
-    fn close_connect(&mut self) {
-        self.connect_open = false;
-        self.focus_active_page();
     }
 
     fn open_shortcuts(&mut self, cx: &mut Context<Self>) {
         self.palette = None;
         self.settings_open = false;
         self.library = None;
-        self.connect_open = false;
         self.downloads_open = false;
         self.find = None;
         self.end_hints();
@@ -4840,9 +5252,12 @@ impl Render for RelayApp {
         let visible = self.visible_tabs();
         self.placements.borrow_mut().retain(|(id, _)| visible.contains(id));
         let overlay_open = self.has_modal_overlay();
-        if overlay_open {
-            // Keep native views from covering the palette or settings overlay.
+        let dragging_panel = cx.has_active_drag();
+        let hide_native = overlay_open || dragging_panel;
+        if hide_native {
+            // Keep native views from covering overlays or intercepting panel drops.
             self.web.borrow().layout(&[]);
+            self.web.borrow().layout_companion(None);
             self.placements.borrow_mut().clear();
         }
         let t = self.theme;
@@ -4855,11 +5270,28 @@ impl Render for RelayApp {
         // back rather than hiding a tab the user cannot reach.
         let show_strip = !self.app_mode || self.hub.lock().tabs().count() > 1;
         let strip_visible = show_strip && !self.strip.folded;
-        let has_left_strip = strip_visible && self.strip.placement == tabstrip::Placement::Left;
-        let has_right_strip = strip_visible && self.strip.placement == tabstrip::Placement::Right;
-        let has_top_strip = strip_visible && self.strip.placement == tabstrip::Placement::Top;
+        let agent_visible = !self.app_mode && self.inspector_open;
+        if !agent_visible || self.agent_mode != AgentMode::Web || hide_native {
+            self.web.borrow().layout_companion(None);
+        }
 
-        let browser_card = if overlay_open {
+        let panels_on = |edge: tabstrip::Placement| -> Vec<PanelKind> {
+            let has_tabs = strip_visible && self.strip.placement == edge;
+            let has_agent = agent_visible && self.agent_edge == edge;
+            match (has_tabs, has_agent, self.stack_order) {
+                (true, true, StackOrder::TabsFirst) => vec![PanelKind::Tabs, PanelKind::Agent],
+                (true, true, StackOrder::AgentFirst) => vec![PanelKind::Agent, PanelKind::Tabs],
+                (true, false, _) => vec![PanelKind::Tabs],
+                (false, true, _) => vec![PanelKind::Agent],
+                (false, false, _) => vec![],
+            }
+        };
+        let left_panels = panels_on(tabstrip::Placement::Left);
+        let right_panels = panels_on(tabstrip::Placement::Right);
+        let top_panels = panels_on(tabstrip::Placement::Top);
+        let bottom_panels = panels_on(tabstrip::Placement::Bottom);
+
+        let browser_card = if hide_native {
             div().flex_1().h_full().bg(t.page).into_any_element()
         } else {
             let ext_bar = if self.extension_toolbar && !self.app_mode { self.render_extension_toolbar(cx) } else { None };
@@ -4919,47 +5351,116 @@ impl Render for RelayApp {
             }
         };
 
-        // Frame the middle browser card on the unified shell canvas with
-        // balanced margins, clearing macOS traffic lights when the left strip
-        // is folded or placed on the right.
+        // Leave a 34px top titlebar clearance above the center card whenever
+        // there is no top dock AND either the left or right sidebar toggle
+        // pill is floating in the top corner (or macOS traffic lights need space),
+        // so WKWebView never overlaps corner sidebar toggle buttons.
+        let need_top_clearance = top_panels.is_empty()
+            && (left_panels.is_empty()
+                || (show_strip && self.strip.folded)
+                || !agent_visible);
         let stage = if self.app_mode {
             div().flex_1().min_w_0().h_full().flex().overflow_hidden().child(browser_card)
         } else {
-            let pad_top = if !has_left_strip && !has_top_strip { px(32.) } else if has_top_strip { px(2.) } else { px(8.) };
-            let pad_left = if has_left_strip { px(0.) } else { px(8.) };
-            let pad_right = if has_right_strip || self.inspector_open { px(0.) } else { px(8.) };
+            let pad_top = if !top_panels.is_empty() {
+                px(2.)
+            } else if need_top_clearance {
+                px(34.)
+            } else {
+                px(8.)
+            };
+            let pad_bottom = if !bottom_panels.is_empty() { px(2.) } else { px(8.) };
+            let pad_left = if !left_panels.is_empty() { px(0.) } else { px(8.) };
+            let pad_right = if !right_panels.is_empty() { px(0.) } else { px(8.) };
             div()
                 .flex_1()
                 .min_w_0()
                 .h_full()
                 .flex()
                 .pt(pad_top)
-                .pb(px(8.))
+                .pb(pad_bottom)
                 .pl(pad_left)
                 .pr(pad_right)
                 .overflow_hidden()
                 .child(browser_card)
         };
 
-        // Horizontal workspace: left sidebar, elevated center card, optional
-        // right tab strip, and right Agent/Inspector sidebar always sit side-by-side.
+        let render_edge_group = |this: &mut Self, edge: tabstrip::Placement, panels: &[PanelKind], cx: &mut Context<Self>| -> Option<gpui::AnyElement> {
+            if panels.is_empty() {
+                return None;
+            }
+            let stacked = panels.len() > 1;
+            let vertical = edge.is_vertical();
+            if !stacked {
+                let el = match panels[0] {
+                    PanelKind::Tabs => this.render_tab_bar(false, cx),
+                    PanelKind::Agent => this.render_inspector(false, cx),
+                };
+                return Some(el);
+            }
+            let mut container = if vertical {
+                let width = if panels.contains(&PanelKind::Agent) { 300. } else { this.strip.width() };
+                div()
+                    .w(px(width))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .pt(if edge == tabstrip::Placement::Left { px(34.) } else { px(8.) })
+                    .pb_1()
+                    .overflow_hidden()
+            } else {
+                let height = if panels.contains(&PanelKind::Agent) { 240. } else { this.strip.height() };
+                div()
+                    .w_full()
+                    .h(px(height))
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .pl(if edge == tabstrip::Placement::Top { px(78.) } else { px(8.) })
+                    .pr_2()
+                    .py_1()
+                    .overflow_hidden()
+            };
+            for (idx, kind) in panels.iter().enumerate() {
+                if idx > 0 {
+                    container = container.child(if vertical {
+                        div().h(px(1.)).mx_2().bg(t.border)
+                    } else {
+                        div().w(px(1.)).my_1().bg(t.border)
+                    });
+                }
+                let child = match kind {
+                    PanelKind::Tabs => this.render_tab_bar(true, cx),
+                    PanelKind::Agent => this.render_inspector(true, cx),
+                };
+                container = container.child(div().flex_1().min_w_0().min_h_0().flex().overflow_hidden().child(child));
+            }
+            Some(container.into_any_element())
+        };
+
+        let left_el = render_edge_group(self, tabstrip::Placement::Left, &left_panels, cx);
+        let right_el = render_edge_group(self, tabstrip::Placement::Right, &right_panels, cx);
+        let top_el = render_edge_group(self, tabstrip::Placement::Top, &top_panels, cx);
+        let bottom_el = render_edge_group(self, tabstrip::Placement::Bottom, &bottom_panels, cx);
+
         let mut workspace = div().flex_1().min_h_0().flex().overflow_hidden();
-        if has_left_strip {
-            workspace = workspace.child(self.render_tab_bar(cx));
+        if let Some(el) = left_el {
+            workspace = workspace.child(el);
         }
         workspace = workspace.child(stage);
-        if has_right_strip {
-            workspace = workspace.child(self.render_tab_bar(cx));
-        }
-        if self.inspector_open {
-            workspace = workspace.child(self.render_inspector(cx));
+        if let Some(el) = right_el {
+            workspace = workspace.child(el);
         }
 
         let mut main = div().flex_1().min_h_0().flex().flex_col().overflow_hidden();
-        if has_top_strip {
-            main = main.child(self.render_tab_bar(cx));
+        if let Some(el) = top_el {
+            main = main.child(el);
         }
         main = main.child(workspace);
+        if let Some(el) = bottom_el {
+            main = main.child(el);
+        }
 
         let mut root = div()
             .key_context("Relay")
@@ -5126,7 +5627,7 @@ impl Render for RelayApp {
                 app.toggle_float_panel(cx);
             }))
             .on_action(cx.listener(|app, _: &AskAi, _, cx| {
-                app.open_ai_chat(cx);
+                app.toggle_agent_sidebar(cx);
             }))
             .on_action(cx.listener(|app, _: &ShowTabSwitcher, _, cx| {
                 app.open_tab_switcher(cx);
@@ -5179,13 +5680,17 @@ impl Render for RelayApp {
         }
         select!(SelectTab1 => 0, SelectTab2 => 1, SelectTab3 => 2, SelectTab4 => 3, SelectTab5 => 4, SelectTab6 => 5, SelectTab7 => 6, SelectTab8 => 7, SelectTab9 => 8);
         root = root.child(main);
-        // The folded-strip pill is a small overlay over the page, not part of
-        // the layout: show it on a page too, or hiding the status bar leaves
-        // ⌘S as the only way back.
-        if show_strip && self.strip.folded && !overlay_open && !self.app_mode {
-            root = root.child(self.render_folded_strip(cx));
+        // Edge-matched Apple sidebar toggle icons whenever either panel is hidden,
+        // sitting cleanly in the shell top strip above the browser card.
+        if !hide_native && !self.app_mode {
+            for toggle in self.render_corner_toggles(show_strip, cx) {
+                root = root.child(toggle);
+            }
         }
-        if self.strip.placement == tabstrip::Placement::Top && self.tab_menu.is_some() && !overlay_open {
+        if dragging_panel && !self.app_mode {
+            root = root.child(self.render_dock_drop_overlay(cx));
+        }
+        if !self.strip.placement.is_vertical() && self.tab_menu.is_some() && !hide_native {
             if let Some(menu) = self.render_floating_tab_menu(cx) {
                 root = root.child(menu);
             }
@@ -5222,9 +5727,6 @@ impl Render for RelayApp {
         }
         if let Some(editor) = &self.shortcuts {
             root = root.child(self.render_shortcuts(editor, cx));
-        }
-        if self.connect_open {
-            root = root.child(self.render_connect(cx));
         }
         if self.downloads_open {
             root = root.child(self.render_downloads(cx));
@@ -5564,26 +6066,68 @@ pub(crate) fn setting_enabled(value: Option<&str>) -> bool {
     !matches!(value.map(|v| v.trim().to_ascii_lowercase()).as_deref(), Some("off" | "false" | "0"))
 }
 
-fn next_console_min(level: ConsoleLevel) -> ConsoleLevel {
-    match level {
-        ConsoleLevel::Log | ConsoleLevel::Info => ConsoleLevel::Warn,
-        ConsoleLevel::Warn => ConsoleLevel::Error,
-        ConsoleLevel::Error => ConsoleLevel::Debug,
-        ConsoleLevel::Debug => ConsoleLevel::Log,
-    }
+fn ai_char_to_byte(s: &str, char_idx: usize) -> usize {
+    s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
 }
 
-fn console_filter_label(level: ConsoleLevel) -> &'static str {
-    match level {
-        ConsoleLevel::Log | ConsoleLevel::Info => "Log+",
-        ConsoleLevel::Warn => "Warn+",
-        ConsoleLevel::Error => "Errors",
-        ConsoleLevel::Debug => "All",
+pub(super) fn ai_text_insert(s: &mut String, cursor: &mut usize, selected_all: &mut bool, text: &str, max_chars: usize) {
+    if *selected_all {
+        s.clear();
+        *cursor = 0;
+        *selected_all = false;
     }
+    let cur_chars = s.chars().count();
+    let remain = max_chars.saturating_sub(cur_chars);
+    if remain == 0 || text.is_empty() {
+        return;
+    }
+    let clipped: String = text.chars().take(remain).collect();
+    let insert_chars = clipped.chars().count();
+    let pos = (*cursor).min(cur_chars);
+    let byte = ai_char_to_byte(s, pos);
+    s.insert_str(byte, &clipped);
+    *cursor = pos + insert_chars;
 }
 
-fn truncate(s: &str, n: usize) -> String {
-    if s.chars().count() > n { format!("{}…", s.chars().take(n).collect::<String>()) } else { s.to_string() }
+pub(super) fn ai_text_backspace(s: &mut String, cursor: &mut usize, selected_all: &mut bool) {
+    if *selected_all {
+        s.clear();
+        *cursor = 0;
+        *selected_all = false;
+        return;
+    }
+    let len = s.chars().count();
+    let pos = (*cursor).min(len);
+    if pos == 0 {
+        return;
+    }
+    let start = ai_char_to_byte(s, pos - 1);
+    let end = ai_char_to_byte(s, pos);
+    s.drain(start..end);
+    *cursor = pos - 1;
+}
+
+pub(super) fn ai_text_delete(s: &mut String, cursor: &mut usize, selected_all: &mut bool) {
+    if *selected_all {
+        s.clear();
+        *cursor = 0;
+        *selected_all = false;
+        return;
+    }
+    let len = s.chars().count();
+    let pos = (*cursor).min(len);
+    if pos >= len {
+        return;
+    }
+    let start = ai_char_to_byte(s, pos);
+    let end = ai_char_to_byte(s, pos + 1);
+    s.drain(start..end);
+}
+
+pub(super) fn ai_text_split_at_cursor(s: &str, cursor: usize) -> (&str, &str) {
+    let pos = cursor.min(s.chars().count());
+    let byte = ai_char_to_byte(s, pos);
+    s.split_at(byte)
 }
 
 fn now_unix() -> i64 {
@@ -6139,17 +6683,17 @@ fn favicon_candidate_urls(reply: Option<&serde_json::Value>, tab_host: &str) -> 
         .collect()
 }
 
-/// Whether the docked Agent chat composer currently owns shell key and edit
-/// commands (never while a modal, Find bar, Link Hints, or Inspector tab is active).
+/// Whether the docked Agent API chat composer currently owns shell key and edit
+/// commands (never while a modal, Find bar, Link Hints, or Web/MCP mode is active).
 fn agent_composer_captures_keys(
     inspector_open: bool,
-    sidebar_tab: SidebarTab,
+    agent_mode: AgentMode,
     agent_input_focused: bool,
     has_modal: bool,
     find_open: bool,
     hints_open: bool,
 ) -> bool {
-    inspector_open && sidebar_tab == SidebarTab::Agent && agent_input_focused && !has_modal && !find_open && !hints_open
+    inspector_open && agent_mode == AgentMode::Api && agent_input_focused && !has_modal && !find_open && !hints_open
 }
 
 /// True only for globally routable unicast IP addresses (rejects loopback,

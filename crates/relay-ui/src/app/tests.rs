@@ -931,12 +931,92 @@ fn bmp_dib_ico_decodes_to_valid_png_and_ssrf_favicon_urls_are_blocked() {
 }
 
 #[test]
-fn agent_composer_key_capture_yields_to_find_hints_modals_and_inspector() {
-    assert!(agent_composer_captures_keys(true, SidebarTab::Agent, true, false, false, false));
-    assert!(!agent_composer_captures_keys(false, SidebarTab::Agent, true, false, false, false), "closed sidebar");
-    assert!(!agent_composer_captures_keys(true, SidebarTab::Inspector, true, false, false, false), "inspector tab");
-    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, false, false, false, false), "unfocused input");
-    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, true, true, false, false), "modal overlay");
-    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, true, false, true, false), "find bar active");
-    assert!(!agent_composer_captures_keys(true, SidebarTab::Agent, true, false, false, true), "link hints active");
+fn agent_composer_key_capture_yields_to_find_hints_modals_and_other_modes() {
+    assert!(agent_composer_captures_keys(true, AgentMode::Api, true, false, false, false));
+    assert!(!agent_composer_captures_keys(false, AgentMode::Api, true, false, false, false), "closed sidebar");
+    assert!(!agent_composer_captures_keys(true, AgentMode::Web, true, false, false, false), "web AI mode");
+    assert!(!agent_composer_captures_keys(true, AgentMode::Mcp, true, false, false, false), "mcp mode");
+    assert!(!agent_composer_captures_keys(true, AgentMode::Api, false, false, false, false), "unfocused input");
+    assert!(!agent_composer_captures_keys(true, AgentMode::Api, true, true, false, false), "modal overlay");
+    assert!(!agent_composer_captures_keys(true, AgentMode::Api, true, false, true, false), "find bar active");
+    assert!(!agent_composer_captures_keys(true, AgentMode::Api, true, false, false, true), "link hints active");
+}
+
+#[test]
+fn ai_text_cursor_supports_mid_string_edit_delete_and_select_all() {
+    let mut s = "https://api.openai.com/v1".to_string();
+    let mut cur = 8;
+    let mut sel = false;
+
+    // Insert "sub." at index 8 (right after "https://")
+    ai_text_insert(&mut s, &mut cur, &mut sel, "sub.", 300);
+    assert_eq!(s, "https://sub.api.openai.com/v1");
+    assert_eq!(cur, 12);
+
+    // Backspace deletes '.' before cursor; Delete removes 'a' after cursor
+    ai_text_backspace(&mut s, &mut cur, &mut sel);
+    assert_eq!(s, "https://subapi.openai.com/v1");
+    assert_eq!(cur, 11);
+    ai_text_delete(&mut s, &mut cur, &mut sel);
+    assert_eq!(s, "https://subpi.openai.com/v1");
+    assert_eq!(cur, 11);
+
+    // Split at cursor renders text cleanly before and after the caret
+    assert_eq!(ai_text_split_at_cursor(&s, cur), ("https://sub", "pi.openai.com/v1"));
+
+    // Select-all + insert replaces the entire field cleanly
+    sel = true;
+    ai_text_insert(&mut s, &mut cur, &mut sel, "https://api.anthropic.com/v1", 300);
+    assert_eq!(s, "https://api.anthropic.com/v1");
+    assert_eq!(cur, s.chars().count());
+    assert!(!sel);
+
+    // Select-all + backspace clears the entire field
+    sel = true;
+    ai_text_backspace(&mut s, &mut cur, &mut sel);
+    assert!(s.is_empty());
+    assert_eq!(cur, 0);
+    assert!(!sel);
+}
+
+#[test]
+fn dock_and_agent_mode_settings_round_trip() {
+    for mode in AgentMode::ALL {
+        assert_eq!(AgentMode::parse(Some(mode.as_str())), mode);
+    }
+    assert_eq!(AgentMode::parse(Some("agents")), AgentMode::Mcp);
+    assert_eq!(AgentMode::parse(None), AgentMode::Web);
+
+    for provider in WebAiProvider::ALL {
+        assert_eq!(WebAiProvider::parse(Some(provider.as_str())), provider);
+        assert!(provider.url().starts_with("https://"));
+    }
+    assert_eq!(WebAiProvider::parse(None), WebAiProvider::Claude);
+
+    assert_eq!(StackOrder::parse(Some("tabs_first")), StackOrder::TabsFirst);
+    assert_eq!(StackOrder::parse(Some("agent_first")), StackOrder::AgentFirst);
+    assert_eq!(StackOrder::parse(None), StackOrder::TabsFirst);
+}
+
+#[test]
+fn shared_hub_tab_space_lookup_before_update_does_not_deadlock() {
+    let hub = SharedHub::new();
+    let t1 = hub.update(|h| h.create_tab("https://one.test", Owner::User));
+    let t2 = hub.update(|h| {
+        let id = h.create_tab("https://two.test", Owner::User);
+        if let Some(t) = h.tab_mut(id) {
+            t.space = "Work".to_string();
+        }
+        id
+    });
+    // Mirrors the deadlock-free pattern in RelayApp::activate: release lock before mutating.
+    let tab_space = hub.lock().tab_space(t2).map(str::to_string);
+    if let Some(space) = tab_space {
+        let current = hub.lock().current_space().to_string();
+        if current != space {
+            hub.update(|h| h.set_current_space(&space));
+        }
+    }
+    assert_eq!(hub.lock().current_space(), "Work");
+    let _ = t1;
 }

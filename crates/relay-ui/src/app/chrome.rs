@@ -40,7 +40,48 @@ fn monogram_icon(url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
         .into_any_element()
 }
 
+/// Apple-style geometric sidebar toggle icon (`sidebar.left`, `sidebar.right`,
+/// or horizontal top/bottom variant) matching macOS native panel chrome.
+pub(super) fn sidebar_icon(edge: tabstrip::Placement, active: bool, t: Theme) -> gpui::AnyElement {
+    let fg = if active { t.text } else { t.muted };
+    let bar = if active { t.text } else { t.muted.opacity(0.65) };
+    let frame = div()
+        .w(px(15.))
+        .h(px(12.))
+        .rounded(px(3.))
+        .border_1()
+        .border_color(fg)
+        .overflow_hidden()
+        .flex();
+    match edge {
+        tabstrip::Placement::Left => frame
+            .flex_row()
+            .child(div().w(px(4.5)).h_full().bg(bar))
+            .child(div().flex_1().h_full())
+            .into_any_element(),
+        tabstrip::Placement::Right => frame
+            .flex_row()
+            .child(div().flex_1().h_full())
+            .child(div().w(px(4.5)).h_full().bg(bar))
+            .into_any_element(),
+        tabstrip::Placement::Top => frame
+            .flex_col()
+            .child(div().w_full().h(px(4.)).bg(bar))
+            .child(div().flex_1().w_full())
+            .into_any_element(),
+        tabstrip::Placement::Bottom => frame
+            .flex_col()
+            .child(div().flex_1().w_full())
+            .child(div().w_full().h(px(4.)).bg(bar))
+            .into_any_element(),
+    }
+}
+
 impl RelayApp {
+    pub(super) fn shortcut_for(&self, action: ActionId) -> SharedString {
+        SharedString::from(keymap::shortcut_label(self.keymap.key(action)))
+    }
+
     pub(super) fn site_icon(&self, url: &str, title: &str, size_px: f32) -> gpui::AnyElement {
         match host_of(url).and_then(|host| self.favicons.get(&host)).and_then(|icon| icon.clone()) {
             Some(icon) => img(icon).size(px(size_px)).flex_shrink_0().rounded(px(3.)).into_any_element(),
@@ -48,8 +89,19 @@ impl RelayApp {
         }
     }
 
-    fn nav_icon_button(&self, id: &'static str, label: &'static str, active: bool, cmd: Command, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn nav_icon_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        tooltip_label: &'static str,
+        action: Option<ActionId>,
+        active: bool,
+        cmd: Command,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let t = self.theme;
+        let shortcut = action.map(|a| self.shortcut_for(a)).unwrap_or_default();
+        let tip: SharedString = tooltip_label.into();
         div()
             .id(id)
             .w(px(24.))
@@ -62,6 +114,11 @@ impl RelayApp {
             .text_color(if active { t.accent } else { t.muted })
             .cursor_pointer()
             .hover(|s| s.bg(t.hover).text_color(t.text))
+            .tooltip(move |_, cx| {
+                let label = tip.clone();
+                let sc = shortcut.clone();
+                cx.new(|_| ShortcutTooltip { label, shortcut: sc, theme: t }).into()
+            })
             .on_click(cx.listener(move |app, _, _, cx| {
                 app.run_command(cmd, cx);
                 cx.notify();
@@ -70,36 +127,12 @@ impl RelayApp {
             .into_any_element()
     }
 
-    fn agent_sidebar_button(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let t = self.theme;
-        let open = self.inspector_open && self.sidebar_tab == SidebarTab::Agent;
-        let has_agent_tabs = self.hub.lock().tabs().any(|tab| tab.owner == Owner::Agent);
-        let paused = self.hub.agents_paused();
-        div()
-            .id("nav-agent-sidebar")
-            .w(px(24.))
-            .h(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(5.))
-            .text_size(px(12.))
-            .when(open, |d| d.bg(t.agent_bg).text_color(t.agent))
-            .when(!open, |d| d.text_color(if paused { t.warn } else if has_agent_tabs { t.agent } else { t.muted }))
-            .cursor_pointer()
-            .hover(|s| s.bg(t.hover).text_color(t.text))
-            .on_click(cx.listener(|app, _, _, cx| {
-                app.toggle_agent_sidebar(cx);
-            }))
-            .child("✦")
-            .into_any_element()
-    }
-
     /// Current-space pill; opens the space prompt.
     fn space_chip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let dark = t.background.l < 0.5;
         let look = self.current_space_look();
+        let shortcut = self.shortcut_for(ActionId::Spaces);
         let (name, count) = {
             let h = self.hub.lock();
             let name = h.current_space().to_string();
@@ -119,6 +152,10 @@ impl RelayApp {
             .text_color(t.text)
             .cursor_pointer()
             .hover(|s| s.bg(t.hover))
+            .tooltip(move |_, cx| {
+                let sc = shortcut.clone();
+                cx.new(|_| ShortcutTooltip { label: "Spaces".into(), shortcut: sc, theme: t }).into()
+            })
             .on_click(cx.listener(|app, _, _, cx| app.open_space_prompt(cx)))
             .when_some(dot, |d, c| d.child(div().size(px(6.)).rounded_full().bg(c)))
             .child(look.icon.glyph())
@@ -128,12 +165,9 @@ impl RelayApp {
             .into_any_element()
     }
 
-    pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_tab_bar(&self, stacked: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let strip = self.strip;
-        if strip.folded {
-            return self.render_folded_strip(cx);
-        }
         let (active, user, agents, shortcut_map) = {
             let h = self.hub.lock();
             let space = h.current_space().to_string();
@@ -174,7 +208,32 @@ impl RelayApp {
             }
         }
         let vertical = strip.placement.is_vertical();
-        let icons_only = vertical && self.tab_icons_only;
+        let icons_only = vertical && self.tab_icons_only && !stacked;
+        let drag_grip = div()
+            .id("tabs-drag-handle")
+            .px_1()
+            .h(px(22.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.))
+            .text_size(px(10.))
+            .text_color(t.muted)
+            .cursor_grab()
+            .hover(|s| s.bg(t.hover).text_color(t.text))
+            .tooltip(move |_, cx| {
+                cx.new(|_| ShortcutTooltip {
+                    label: "Drag to dock Tabs on any edge".into(),
+                    shortcut: "⌘⇧S".into(),
+                    theme: t,
+                })
+                .into()
+            })
+            .on_drag(PanelDrag(PanelKind::Tabs), move |_, _, _, cx| {
+                cx.new(|_| PanelDragGhost { label: "Tabs".into(), theme: t })
+            })
+            .child("⋮⋮");
+
         let mut bar = div().flex();
         if vertical {
             let is_left = strip.placement == tabstrip::Placement::Left;
@@ -183,9 +242,9 @@ impl RelayApp {
                 .gap_1()
                 .px_2()
                 .pb_2()
-                .pt(if is_left { px(34.) } else { px(8.) })
-                .w(px(if icons_only { 54. } else { strip.width() }))
-                .h_full();
+                .pt(if stacked { px(4.) } else if is_left { px(34.) } else { px(8.) })
+                .when(stacked, |d| d.w_full().flex_1().min_h_0())
+                .when(!stacked, |d| d.w(px(if icons_only { 54. } else { strip.width() })).h_full());
             if icons_only {
                 bar = bar.child(
                     div()
@@ -194,46 +253,60 @@ impl RelayApp {
                         .justify_center()
                         .gap_0p5()
                         .pb_1()
-                        .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx))
-                        .child(self.fold_button(if is_left { "«" } else { "»" }, cx)),
+                        .child(self.nav_icon_button("nav-reload", "↻", "Reload", Some(ActionId::Reload), false, Command::Reload, cx))
+                        .child(self.fold_button(strip.placement, cx)),
                 );
                 bar = bar.child(self.space_chip(cx));
             } else {
-            // Compact navigation + bookmark + fold header row.
-            bar = bar.child(
-                div()
+                // Draggable navigation + bookmark + Apple sidebar toggle header row.
+                let mut header_left = div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .pb_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_0p5()
-                            .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
-                            .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
-                            .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_0p5()
-                            .child(self.nav_icon_button(
-                                "nav-bookmark",
-                                if bookmarked { "★" } else { "☆" },
-                                bookmarked,
-                                Command::ToggleBookmark,
-                                cx,
-                            ))
-                            .when(!self.inspector_open, |d| d.child(self.agent_sidebar_button(cx)))
-                            .child(self.fold_button(if is_left { "«" } else { "»" }, cx)),
-                    ),
-            );
-            bar = bar.child(self.space_chip(cx));
+                    .gap_0p5()
+                    .child(drag_grip)
+                    .child(self.nav_icon_button("nav-back", "←", "Back", Some(ActionId::Back), false, Command::Back, cx))
+                    .child(self.nav_icon_button("nav-forward", "→", "Forward", Some(ActionId::Forward), false, Command::Forward, cx))
+                    .child(self.nav_icon_button("nav-reload", "↻", "Reload", Some(ActionId::Reload), false, Command::Reload, cx));
+                if !is_left {
+                    header_left = div()
+                        .flex()
+                        .items_center()
+                        .gap_0p5()
+                        .child(self.fold_button(strip.placement, cx))
+                        .child(header_left);
+                }
+                let mut header_right = div()
+                    .flex()
+                    .items_center()
+                    .gap_0p5()
+                    .child(self.nav_icon_button(
+                        "nav-bookmark",
+                        if bookmarked { "★" } else { "☆" },
+                        if bookmarked { "Remove Bookmark" } else { "Bookmark Page" },
+                        Some(ActionId::ToggleBookmark),
+                        bookmarked,
+                        Command::ToggleBookmark,
+                        cx,
+                    ));
+                if is_left {
+                    header_right = header_right.child(self.fold_button(strip.placement, cx));
+                }
+                bar = bar.child(
+                    div()
+                        .id("tabs-header-bar")
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .pb_1()
+                        .on_drag(PanelDrag(PanelKind::Tabs), move |_, _, _, cx| {
+                            cx.new(|_| PanelDragGhost { label: "Tabs".into(), theme: t })
+                        })
+                        .child(header_left)
+                        .child(header_right),
+                );
+                bar = bar.child(self.space_chip(cx));
             }
-            // Arc/Search-style Favorites grid for pinned tabs.
+            // Arc-style Favorites grid for pinned tabs.
             if !pinned.is_empty() {
                 let mut grid = div().flex().flex_wrap().gap_1p5().pb_1();
                 for tab in &pinned {
@@ -265,6 +338,14 @@ impl RelayApp {
                                     .text_color(t.muted)
                                     .cursor_pointer()
                                     .hover(|s| s.bg(t.hover).text_color(t.text))
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| ShortcutTooltip {
+                                            label: "Close unpinned tabs".into(),
+                                            shortcut: "".into(),
+                                            theme: t,
+                                        })
+                                        .into()
+                                    })
                                     .on_click(cx.listener(|app, _, _, cx| {
                                         app.clear_loose_tabs(cx);
                                     }))
@@ -273,7 +354,7 @@ impl RelayApp {
                         }),
                 );
             }
-            let mut list = div().id("tab-list-scroll").flex_1().flex().flex_col().gap_0p5().overflow_y_scroll();
+            let mut list = div().id("tab-list-scroll").flex_1().min_h_0().flex().flex_col().gap_0p5().overflow_y_scroll();
             for tab in &ungrouped {
                 list = list.child(self.tab_row(tab, active, true, badge_for(tab.id), cx));
             }
@@ -299,17 +380,24 @@ impl RelayApp {
             }
             bar.child(list).child(self.new_tab_button(true, cx)).into_any_element()
         } else {
-            bar = bar
+            let is_top = strip.placement == tabstrip::Placement::Top;
+            let mut bar = div()
+                .id("tabs-header-horizontal")
+                .flex()
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .pl(px(78.))
+                .pl(if stacked { px(4.) } else if is_top { px(78.) } else { px(10.) })
                 .pr_2()
-                .h(px(strip.height()))
-                .w_full()
-                .child(self.nav_icon_button("nav-back", "←", false, Command::Back, cx))
-                .child(self.nav_icon_button("nav-forward", "→", false, Command::Forward, cx))
-                .child(self.nav_icon_button("nav-reload", "↻", false, Command::Reload, cx));
+                .when(stacked, |d| d.flex_1().min_w_0().h_full())
+                .when(!stacked, |d| d.h(px(strip.height())).w_full())
+                .on_drag(PanelDrag(PanelKind::Tabs), move |_, _, _, cx| {
+                    cx.new(|_| PanelDragGhost { label: "Tabs".into(), theme: t })
+                })
+                .child(drag_grip)
+                .child(self.nav_icon_button("nav-back", "←", "Back", Some(ActionId::Back), false, Command::Back, cx))
+                .child(self.nav_icon_button("nav-forward", "→", "Forward", Some(ActionId::Forward), false, Command::Forward, cx))
+                .child(self.nav_icon_button("nav-reload", "↻", "Reload", Some(ActionId::Reload), false, Command::Reload, cx));
             bar = bar.child(self.space_chip(cx));
             for tab in &pinned {
                 bar = bar.child(self.tab_row(tab, active, false, badge_for(tab.id), cx));
@@ -336,12 +424,13 @@ impl RelayApp {
                 .child(self.nav_icon_button(
                     "nav-bookmark",
                     if bookmarked { "★" } else { "☆" },
+                    if bookmarked { "Remove Bookmark" } else { "Bookmark Page" },
+                    Some(ActionId::ToggleBookmark),
                     bookmarked,
                     Command::ToggleBookmark,
                     cx,
                 ))
-                .when(!self.inspector_open, |d| d.child(self.agent_sidebar_button(cx)))
-                .child(self.fold_button("⌃", cx))
+                .child(self.fold_button(strip.placement, cx))
                 .into_any_element()
         }
     }
@@ -658,6 +747,7 @@ impl RelayApp {
 
     fn new_tab_button(&self, vertical: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
+        let shortcut = self.shortcut_for(ActionId::NewTab);
         let button = div()
             .id("new-tab")
             .flex()
@@ -667,6 +757,10 @@ impl RelayApp {
             .text_color(t.muted)
             .cursor_pointer()
             .hover(|s| s.bg(t.hover).text_color(t.text))
+            .tooltip(move |_, cx| {
+                let sc = shortcut.clone();
+                cx.new(|_| ShortcutTooltip { label: "New Tab".into(), shortcut: sc, theme: t }).into()
+            })
             .on_click(cx.listener(|app, _, _, cx| {
                 app.open_palette(None, true);
                 cx.notify();
@@ -674,14 +768,16 @@ impl RelayApp {
         if vertical && self.tab_icons_only {
             button.w(px(24.)).h(px(24.)).justify_center().child("+").into_any_element()
         } else if vertical {
-            button.px_2().h(px(28.)).justify_between().child("+ New tab").child(div().text_size(px(10.)).child("⌘T")).into_any_element()
+            let sc = self.shortcut_for(ActionId::NewTab);
+            button.px_2().h(px(28.)).justify_between().child("+ New tab").child(div().text_size(px(10.)).child(sc)).into_any_element()
         } else {
             button.w(px(24.)).h(px(24.)).justify_center().child("+").into_any_element()
         }
     }
 
-    fn fold_button(&self, label: &'static str, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn fold_button(&self, edge: tabstrip::Placement, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
+        let shortcut = self.shortcut_for(ActionId::ToggleTabStrip);
         div()
             .id("fold-tab-strip")
             .w(px(24.))
@@ -690,51 +786,320 @@ impl RelayApp {
             .items_center()
             .justify_center()
             .rounded(px(5.))
-            .text_size(px(12.))
-            .text_color(t.muted)
             .cursor_pointer()
-            .hover(|s| s.bg(t.hover).text_color(t.text))
+            .hover(|s| s.bg(t.hover))
+            .tooltip(move |_, cx| {
+                let sc = shortcut.clone();
+                cx.new(|_| ShortcutTooltip { label: "Hide Tab Strip".into(), shortcut: sc, theme: t }).into()
+            })
             .on_click(cx.listener(|app, _, _, cx| {
                 app.toggle_tab_strip(cx);
             }))
-            .child(label)
+            .child(sidebar_icon(edge, true, t))
             .into_any_element()
     }
 
-    /// Compact floating corner reveal button when the tab strip is folded:
-    /// occupies zero layout height/width, tucked cleanly beside the traffic lights.
-    pub(super) fn render_folded_strip(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// Edge-matched Apple-style sidebar reveal buttons whenever the Tab Strip
+    /// or Agent panel is closed. Each toggle sits on its own panel's edge in
+    /// the top shell strip (above the rounded browser card), never crossing
+    /// sides and never overlapping WKWebView.
+    pub(super) fn render_corner_toggles(&self, show_strip: bool, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let t = self.theme;
-        let arrow = match self.strip.placement {
-            tabstrip::Placement::Left => "»",
-            tabstrip::Placement::Right => "«",
-            tabstrip::Placement::Top => "⌄",
+        let need_tabs = show_strip && self.strip.folded;
+        let need_agent = !self.inspector_open;
+        if !need_tabs && !need_agent {
+            return vec![];
+        }
+        let mut left_group: Vec<gpui::AnyElement> = Vec::new();
+        let mut right_group: Vec<gpui::AnyElement> = Vec::new();
+
+        if need_tabs {
+            let sc = self.shortcut_for(ActionId::ToggleTabStrip);
+            let btn = div()
+                .id("unfold-tab-strip")
+                .w(px(26.))
+                .h(px(22.))
+                .rounded(px(6.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .tooltip(move |_, cx| {
+                    let sc = sc.clone();
+                    cx.new(|_| ShortcutTooltip { label: "Show Tab Strip".into(), shortcut: sc, theme: t }).into()
+                })
+                .on_click(cx.listener(|app, _, _, cx| {
+                    app.toggle_tab_strip(cx);
+                }))
+                .child(sidebar_icon(self.strip.placement, false, t))
+                .into_any_element();
+            if self.strip.placement == tabstrip::Placement::Right {
+                right_group.push(btn);
+            } else {
+                left_group.push(btn);
+            }
+        }
+
+        if need_agent {
+            let sc = self.shortcut_for(ActionId::AskAi);
+            let has_agent_tabs = self.hub.lock().tabs().any(|tab| tab.owner == Owner::Agent);
+            let paused = self.hub.agents_paused();
+            let btn = div()
+                .id("reveal-agent-panel")
+                .relative()
+                .w(px(26.))
+                .h(px(22.))
+                .rounded(px(6.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .tooltip(move |_, cx| {
+                    let sc = sc.clone();
+                    cx.new(|_| ShortcutTooltip { label: "Show Agent".into(), shortcut: sc, theme: t }).into()
+                })
+                .on_click(cx.listener(|app, _, _, cx| {
+                    app.toggle_agent_sidebar(cx);
+                }))
+                .child(sidebar_icon(self.agent_edge, false, t))
+                .when(paused || has_agent_tabs, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .top(px(2.))
+                            .right(px(2.))
+                            .size(px(5.))
+                            .rounded_full()
+                            .bg(if paused { t.warn } else { t.agent }),
+                    )
+                })
+                .into_any_element();
+            if self.agent_edge == tabstrip::Placement::Left {
+                left_group.push(btn);
+            } else {
+                right_group.push(btn);
+            }
+        }
+
+        let mut out = Vec::new();
+        if !left_group.is_empty() {
+            let mut row = div().absolute().top(px(6.)).left(px(78.)).flex().items_center().gap_1();
+            for el in left_group {
+                row = row.child(el);
+            }
+            out.push(row.into_any_element());
+        }
+        if !right_group.is_empty() {
+            let mut row = div().absolute().top(px(6.)).right(px(10.)).flex().items_center().gap_1();
+            for el in right_group {
+                row = row.child(el);
+            }
+            out.push(row.into_any_element());
+        }
+        out
+    }
+
+    /// Full-window translucent dock overlay shown while dragging Tabs or Agent.
+    /// Supports docking to Left, Right, Top, or Bottom — and splits an occupied
+    /// edge into two stack zones so panels can sit one above another or side-by-side.
+    pub(super) fn render_dock_drop_overlay(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        let strip_open = !self.strip.folded;
+        let agent_open = self.inspector_open;
+        let occupied = |edge: tabstrip::Placement| -> Option<PanelKind> {
+            let has_tabs = strip_open && self.strip.placement == edge;
+            let has_agent = agent_open && self.agent_edge == edge;
+            match (has_tabs, has_agent) {
+                (true, false) => Some(PanelKind::Tabs),
+                (false, true) => Some(PanelKind::Agent),
+                _ => None,
+            }
         };
-        let mut pill = div()
-            .id("unfold-tab-strip")
+
+        let make_zone = |id: &'static str, title: &'static str, edge: tabstrip::Placement, stack: Option<StackOrder>, cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .rounded(px(12.))
+                .border_2()
+                .border_color(t.border)
+                .bg(t.raised.opacity(0.75))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(12.))
+                .text_color(t.muted)
+                .drag_over::<PanelDrag>(move |s, _, _, _| s.bg(t.accent.opacity(0.24)).border_color(t.accent).text_color(t.text))
+                .on_drop(cx.listener(move |app, drag: &PanelDrag, _, cx| {
+                    let resolved_stack = stack.map(|s| match (drag.0, s) {
+                        (PanelKind::Tabs, StackOrder::TabsFirst) | (PanelKind::Agent, StackOrder::AgentFirst) => s,
+                        (PanelKind::Tabs, StackOrder::AgentFirst) => StackOrder::AgentFirst,
+                        (PanelKind::Agent, StackOrder::TabsFirst) => StackOrder::TabsFirst,
+                    });
+                    app.dock_panel(drag.0, edge, resolved_stack, cx);
+                }))
+                .child(title)
+        };
+
+        let vertical_edge = |edge: tabstrip::Placement, cx: &mut Context<Self>| -> gpui::AnyElement {
+            let label = edge.label();
+            match occupied(edge) {
+                Some(PanelKind::Tabs) => div()
+                    .w(px(190.))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Left { "drop-left-above" } else { "drop-right-above" },
+                        "Stack Above",
+                        edge,
+                        Some(StackOrder::AgentFirst),
+                        cx,
+                    ))
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Left { "drop-left-below" } else { "drop-right-below" },
+                        "Stack Below",
+                        edge,
+                        Some(StackOrder::TabsFirst),
+                        cx,
+                    ))
+                    .into_any_element(),
+                Some(PanelKind::Agent) => div()
+                    .w(px(190.))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Left { "drop-left-above" } else { "drop-right-above" },
+                        "Stack Above",
+                        edge,
+                        Some(StackOrder::TabsFirst),
+                        cx,
+                    ))
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Left { "drop-left-below" } else { "drop-right-below" },
+                        "Stack Below",
+                        edge,
+                        Some(StackOrder::AgentFirst),
+                        cx,
+                    ))
+                    .into_any_element(),
+                None => div()
+                    .w(px(190.))
+                    .h_full()
+                    .flex()
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Left { "drop-left" } else { "drop-right" },
+                        label,
+                        edge,
+                        None,
+                        cx,
+                    ))
+                    .into_any_element(),
+            }
+        };
+
+        let horizontal_edge = |edge: tabstrip::Placement, cx: &mut Context<Self>| -> gpui::AnyElement {
+            let label = edge.label();
+            match occupied(edge) {
+                Some(PanelKind::Tabs) => div()
+                    .w_full()
+                    .h(px(76.))
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Top { "drop-top-left" } else { "drop-bottom-left" },
+                        "Dock Left",
+                        edge,
+                        Some(StackOrder::AgentFirst),
+                        cx,
+                    ))
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Top { "drop-top-right" } else { "drop-bottom-right" },
+                        "Dock Right",
+                        edge,
+                        Some(StackOrder::TabsFirst),
+                        cx,
+                    ))
+                    .into_any_element(),
+                Some(PanelKind::Agent) => div()
+                    .w_full()
+                    .h(px(76.))
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Top { "drop-top-left" } else { "drop-bottom-left" },
+                        "Dock Left",
+                        edge,
+                        Some(StackOrder::TabsFirst),
+                        cx,
+                    ))
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Top { "drop-top-right" } else { "drop-bottom-right" },
+                        "Dock Right",
+                        edge,
+                        Some(StackOrder::AgentFirst),
+                        cx,
+                    ))
+                    .into_any_element(),
+                None => div()
+                    .w_full()
+                    .h(px(76.))
+                    .flex()
+                    .child(make_zone(
+                        if edge == tabstrip::Placement::Top { "drop-top" } else { "drop-bottom" },
+                        label,
+                        edge,
+                        None,
+                        cx,
+                    ))
+                    .into_any_element(),
+            }
+        };
+
+        div()
+            .id("dock-drop-overlay")
             .absolute()
-            .top(px(8.))
-            .w(px(26.))
-            .h(px(24.))
-            .rounded(px(6.))
-            .bg(t.raised)
-            .shadow_sm()
-            .cursor_pointer()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(t.scrim)
+            .p_4()
+            .pt(px(36.))
             .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(12.))
-            .text_color(t.muted)
-            .hover(|s| s.bg(t.hover).text_color(t.text))
-            .on_click(cx.listener(|app, _, _, cx| {
-                app.toggle_tab_strip(cx);
-            }))
-            .child(arrow);
-        pill = match self.strip.placement {
-            tabstrip::Placement::Right => pill.right(px(10.)),
-            _ => pill.left(px(78.)),
-        };
-        pill.into_any_element()
+            .flex_col()
+            .gap_3()
+            .child(horizontal_edge(tabstrip::Placement::Top, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .child(vertical_edge(tabstrip::Placement::Left, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(12.))
+                            .text_color(t.muted)
+                            .child("Drop on any edge to dock or stack"),
+                    )
+                    .child(vertical_edge(tabstrip::Placement::Right, cx)),
+            )
+            .child(horizontal_edge(tabstrip::Placement::Bottom, cx))
+            .into_any_element()
     }
 
     fn render_pane(&self, tab: TabId, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1005,7 +1370,8 @@ impl RelayApp {
         };
         let mut row = div().flex_1().h_full().flex();
         row = row.child(self.render_pane(active, cx));
-        if let Some(s) = self.split.filter(|s| *s != active && self.hub.lock().tab(*s).is_some()) {
+        let split_tab = self.split.filter(|s| *s != active && self.hub.lock().tab(*s).is_some());
+        if let Some(s) = split_tab {
             row = row.child(div().w(px(6.)).h_full().bg(t.background)).child(self.render_pane(s, cx));
         }
         row.into_any_element()
@@ -1599,23 +1965,6 @@ impl RelayApp {
             .text_size(px(11.))
             .text_color(t.muted)
             .bg(t.surface)
-            .when(self.strip.folded, |d| {
-                d.child(
-                    div()
-                        .id("status-unfold-tabs")
-                        .px_1p5()
-                        .rounded(px(4.))
-                        .bg(t.well)
-                        .text_size(px(10.))
-                        .text_color(t.text)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(t.hover))
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            app.toggle_tab_strip(cx);
-                        }))
-                        .child("» Tabs"),
-                )
-            })
             .when(show_icon, |d| d.child(self.site_icon(&url, &title, 13.)))
             .child(
                 div()

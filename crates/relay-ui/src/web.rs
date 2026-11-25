@@ -177,6 +177,23 @@ mod imp {
             self.engine.set_corner_style(radius, round_top, round_bottom);
         }
 
+        pub fn toggle_web_inspector(&self, tab: TabId) {
+            self.engine.toggle_web_inspector(tab);
+        }
+
+        pub fn set_companion_url(&mut self, url: &str) {
+            self.engine.set_companion_url(url);
+        }
+
+        pub fn layout_companion(&self, bounds: Option<Bounds<Pixels>>) {
+            let Some(shell) = &self.shell else { return };
+            let rect = bounds.map(|b| {
+                let (x, y, w, h) = (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height));
+                NSRect::new(NSPoint::new(x as f64, y as f64), NSSize::new(w as f64, h as f64))
+            });
+            self.engine.layout_companion(rect, shell);
+        }
+
         /// Select the next (or previous) match; the answer arrives as
         /// [`WebEvent::Found`].
         pub fn find(&self, tab: TabId, text: &str, backwards: bool, case_sensitive: bool) {
@@ -436,6 +453,9 @@ mod imp {
         pub fn set_user_agent(&self, _tab: TabId, _ua: Option<&str>) {}
         pub fn set_appearance(&mut self, _dark: Option<bool>) {}
         pub fn set_corner_style(&mut self, _radius: f64, _round_top: bool, _round_bottom: bool) {}
+        pub fn toggle_web_inspector(&self, _tab: TabId) {}
+        pub fn set_companion_url(&mut self, _url: &str) {}
+        pub fn layout_companion(&self, _bounds: Option<Bounds<Pixels>>) {}
         pub fn find(&self, _tab: TabId, _text: &str, _backwards: bool, _case_sensitive: bool) {}
         pub fn slept_scroll_y(&self, _tab: TabId) -> Option<f64> {
             None

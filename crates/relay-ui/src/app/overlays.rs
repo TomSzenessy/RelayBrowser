@@ -160,7 +160,24 @@ impl RelayApp {
                                         .child("+ Bookmark this page"),
                                 )
                             })
-                            .child(div().text_size(px(11.)).text_color(t.muted).child(lib.mode.hint())),
+                            .child(div().text_size(px(11.)).text_color(t.muted).child(lib.mode.hint()))
+                            .child(
+                                div()
+                                    .id("library-close")
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(px(5.))
+                                    .bg(t.well)
+                                    .text_size(px(11.))
+                                    .text_color(t.muted)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(t.hover).text_color(t.text))
+                                    .on_click(cx.listener(|app, _, _, cx| {
+                                        app.close_library();
+                                        cx.notify();
+                                    }))
+                                    .child("← Back  Esc"),
+                            ),
                     ),
             )
             .child(
@@ -374,112 +391,44 @@ impl RelayApp {
                         .child(div().text_size(px(15.)).text_color(t.text).child("Downloads"))
                         .child(
                             div()
-                                .id("downloads-clear")
-                                .px_2()
-                                .py_0p5()
-                                .rounded(px(4.))
-                                .text_size(px(11.))
-                                .text_color(t.muted)
-                                .cursor_pointer()
-                                .hover(|s| s.bg(t.hover))
-                                .on_click(cx.listener(|app, _, _, cx| {
-                                    let n = app.hub.update(|h| h.clear_finished_downloads());
-                                    app.toast(format!("Cleared {n} finished downloads"));
-                                    cx.notify();
-                                }))
-                                .child("Clear finished"),
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id("downloads-clear")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(4.))
+                                        .text_size(px(11.))
+                                        .text_color(t.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                                        .on_click(cx.listener(|app, _, _, cx| {
+                                            let n = app.hub.update(|h| h.clear_finished_downloads());
+                                            app.toast(format!("Cleared {n} finished downloads"));
+                                            cx.notify();
+                                        }))
+                                        .child("Clear finished"),
+                                )
+                                .child(
+                                    div()
+                                        .id("downloads-close")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(px(5.))
+                                        .bg(t.well)
+                                        .text_size(px(11.))
+                                        .text_color(t.muted)
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                                        .on_click(cx.listener(|app, _, _, cx| {
+                                            app.close_downloads();
+                                            cx.notify();
+                                        }))
+                                        .child("← Back  Esc"),
+                                ),
                         ),
-                )
-                .child(rows),
-        )
-    }
-
-    pub(super) fn render_connect(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = self.theme;
-        let mut rows = div().id("connect-list").flex().flex_col().max_h(px(420.)).overflow_y_scroll();
-        for &(client, detected) in &self.connect_detected {
-            rows = rows.child(
-                div()
-                    .id(SharedString::from(format!("connect-{}", client.id())))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .min_h(px(46.))
-                    .px_4()
-                    .py_1()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(div().text_size(px(13.)).text_color(t.text).child(client.name()))
-                                    .when(detected, |d| {
-                                        d.child(
-                                            div()
-                                                .px_1p5()
-                                                .py_0p5()
-                                                .rounded(px(4.))
-                                                .bg(t.active)
-                                                .text_size(px(10.))
-                                                .text_color(t.accent)
-                                                .child("Detected"),
-                                        )
-                                    }),
-                            )
-                            .child(div().text_size(px(10.)).text_color(t.muted).child(client.target())),
-                    )
-                    .child({
-                        let just_copied = self
-                            .connect_copied
-                            .is_some_and(|(c, at)| c == client && at.elapsed() < Duration::from_secs(3));
-                        div()
-                            .id(SharedString::from(format!("connect-copy-{}", client.id())))
-                            .flex_shrink_0()
-                            .px_2p5()
-                            .py_1()
-                            .rounded(px(5.))
-                            .bg(if just_copied { t.active } else { t.background })
-                            .text_size(px(11.))
-                            .text_color(if just_copied { t.accent } else { t.text })
-                            .cursor_pointer()
-                            .hover(|s| s.bg(t.hover))
-                            .on_click(cx.listener(move |app, _, _, cx| {
-                                let command = mcp_config::relay_command();
-                                cx.write_to_clipboard(ClipboardItem::new_string(client.snippet(&command)));
-                                app.connect_copied = Some((client, Instant::now()));
-                                app.toast(format!("Copied the {} config", client.name()));
-                                cx.notify();
-                            }))
-                            .child(if just_copied { "Copied ✓" } else { "Copy config" })
-                    }),
-            );
-        }
-        div().absolute().top_0().left_0().size_full().flex().justify_center().pt(px(80.)).bg(t.scrim).child(
-            div()
-                .id("connect")
-                .w(px(620.))
-                .flex()
-                .flex_col()
-                .rounded(px(10.))
-                .bg(t.surface)
-                .shadow_lg()
-                .overflow_hidden()
-                .on_mouse_down_out(cx.listener(|app, _, _, _| app.close_connect()))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .h(px(44.))
-                        .px_4()
-                        .child(div().text_size(px(15.)).text_color(t.text).child("Connect an agent"))
-                        .child(div().text_size(px(11.)).text_color(t.muted).child("Copy the text; Relay changes no files")),
                 )
                 .child(rows),
         )
@@ -633,22 +582,45 @@ impl RelayApp {
                                 .child(div().text_size(px(17.)).text_color(t.text).child("Keyboard shortcuts"))
                                 .child(
                                     div()
-                                        .id("shortcuts-reset")
-                                        .px_2p5()
-                                        .py_1()
-                                        .rounded(px(6.))
-                                        .bg(t.background)
-                                        .text_size(px(11.))
-                                        .text_color(t.muted)
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(t.hover).text_color(t.text))
-                                        .on_click(cx.listener(|app, _, _, cx| {
-                                            app.keymap.reset_all();
-                                            app.apply_keymap(cx);
-                                            app.toast("Shortcuts reset to defaults");
-                                            cx.notify();
-                                        }))
-                                        .child("Reset all"),
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .id("shortcuts-reset")
+                                                .px_2p5()
+                                                .py_1()
+                                                .rounded(px(6.))
+                                                .bg(t.background)
+                                                .text_size(px(11.))
+                                                .text_color(t.muted)
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(t.hover).text_color(t.text))
+                                                .on_click(cx.listener(|app, _, _, cx| {
+                                                    app.keymap.reset_all();
+                                                    app.apply_keymap(cx);
+                                                    app.toast("Shortcuts reset to defaults");
+                                                    cx.notify();
+                                                }))
+                                                .child("Reset all"),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("shortcuts-close")
+                                                .px_2p5()
+                                                .py_1()
+                                                .rounded(px(6.))
+                                                .bg(t.well)
+                                                .text_size(px(11.))
+                                                .text_color(t.muted)
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(t.hover).text_color(t.text))
+                                                .on_click(cx.listener(|app, _, _, cx| {
+                                                    app.close_shortcuts(cx);
+                                                    cx.notify();
+                                                }))
+                                                .child("← Back  Esc"),
+                                        ),
                                 ),
                         )
                         .child(div().text_size(px(11.)).text_color(t.muted).child(
@@ -1985,12 +1957,13 @@ impl RelayApp {
                         tabstrip::Placement::Left => "settings-tabs-left",
                         tabstrip::Placement::Top => "settings-tabs-top",
                         tabstrip::Placement::Right => "settings-tabs-right",
+                        tabstrip::Placement::Bottom => "settings-tabs-bottom",
                     };
                     let active = self.strip.placement == placement;
                     strip_seg = strip_seg.child(
                         div()
                             .id(id)
-                            .px_3()
+                            .px_2p5()
                             .py_1()
                             .rounded(px(5.))
                             .text_size(px(12.))
@@ -2000,6 +1973,32 @@ impl RelayApp {
                             .hover(|s| s.text_color(t.text))
                             .on_click(cx.listener(move |app, _, _, cx| {
                                 app.set_tab_strip_placement(placement, cx);
+                            }))
+                            .child(placement.label()),
+                    );
+                }
+                let mut agent_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.well);
+                for placement in tabstrip::Placement::ALL {
+                    let id = match placement {
+                        tabstrip::Placement::Left => "settings-agent-left",
+                        tabstrip::Placement::Top => "settings-agent-top",
+                        tabstrip::Placement::Right => "settings-agent-right",
+                        tabstrip::Placement::Bottom => "settings-agent-bottom",
+                    };
+                    let active = self.agent_edge == placement;
+                    agent_seg = agent_seg.child(
+                        div()
+                            .id(id)
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .when(active, |d| d.bg(t.active))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.dock_panel(PanelKind::Agent, placement, None, cx);
                             }))
                             .child(placement.label()),
                     );
@@ -2096,7 +2095,8 @@ impl RelayApp {
                     .child(row("Theme", Some("System follows macOS and syncs website prefers-color-scheme"), theme_seg.into_any_element()))
                     .child(row("Accent colour", None, accent_row.into_any_element()))
                     .child(row("Blank-tab background", Some("Solid, gradient, or a local image file (never loaded remotely)"), bg_row.into_any_element()))
-                    .child(row("Tab strip position", Some("Move tabs between Left, Top, and Right (⇧⌘S)"), strip_seg.into_any_element()))
+                    .child(row("Tab strip position", Some("Left, Top, Right, or Bottom (⇧⌘S) — or drag the ⋮⋮ grip to dock/stack"), strip_seg.into_any_element()))
+                    .child(row("Agent panel position", Some("Dock on any edge or drag ⋮⋮ onto another panel to stack"), agent_seg.into_any_element()))
                     .child(row("Show tab strip", Some("Hide to maximize page area; ⌘S toggles anytime"), strip_visible))
                     .child(row("Show tab numbers while ⌘ is held", Some("Displays 1–9 shortcut badges on tabs and favorites"), tab_nums_sw))
                     .child(row("Always show the address bar", Some("One quiet URL line above the page; click it to edit in ⌘K"), address_sw))
@@ -2370,13 +2370,12 @@ impl RelayApp {
                     .bg(t.well)
                     .text_size(px(11.))
                     .text_color(t.muted)
-                    .child("Not available in this build")
+                    .child("Needs Apple Developer ID")
                     .into_any_element();
-                let import_hint = div()
-                    .text_size(px(10.))
-                    .font_family("Menlo")
-                    .text_color(t.muted)
-                    .child("relay import-passwords <file.csv>")
+                let import_btn = btn("settings-import-passwords-csv", "Import CSV…".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.import_passwords_csv(cx);
+                    }))
                     .into_any_element();
                 let content = div()
                     .flex()
@@ -2385,8 +2384,8 @@ impl RelayApp {
                     .child(row("Fill a single saved login automatically", Some("Off by default: no second click when exactly one login is saved for the site"), auto_sw))
                     .child(row("Offer to save passwords", Some("After a successful sign-in, offer the macOS Keychain"), save_sw))
                     .child(row("Saved logins", Some("Delete a saved login for the site you are on, under Privacy"), manage))
-                    .child(row("Passkeys", Some("Apple grants the browser credential entitlement to signed browsers; this ad-hoc build does not have it yet"), passkeys))
-                    .child(row("Import Chrome passwords", Some("Writes internet passwords to the login Keychain, then deletes the CSV"), import_hint));
+                    .child(row("Import Chrome passwords", Some("In Chrome: Settings → Passwords → Export passwords… → pick the CSV here to save into macOS Keychain"), import_btn))
+                    .child(row("Passkeys (WebAuthn)", Some("Apple restricts browser passkeys to Developer ID signed builds; on Google / YouTube Music click \"Try another way\" to sign in with password + 2FA"), passkeys));
                 div()
                     .flex()
                     .flex_col()
@@ -2755,6 +2754,175 @@ impl RelayApp {
                     .into_any_element()
             }
             SettingsTab::Agents => {
+                // 1) Web AI Companion (zero API key — uses user's Claude/ChatGPT/Gemini login)
+                let mut web_seg = div().flex().items_center().p_0p5().rounded(px(7.)).bg(t.well);
+                for p in WebAiProvider::ALL {
+                    let active = self.web_ai_provider == p;
+                    web_seg = web_seg.child(
+                        div()
+                            .id(SharedString::from(format!("settings-web-ai-{}", p.as_str())))
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(5.))
+                            .text_size(px(12.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .when(active, |d| d.bg(t.active))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.set_web_ai_provider(p, cx);
+                            }))
+                            .child(p.label()),
+                    );
+                }
+                let open_web_ai = btn("settings-open-web-ai", "Open in Agent Panel (⌘⇧A)".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.close_settings();
+                        app.inspector_open = true;
+                        app.set_agent_mode(AgentMode::Web, cx);
+                    }))
+                    .into_any_element();
+                let web_card = div()
+                    .flex()
+                    .flex_col()
+                    .child(row("Default Web AI", Some("Opens claude.ai, chatgpt.com, or gemini.google.com directly inside the Agent sidebar using your existing account — no API key needed"), web_seg.into_any_element()))
+                    .child(row("Side-by-side chat", Some("Use Copy Page (⌘⇧M) in the panel header to paste page content as Markdown"), open_web_ai));
+
+                // 2) Direct API & Local Models (Anthropic Claude + OpenAI-compatible)
+                let editable_field = |id: &'static str, label: &'static str, raw: &str, masked: bool, placeholder: &'static str, focus: u8, hint: &'static str| {
+                    let focused = self.ai_focus == focus;
+                    let selected_all = focused && self.ai_selected_all;
+                    let shown = if masked && !raw.is_empty() {
+                        "•".repeat(raw.chars().count().min(32))
+                    } else {
+                        raw.to_string()
+                    };
+                    let mut value_box = div()
+                        .w(px(340.))
+                        .min_h(px(28.))
+                        .px_2p5()
+                        .py_1()
+                        .rounded(px(6.))
+                        .bg(if selected_all { t.accent.opacity(0.22) } else { t.well })
+                        .border_1()
+                        .border_color(if focused { t.accent } else { t.border.opacity(0.4) })
+                        .flex()
+                        .items_center()
+                        .overflow_hidden()
+                        .font_family("Menlo")
+                        .text_size(px(11.));
+                    if shown.is_empty() {
+                        if focused {
+                            value_box = value_box
+                                .child(div().w(px(1.5)).h(px(14.)).bg(t.accent))
+                                .child(div().ml_1().text_color(t.muted).child(placeholder));
+                        } else {
+                            value_box = value_box.text_color(t.muted).child(placeholder);
+                        }
+                    } else if focused && !selected_all {
+                        let (before, after) = ai_text_split_at_cursor(&shown, self.ai_cursor);
+                        value_box = value_box
+                            .text_color(t.text)
+                            .child(div().whitespace_nowrap().child(SharedString::from(before.to_string())))
+                            .child(div().w(px(1.5)).h(px(14.)).flex_shrink_0().bg(t.accent))
+                            .child(div().whitespace_nowrap().child(SharedString::from(after.to_string())));
+                    } else {
+                        value_box = value_box
+                            .text_color(t.text)
+                            .child(div().whitespace_nowrap().text_ellipsis().overflow_hidden().child(SharedString::from(shown)));
+                    }
+                    div()
+                        .id(id)
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .px_4()
+                        .py_2p5()
+                        .cursor_text()
+                        .when(focused, |d| d.bg(t.active.opacity(0.45)))
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            app.focus_ai_field(focus, cx);
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_0p5()
+                                .child(div().text_size(px(13.)).text_color(t.text).child(label))
+                                .child(div().text_size(px(10.)).text_color(t.muted).child(hint)),
+                        )
+                        .child(value_box)
+                };
+                let key_placeholder: &'static str = if self.ai_has_key {
+                    "Stored in Keychain (type to replace)"
+                } else {
+                    "Paste API key (⌘V)"
+                };
+                let save_btn = btn("settings-ai-save", "Save API Settings".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.save_ai_settings(cx)))
+                    .into_any_element();
+                let ask_btn = btn("settings-ai-ask", "Open API Chat".into(), false)
+                    .on_click(cx.listener(|app, _, _, cx| app.open_ai_chat(cx)))
+                    .into_any_element();
+                let preset_defs = [
+                    ("Claude", relay_extensions::ai::ANTHROPIC_ENDPOINT, relay_extensions::ai::ANTHROPIC_DEFAULT_MODEL),
+                    ("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
+                    ("OpenRouter", "https://openrouter.ai/api/v1", "anthropic/claude-sonnet-4"),
+                    ("Ollama", "http://localhost:11434/v1", "llama3.2"),
+                    ("LM Studio", "http://localhost:1234/v1", "local-model"),
+                ];
+                let mut preset_bar = div().flex().flex_wrap().items_center().gap_1p5().px_4().pt_3().pb_2();
+                for (label, endpoint, model) in preset_defs {
+                    let active = self.ai_endpoint.trim_end_matches('/') == endpoint.trim_end_matches('/');
+                    let endpoint = endpoint.to_string();
+                    let model = model.to_string();
+                    preset_bar = preset_bar.child(
+                        div()
+                            .id(SharedString::from(format!("ai-preset-{label}")))
+                            .px_2p5()
+                            .py_1()
+                            .rounded(px(6.))
+                            .bg(if active { t.active } else { t.well })
+                            .text_size(px(11.))
+                            .text_color(if active { t.text } else { t.muted })
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.hover).text_color(t.text))
+                            .on_click(cx.listener(move |app, _, _, cx| app.set_ai_preset(&endpoint, &model, cx)))
+                            .child(SharedString::from(label)),
+                    );
+                }
+                let context_sw = switch("settings-ai-context", self.ai_page_context, false)
+                    .on_click(cx.listener(|app, _, _, cx| {
+                        app.ai_page_context = !app.ai_page_context;
+                        if let Some(store) = &app.store {
+                            let _ = store.set_setting("ai_page_context", if app.ai_page_context { "on" } else { "off" });
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element();
+                let api_card = div()
+                    .flex()
+                    .flex_col()
+                    .child(preset_bar)
+                    .child(row("Send visible page text", Some("Context for API answers; off sends only URL, title, and your question"), context_sw))
+                    .child(editable_field("settings-ai-endpoint", "Endpoint", &self.ai_endpoint, false, "https://api.anthropic.com/v1", 0, "Anthropic or OpenAI-compatible base URL"))
+                    .child(editable_field("settings-ai-model", "Model", &self.ai_model, false, "claude-sonnet-4-20250514", 1, "Model ID sent to the endpoint"))
+                    .child(editable_field("settings-ai-key", "API key", &self.ai_key_draft, true, key_placeholder, 2, "Saved only in macOS Keychain; ←/→ moves cursor, ⌘A selects all, ⌘V pastes"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_4()
+                            .py_3()
+                            .child(div().text_size(px(10.)).text_color(t.muted).child("Tab switches fields · ←/→ moves cursor · Return saves"))
+                            .child(div().flex().items_center().gap_2().child(save_btn).child(ask_btn)),
+                    );
+
+                // 3) Local Coding Agents via MCP (unified right here with clear numbered instructions!)
                 let mcp_sw = switch("settings-mcp", self.mcp_enabled, false)
                     .on_click(cx.listener(|app, _, _, cx| {
                         app.mcp_enabled = !app.mcp_enabled;
@@ -2783,16 +2951,89 @@ impl RelayApp {
                         cx.notify();
                     }))
                     .into_any_element();
-                let connect_btn = btn("settings-connect", "Set up…".into(), false)
-                    .on_click(cx.listener(|app, _, _, cx| app.open_connect(cx)))
-                    .into_any_element();
+                let guide_card = div()
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .px_4()
+                    .py_3()
+                    .child(div().text_size(px(12.)).text_color(t.text).child("How to connect a local coding agent (3 steps)"))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("1. Keep Local MCP server enabled below while Relay is open."))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("2. Click Copy config next to your tool below. For Claude Code, paste and run it once in Terminal; for Cursor / Codex / Zed / VS Code / Claude Desktop, paste it into the config file shown."))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("3. Restart your coding agent. It will see the `relay` MCP server and can inspect DOM, network, console, cookies, and screenshots (passwords stay isolated)."));
                 let mcp_card = div()
                     .flex()
                     .flex_col()
-                    .child(row("Local MCP server", Some("Restart Relay after toggling"), mcp_sw))
-                    .child(row("Connect an agent", Some("9 clients: Claude Code, Codex, OpenCode, Cursor, Windsurf, Zed, …"), connect_btn))
-                    .child(row("Agent JavaScript (eval_js)", Some("Enabled only on Allow sites; agents can read page data"), eval_sw))
+                    .child(guide_card)
+                    .child(div().h(px(1.)).mx_4().bg(t.border.opacity(0.4)))
+                    .child(row("Local MCP server", Some("Exposes live browser DOM, network, console, and tabs over the local Unix socket (restart Relay after toggling)"), mcp_sw))
+                    .child(row("Agent JavaScript (eval_js)", Some("Enabled only on Allow sites; agents can execute JS in those tabs"), eval_sw))
                     .child(row("Agent shell changes", Some("Allow plan/apply for theme, settings, shortcuts, and sidebar"), shell_sw));
+
+                let mut setup_card = div().flex().flex_col();
+                for &(client, detected) in &self.connect_detected {
+                    let just_copied = self
+                        .connect_copied
+                        .is_some_and(|(c, at)| c == client && at.elapsed() < Duration::from_secs(3));
+                    setup_card = setup_card.child(
+                        div()
+                            .id(SharedString::from(format!("connect-{}", client.id())))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .px_4()
+                            .py_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(div().text_size(px(12.)).text_color(t.text).child(client.name()))
+                                            .when(detected, |d| {
+                                                d.child(
+                                                    div()
+                                                        .px_1p5()
+                                                        .py_0p5()
+                                                        .rounded(px(4.))
+                                                        .bg(t.active)
+                                                        .text_size(px(10.))
+                                                        .text_color(t.accent)
+                                                        .child("Detected"),
+                                                )
+                                            }),
+                                    )
+                                    .child(div().text_size(px(10.)).font_family("Menlo").text_color(t.code).child(client.target())),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("connect-copy-{}", client.id())))
+                                    .flex_shrink_0()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded(px(5.))
+                                    .bg(if just_copied { t.active } else { t.well })
+                                    .text_size(px(11.))
+                                    .text_color(if just_copied { t.accent } else { t.text })
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(t.hover))
+                                    .on_click(cx.listener(move |app, _, _, cx| {
+                                        let command = mcp_config::relay_command();
+                                        cx.write_to_clipboard(ClipboardItem::new_string(client.snippet(&command)));
+                                        app.connect_copied = Some((client, Instant::now()));
+                                        app.toast(format!("Copied {} MCP config — paste into {}", client.name(), client.target()));
+                                        cx.notify();
+                                    }))
+                                    .child(if just_copied { "Copied ✓" } else { "Copy config" }),
+                            ),
+                    );
+                }
+
                 let clients = self.store.as_ref().and_then(|s| s.mcp_clients().ok()).unwrap_or_default();
                 let mut client_card = div().flex().flex_col();
                 if clients.is_empty() {
@@ -2802,7 +3043,7 @@ impl RelayApp {
                             .py_3()
                             .text_size(px(12.))
                             .text_color(t.muted)
-                            .child("No MCP agent has connected yet."),
+                            .child("No local coding agent has connected yet. Follow the 3 steps above to connect one."),
                     );
                 } else {
                     for c in clients {
@@ -2814,6 +3055,7 @@ impl RelayApp {
                             .px_2p5()
                             .py_1()
                             .rounded(px(5.))
+                            .bg(t.well)
                             .text_size(px(11.))
                             .text_color(if granted { t.accent } else { t.text })
                             .cursor_pointer()
@@ -2852,9 +3094,16 @@ impl RelayApp {
                     .flex()
                     .flex_col()
                     .gap_4()
-                    .child(div().text_size(px(16.)).text_color(t.text).child("Agents & MCP"))
+                    .child(div().text_size(px(16.)).text_color(t.text).child("AI & Agents"))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("WEB AI COMPANION (NO API KEY)"))
+                    .child(card(web_card))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("DIRECT API & LOCAL MODELS (CLAUDE / OPENAI / OLLAMA)"))
+                    .child(card(api_card))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("LOCAL CODING AGENTS (MCP)"))
                     .child(card(mcp_card))
-                    .child(div().text_size(px(12.)).text_color(t.muted).child("CONNECTED AGENTS"))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("COPY SETUP FOR YOUR TOOL (RELAY CHANGES NO FILES)"))
+                    .child(card(setup_card))
+                    .child(div().text_size(px(11.)).text_color(t.muted).child("CONNECTED MCP CLIENTS"))
                     .child(card(client_card))
                     .into_any_element()
             }
@@ -2865,97 +3114,13 @@ impl RelayApp {
                 let sc_card = div()
                     .flex()
                     .flex_col()
-                    .child(row("Keyboard shortcuts", Some("Remap any command; hold ⌘ to see 1–9 tab badges"), shortcuts_btn));
+                    .child(row("Keyboard shortcuts", Some("Remap any command; hold ⌘ to see 1–9 tab badges; hover any button to see its shortcut"), shortcuts_btn));
                 div()
                     .flex()
                     .flex_col()
                     .gap_4()
                     .child(div().text_size(px(16.)).text_color(t.text).child("Shortcuts"))
                     .child(card(sc_card))
-                    .into_any_element()
-            }
-            SettingsTab::Ai => {
-                let field = |id: &'static str, label: &'static str, value: SharedString, focus: u8, hint: &'static str| {
-                    div()
-                        .id(id)
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .px_4()
-                        .py_3()
-                        .cursor_text()
-                        .when(self.ai_focus == focus, |d| d.bg(t.active))
-                        .on_click(cx.listener(move |app, _, _, cx| {
-                            app.ai_focus = focus;
-                            cx.notify();
-                        }))
-                        .child(div().flex().flex_col().gap_0p5().child(div().text_size(px(13.)).text_color(t.text).child(label)).child(div().text_size(px(10.)).text_color(t.muted).child(hint)))
-                        .child(div().max_w(px(360.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(11.)).font_family("Menlo").text_color(t.text).child(value))
-                };
-                let key_value = if !self.ai_key_draft.is_empty() {
-                    "•••••••• (press Return to save)".to_string()
-                } else if self.ai_has_key {
-                    "Stored in the login Keychain".to_string()
-                } else {
-                    "Not set".to_string()
-                };
-                let save_btn = btn("settings-ai-save", "Save".into(), false)
-                    .on_click(cx.listener(|app, _, _, cx| app.save_ai_settings(cx)))
-                    .into_any_element();
-                let ask_btn = btn("settings-ai-ask", "Ask about this page…".into(), false)
-                    .on_click(cx.listener(|app, _, _, cx| app.open_ai_chat(cx)))
-                    .into_any_element();
-                let presets = ["OpenAI", "Ollama", "LM Studio", "OpenRouter"];
-                let preset_rows = [(("https://api.openai.com/v1", "gpt-4o-mini")), (("http://localhost:11434/v1", "llama3.2")), (("http://localhost:1234/v1", "local-model")), (("https://openrouter.ai/api/v1", "openai/gpt-4o-mini"))];
-                let mut preset_bar = div().flex().items_center().gap_1().px_4().py_2();
-                for (label, (endpoint, model)) in presets.into_iter().zip(preset_rows) {
-                    let endpoint = endpoint.to_string();
-                    let model = model.to_string();
-                    preset_bar = preset_bar.child(
-                        div()
-                            .id(SharedString::from(format!("ai-preset-{label}")))
-                            .px_2()
-                            .py_1()
-                            .rounded(px(5.))
-                            .bg(t.well)
-                            .text_size(px(10.))
-                            .text_color(t.muted)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(t.hover).text_color(t.text))
-                            .on_click(cx.listener(move |app, _, _, cx| app.set_ai_preset(&endpoint, &model, cx)))
-                            .child(SharedString::from(label)),
-                    );
-                }
-                let context_sw = switch("settings-ai-context", self.ai_page_context, false)
-                    .on_click(cx.listener(|app, _, _, cx| {
-                        app.ai_page_context = !app.ai_page_context;
-                        if let Some(store) = &app.store {
-                            let _ = store.set_setting("ai_page_context", if app.ai_page_context { "on" } else { "off" });
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element();
-                let content = div()
-                    .flex()
-                    .flex_col()
-                    .child(preset_bar)
-                    .child(row("Send visible page text", Some("Context for answers; off sends only URL, title, and your question"), context_sw))
-                    .child(field("settings-ai-endpoint", "Endpoint", SharedString::from(self.ai_endpoint.clone()), 0, "OpenAI-compatible base URL"))
-                    .child(field("settings-ai-model", "Model", SharedString::from(self.ai_model.clone()), 1, "Model name sent to the endpoint"))
-                    .child(field("settings-ai-key", "API key", SharedString::from(key_value), 2, "Saved only in the macOS Keychain; never in settings or logs"))
-                    .child(div().flex().items_center().justify_end().gap_2().px_4().py_3().child(save_btn).child(ask_btn));
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .child(div().text_size(px(16.)).text_color(t.text).child("AI (OpenAI-compatible)"))
-                    .child(card(content))
-                    .child(div().text_size(px(11.)).text_color(t.muted).child(if self.ai_page_context {
-                        "Tab moves between fields, Return saves. Asking sends the current URL, title, up to 20,000 characters of visible page text, and your question."
-                    } else {
-                        "Tab moves between fields, Return saves. Asking sends only the URL, title, conversation, and your question."
-                    }))
                     .into_any_element()
             }
             SettingsTab::About => {
@@ -3026,9 +3191,10 @@ impl RelayApp {
                                 .child(
                                     div()
                                         .id("settings-close")
-                                        .px_2()
-                                        .py_0p5()
-                                        .rounded(px(4.))
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded(px(6.))
+                                        .bg(t.well)
                                         .text_size(px(11.))
                                         .text_color(t.muted)
                                         .cursor_pointer()
@@ -3037,7 +3203,7 @@ impl RelayApp {
                                             app.close_settings();
                                             cx.notify();
                                         }))
-                                        .child("Esc"),
+                                        .child("← Back  Esc"),
                                 ),
                         )
                         .child(div().id("settings-body").flex_1().overflow_y_scroll().px_6().pb_6().child(pane_content)),

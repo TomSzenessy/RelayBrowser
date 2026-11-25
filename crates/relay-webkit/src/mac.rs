@@ -13,9 +13,9 @@ use objc2::runtime::{AnyClass, AnyObject, Bool, NSObject, ProtocolObject, Sel};
 use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSApplication, NSBackingStoreType, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem, NSPanel, NSPasteboard,
-    NSPasteboardTypeString, NSModalResponseOK, NSPrintInfo, NSSavePanel, NSScreen, NSTextField, NSUserInterfaceItemIdentification, NSView,
-    NSWindowCollectionBehavior, NSWindowStyleMask, NSFloatingWindowLevel,
+    NSApplication, NSAutoresizingMaskOptions, NSBackingStoreType, NSBitmapImageFileType, NSBitmapImageRep, NSEvent, NSImage, NSMenu, NSMenuItem,
+    NSPanel, NSPasteboard, NSPasteboardTypeString, NSModalResponseOK, NSPrintInfo, NSSavePanel, NSScreen, NSTextField,
+    NSUserInterfaceItemIdentification, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSFloatingWindowLevel,
 };
 use objc2_app_kit::NSWorkspace;
 use objc2_media_player::{MPRemoteCommandCenter, MPRemoteCommandHandlerStatus};
@@ -1123,6 +1123,10 @@ fn make_menu_item(mtm: MainThreadMarker, title: &str, action: objc2::runtime::Se
 }
 
 pub struct WebTab {
+    /// Dedicated per-tab host container inside GPUI's shell view so WebKit's
+    /// native `_WKInspector` attaches inside the rounded browser card rather
+    /// than covering Relay's left and right sidebars.
+    pub container: Retained<NSView>,
     pub view: Retained<WKWebView>,
     handler: Retained<BridgeHandler>,
     login_handler: Retained<LoginHandler>,
@@ -1188,6 +1192,10 @@ pub struct Engine {
     corner_radius: f64,
     round_top_corners: bool,
     round_bottom_corners: bool,
+    /// Persistent docked Web AI companion view (Claude / ChatGPT / Gemini) shown
+    /// inside the Agent panel when the user chooses Web mode.
+    companion_view: Option<Retained<WKWebView>>,
+    companion_url: String,
 }
 
 impl Engine {
@@ -1227,10 +1235,12 @@ impl Engine {
             corner_radius: 10.0,
             round_top_corners: true,
             round_bottom_corners: true,
+            companion_view: None,
+            companion_url: String::new(),
         }
     }
 
-    /// Clip live tab `WKWebView`s to a continuous rounded corner radius matching
+    /// Clip live tab containers to a continuous rounded corner radius matching
     /// only the edges of the viewport that touch the outer rounded browser card.
     pub fn set_corner_style(&mut self, radius: f64, round_top: bool, round_bottom: bool) {
         let radius = radius.max(0.0);
@@ -1244,8 +1254,73 @@ impl Engine {
         self.round_top_corners = round_top;
         self.round_bottom_corners = round_bottom;
         for t in self.tabs.values() {
-            apply_corner_style(&t.view, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
+            apply_corner_style(&t.container, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
         }
+    }
+
+    /// Load or switch the docked Web AI companion view (e.g. `https://claude.ai`,
+    /// `https://chatgpt.com`, `https://gemini.google.com`) using the profile's
+    /// persistent website data store so logins survive across launches.
+    pub fn set_companion_url(&mut self, url: &str) {
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return;
+        }
+        if self.companion_view.is_some() && self.companion_url == url {
+            return;
+        }
+        self.companion_url = url.to_string();
+        if let Some(view) = &self.companion_view {
+            load(view, url);
+            return;
+        }
+        let mtm = self.mtm;
+        let config = unsafe { WKWebViewConfiguration::new(mtm) };
+        unsafe {
+            config.setApplicationNameForUserAgent(Some(&NSString::from_str(SAFARI_UA_SUFFIX)));
+            if let Some(store) = &self.profile_store {
+                config.setWebsiteDataStore(store);
+            }
+        }
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(320.0, 500.0));
+        let view = unsafe { WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config) };
+        apply_appearance(&view, self.appearance);
+        apply_corner_style(&view, 10.0, true, true);
+        unsafe {
+            view.setAllowsBackForwardNavigationGestures(true);
+        }
+        load(&view, url);
+        self.companion_view = Some(view);
+    }
+
+    /// Position or hide the docked Web AI companion view inside `parent`.
+    pub fn layout_companion(&self, rect: Option<NSRect>, parent: &NSView) {
+        let Some(view) = &self.companion_view else { return };
+        let Some(r) = rect else {
+            view.setHidden(true);
+            return;
+        };
+        let flipped = parent.isFlipped();
+        let height = parent.frame().size.height;
+        let y = if flipped { r.origin.y } else { height - r.origin.y - r.size.height };
+        if !r.origin.x.is_finite()
+            || !r.origin.y.is_finite()
+            || !r.size.width.is_finite()
+            || !r.size.height.is_finite()
+            || r.size.width < 1.0
+            || r.size.height < 1.0
+            || !y.is_finite()
+        {
+            view.setHidden(true);
+            return;
+        }
+        let frame = NSRect::new(NSPoint::new(r.origin.x, y), r.size);
+        let attached = unsafe { view.superview() }.is_some_and(|s| &*s == parent);
+        if !attached {
+            parent.addSubview(view);
+            apply_corner_style(view, 10.0, true, true);
+        }
+        view.setFrame(frame);
+        view.setHidden(false);
     }
 
     /// Remove cookies, cache, and local storage for every site. Used by
@@ -1439,6 +1514,9 @@ impl Engine {
         for t in self.tabs.values() {
             apply_appearance(&t.view, dark);
         }
+        if let Some(view) = &self.companion_view {
+            apply_appearance(view, dark);
+        }
     }
 
     pub fn extension_controller(&self) -> Option<&Retained<WKWebExtensionController>> {
@@ -1614,9 +1692,12 @@ impl Engine {
             }
         }
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0));
+        let container = NSView::initWithFrame(NSView::alloc(mtm), frame);
         let view = RelayWebView::new(mtm, frame, &config, last_interaction);
         apply_appearance(&view, self.appearance);
-        apply_corner_style(&view, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
+        view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
+        container.addSubview(&view);
+        apply_corner_style(&container, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
         unsafe {
             view.setInspectable(true); // Develop menu / Web Inspector fallback
             view.setAllowsBackForwardNavigationGestures(true);
@@ -1630,7 +1711,7 @@ impl Engine {
             }
         });
         self.uccs.borrow_mut().push(ucc.clone());
-        self.tabs.insert(tab, WebTab { view, handler, login_handler, ucc });
+        self.tabs.insert(tab, WebTab { container, view, handler, login_handler, ucc });
         &self.tabs[&tab].view
     }
 
@@ -1807,8 +1888,11 @@ impl Engine {
         }
     }
 
-    /// Place a tab's view inside `parent` at a rect given in top-left-origin
-    /// points (GPUI's coordinate space); hides every other tab's view.
+    /// Place each visible tab's container inside `parent` at a rect given in
+    /// top-left-origin points (GPUI's coordinate space); hides every other tab.
+    /// Because each tab's `WKWebView` lives inside `t.container`, WebKit's
+    /// native Web Inspector attaches inside the rounded browser card and never
+    /// covers Relay's left or right sidebars.
     pub fn show(&self, tabs: &[(TabId, NSRect)], parent: &NSView) {
         let flipped = parent.isFlipped();
         let height = parent.frame().size.height;
@@ -1819,7 +1903,7 @@ impl Engine {
                         if self.hub.lock().tab(*id).is_some_and(|t| !t.dom.is_empty()) {
                             self.warming.borrow_mut().remove(id);
                         } else {
-                            t.view.setHidden(true);
+                            t.container.setHidden(true);
                             continue;
                         }
                     }
@@ -1836,18 +1920,18 @@ impl Engine {
                         || r.size.height < 1.0
                         || !y.is_finite()
                     {
-                        t.view.setHidden(true);
+                        t.container.setHidden(true);
                         continue;
                     }
-                    let attached = unsafe { t.view.superview() }.is_some_and(|s| &*s == parent);
+                    let attached = unsafe { t.container.superview() }.is_some_and(|s| &*s == parent);
                     if !attached {
-                        parent.addSubview(&t.view);
-                        apply_corner_style(&t.view, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
+                        parent.addSubview(&t.container);
+                        apply_corner_style(&t.container, self.corner_radius, self.round_top_corners, self.round_bottom_corners);
                     }
-                    t.view.setFrame(frame);
-                    t.view.setHidden(false);
+                    t.container.setFrame(frame);
+                    t.container.setHidden(false);
                 }
-                None => t.view.setHidden(true),
+                None => t.container.setHidden(true),
             }
         }
         // A failed page has no bridge and therefore no DOM: hide WebKit's
@@ -1855,7 +1939,7 @@ impl Engine {
         for (id, t) in &self.tabs {
             let failed = self.hub.lock().tab(*id).is_some_and(|s| s.load_error.is_some() && s.dom.is_empty());
             if failed {
-                t.view.setHidden(true);
+                t.container.setHidden(true);
             }
         }
     }
@@ -2093,9 +2177,7 @@ impl Engine {
         unsafe { store.getAllCookies(&done) };
     }
 
-    /// Open WebKit's full Web Inspector for the 5% the native one skips.
-    /// Uses the private `_inspector` SPI when present; otherwise the user can
-    /// use Develop > Show Web Inspector (the view is inspectable).
+    /// Open WebKit's native Web Inspector inside the tab's rounded card container.
     pub fn open_web_inspector(&self, tab: TabId) {
         let Some(t) = self.tabs.get(&tab) else { return };
         let view: &AnyObject = t.view.as_ref();
@@ -2104,6 +2186,24 @@ impl Engine {
             let inspector: *mut AnyObject = unsafe { msg_send![view, _inspector] };
             if let Some(i) = unsafe { inspector.as_ref() } {
                 let _: () = unsafe { msg_send![i, show] };
+            }
+        }
+    }
+
+    /// Toggle WebKit's native Web Inspector open or closed inside the tab's card.
+    pub fn toggle_web_inspector(&self, tab: TabId) {
+        let Some(t) = self.tabs.get(&tab) else { return };
+        let view: &AnyObject = t.view.as_ref();
+        let responds: bool = unsafe { msg_send![view, respondsToSelector: sel!(_inspector)] };
+        if responds {
+            let inspector: *mut AnyObject = unsafe { msg_send![view, _inspector] };
+            if let Some(i) = unsafe { inspector.as_ref() } {
+                let visible: bool = unsafe { msg_send![i, isVisible] };
+                if visible {
+                    let _: () = unsafe { msg_send![i, close] };
+                } else {
+                    let _: () = unsafe { msg_send![i, show] };
+                }
             }
         }
     }
@@ -2125,7 +2225,7 @@ fn apply_appearance(view: &WKWebView, dark: Option<bool>) {
     view.setAppearance(appearance.as_deref());
 }
 
-fn apply_corner_style(view: &WKWebView, radius: f64, round_top: bool, round_bottom: bool) {
+fn apply_corner_style(view: &NSView, radius: f64, round_top: bool, round_bottom: bool) {
     let radius = radius.max(0.0);
     view.setWantsLayer(true);
     unsafe {
@@ -2155,6 +2255,14 @@ fn apply_corner_style(view: &WKWebView, radius: f64, round_top: bool, round_bott
 fn teardown(t: &WebTab) {
     let mtm = MainThreadMarker::from(&*t.view);
     let login_world = unsafe { WKContentWorld::worldWithName(&NSString::from_str(LOGIN_WORLD), mtm) };
+    let view_obj: &AnyObject = t.view.as_ref();
+    let has_insp: bool = unsafe { msg_send![view_obj, respondsToSelector: sel!(_inspector)] };
+    if has_insp {
+        let inspector: *mut AnyObject = unsafe { msg_send![view_obj, _inspector] };
+        if let Some(i) = unsafe { inspector.as_ref() } {
+            let _: () = unsafe { msg_send![i, close] };
+        }
+    }
     unsafe {
         t.ucc.removeScriptMessageHandlerForName(&NSString::from_str(HANDLER));
         t.ucc.removeScriptMessageHandlerForName_contentWorld(&NSString::from_str(LOGIN_HANDLER), &login_world);
@@ -2163,6 +2271,7 @@ fn teardown(t: &WebTab) {
         t.view.stopLoading();
     }
     t.view.removeFromSuperview();
+    t.container.removeFromSuperview();
     let _ = (&t.handler, &t.login_handler);
 }
 

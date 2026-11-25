@@ -11,23 +11,36 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  TABS  «   ╭────────────────────────────────────╮   Agent|Insp   │
-│  ● docs  × │      WKWebView (rounded card)      │   Status card  │
-│  ○ gh    × │                                    │   AI assistant │
-│  ── Agent  │  split: ⌘\ adds a second card pane │   MCP drawer   │
-│  ◆ shop  × │                                    │                │
-│            ╰────────────────────────────────────╯                │
+│  ⋮⋮ TABS  ◫  ╭────────────────────────────────────╮  ⋮⋮ Web|API|MCP ◨ │
+│  ● docs  ×  │      WKWebView (rounded card)      │  Claude|GPT|Gem   │
+│  ○ gh    ×  │                                    │  Web AI / API /   │
+│  ── Agent   │  ⌘⌥I docks native WebKit Inspector │  MCP controls     │
+│  ◆ shop  ×  │  cleanly inside this rounded card  │                   │
+│             ╰────────────────────────────────────╯                   │
 └──────────────────────────────────────────────────────────────────┘
         ⌘K palette floats centred over everything (560 pt wide)
 ```
 
-- **Layered shell & browser card:** the left tab strip and right Agent/Inspector
-  sidebar sit directly on a single unified shell canvas (tinted by the active
-  Space when styled) with no intersecting 1 px dividing borders. The center
-  browser viewport floats inside as an elevated, responsive rounded card (12 pt
-  radius with soft hairline definition and shadow; on macOS, embedded
-  `WKWebView` layers clip to continuous 10 pt squircle corners matching the
-  card, and split panes separate via a clean 6 pt shell gap).
+- **Layered shell & browser card:** the dockable Tab Strip and Agent panel sit
+  directly on a single unified shell canvas (tinted by the active Space when
+  styled) with no intersecting 1 px dividing borders. The center browser
+  viewport floats inside as an elevated, responsive rounded card (12 pt radius
+  with soft hairline definition and shadow; on macOS, each tab's `WKWebView`
+  lives inside a dedicated rounded container `NSView` clipped to continuous
+  10 pt squircle corners, and split panes separate via a clean 6 pt shell gap).
+- **Modular 4-edge docking & stacking:** both the Tab Strip and the Agent panel
+  can be dragged by their `⋮⋮` header grip to any window edge (**Left**,
+  **Right**, **Top**, or **Bottom**) — or dropped onto the upper/lower (or
+  left/right) half of an occupied edge to stack both panels one above another
+  or side-by-side. Placement and stack order persist in `tabs_position`,
+  `tabs_folded`, `agent_panel_edge`, and `dock_stack_order`.
+- **Consistent Apple-style sidebar icons & hotkey tooltips:** both the Tab
+  Strip and the Agent panel use matching geometric Apple sidebar toggle icons
+  (`sidebar.left` / `sidebar.right` / horizontal variants) anchored on their
+  own respective edges — when closed, each panel's reveal button sits in the
+  top shell strip on that panel's own side above the browser card. Hovering any
+  chrome button displays a crisp tooltip with its keyboard shortcut to gently
+  encourage keyboard-first workflows.
 - **Tab switching and closing:** Ctrl+Tab / Ctrl+Shift+Tab walk the current
   space in most-recently-used order by default, or in strip order when
   `tab_switch_order = strip` in Settings → Tabs; ⌘⌥T opens the visual switcher
@@ -41,7 +54,8 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   shell/bookmarks-bar tint (None, 6 AA-checked colours, 4 preset gradients, or
   a custom 2-colour gradient, persisted in `space_looks`).
 - **Tab strip:** a vertical list of title rows with site favicons, an optional
-  54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S`). Tabs can carry one named
+  54 pt icons-only rail, or the same rows in a horizontal strip (`⇧⌘S` cycles
+  Left → Top → Right → Bottom). Tabs can carry one named
   group: a subtly tinted heading with a colour dot, name, count, and collapse chevron; the
   tab menu moves a tab in or out and lets the user choose a curated WCAG AA group colour
   (or Default), right-clicking a group heading renames/recolours/merges the whole group,
@@ -49,21 +63,27 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   row under the pointer show `×` (a middle click closes too). The user's tabs
   come first, then an "Agent" group header with tinted rows for agent-owned
   tabs. Asleep tabs are dimmed. A tab waiting for a human shows ⚠. `⌘S` folds
-  the strip to a quiet floating chevron pill (and `» Tabs` when the status bar
-  is visible) that brings it back; the edge and folded state persist in
-  `tabs_position` and `tabs_folded`.
-- **AI & Agent sidebar:** the 340 px right sidebar has a pill-segmented
-  **Agent | Inspector** switcher and a `×` close button, toggled via the single
-  quiet `✦` icon in the tab strip (shown only when the sidebar is closed so
-  "Agent" is never duplicated), `⌘⇧A`, or `⌘⌥I`. **Agent** integrates live MCP
-  status (Pause/Resume, active site icon + access pill), clickable agent-owned
-  tabs (only when open), an inline side-by-side AI Page Assistant (OpenAI-compatible
-  endpoint/model with login Keychain API key, streaming/Stop, ten-turn history,
-  New/Copy/Summarize, and a **Send visible page text** opt-out), and a
-  collapsible **MCP & activity** widget card so you can browse and collaborate
-  with agents side-by-side without hiding the page. **Inspector** keeps the
-  monospace Elements/Network/Console/Cookies panels inside a matching rounded card.
-  The sidebar works horizontally at every tab-strip placement (Left, Top, Right).
+  the strip to a quiet corner sidebar toggle icon on its own edge.
+- **Dockable Agent panel (`⌘⇧A`):** a modular panel with three clean modes
+  persisted in `agent_mode`:
+  - **Web** (default, no API key needed): hosts a persistent `WKWebView` for
+    **Claude** (`claude.ai`), **ChatGPT** (`chatgpt.com`), or **Gemini**
+    (`gemini.google.com`) using the user's existing login, with one-click
+    **Copy Page** (`⌘⇧M` Markdown) and **Open in Tab (`↗`)**.
+  - **API**: native side-by-side streaming chat supporting **Anthropic Claude**
+    (`/v1/messages` + `x-api-key`), **OpenAI**, **OpenRouter**, **Ollama**, and
+    **LM Studio** with a Keychain API key, ten-turn history, Stop, New/Copy/Summarize,
+    and a **Send visible page text** opt-out.
+  - **MCP**: live local MCP status (Pause/Resume `⌘⇧.`, active site favicon +
+    policy cycle `⌘⇧P`), clickable agent-owned tabs, connected MCP clients with
+    Grant/Revoke shell permissions, recent audit rows, and a direct link to the
+    3-step MCP setup guide.
+- **Native WebKit Web Inspector (`⌘⌥I` or right-click → Inspect Element):**
+  replaces the old monospace custom inspector. Because each tab's `WKWebView`
+  sits inside its own container `NSView`, Apple's full WebKit Web Inspector
+  docks seamlessly inside the rounded browser card without hiding or colliding
+  with Relay's sidebars. Local MCP agents continue to inspect DOM, network,
+  console, cookies, and screenshots directly through `relay-bridge`.
 - **Status bar placement:** `status_bar_position` (Settings → Appearance or
   `⌘⌥B`) places the compact 24 pt status bar cleanly inside the browser card's
   **Top** or **Bottom** edge, or **Hidden** (default, so pages get full height;
@@ -78,8 +98,6 @@ the chrome is quiet, and every action is a shortcut or a ⌘K entry.
   The query is a real text input: GPUI's platform handler supplies IME
   composition, marked text is underlined, and the candidate window follows the
   shaped line.
-- **Inspector:** a tab strip of four panels over monospace rows. Hovering an
-  Elements row highlights the node in the page.
 - **Agent stop:** while an agent is paused, a tinted banner inside the browser
   card says page automation is stopped and offers Resume. The state lives in the
   shared hub, so every MCP tool fails fast before touching a page.
@@ -193,13 +211,16 @@ Appearance is System (follow macOS), Light, or Dark; the accent is Blue
 accent's light/dark pair, checks every accent at ≥ 3:1 against `surface`, and
 pairs every accent fill with WCAG AA `on_accent` foreground text (≥ 4.5:1).
 Settings → Appearance changes it live and stores `theme`/`accent`. The
-Settings rail has eleven pages: General, Appearance, Tabs, Browsing, Passwords,
-Privacy, Extensions, Agents & MCP, Shortcuts, AI, and About. Every row is a surface on
-the background, not a boxed cell; only the groups' spacing separates them.
+Settings rail has ten pages: General, Appearance, Tabs, Browsing, Passwords,
+Privacy, Extensions, AI & Agents, Shortcuts, and About. Every modal overlay
+includes an explicit `← Back  Esc` control so no view is ever a dead end.
+Settings → Passwords includes a clickable **Import CSV…** importer for Chrome's
+exported passwords and notes the Apple Developer ID passkey gate. Every row is
+a surface on the background, not a boxed cell; only the groups' spacing separates them.
 Tabs also offers site-icon/letter badges, compact rows, a bookmarks bar, and
 always-visible close buttons.
 
-Type: system UI font at 13 pt for chrome and 12 pt monospace for the Inspector.
+Type: system UI font at 13 pt for chrome and 11–12 pt monospace for paths, keys, and shortcuts.
 Corner radii follow a layered scale (12 pt browser card, 10 pt widget cards and
 `WKWebView` continuous corners, 6–8 pt controls) on a 4 pt grid. Motion is 150 ms,
 and is none under Reduce Motion. Visual layers carry the hierarchy: unified

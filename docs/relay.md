@@ -726,14 +726,27 @@ at most one icon per host, caches it in memory and 0600 files under
 start-page rows. Starts with no icon get the deterministic dot/empty fallback;
 a failed fetch is not retried for that host this session.
 
-## Agent and Inspector sidebar
+## Dockable Agent panel and native WebKit Web Inspector
 
-`⌥⌘I` toggles a 380 px right sidebar; × collapses it and returns focus to the
-page. Its **Agent** tab shows MCP on/off, the socket, paused/accepting state,
-the active site's policy, Pause/Resume, Cycle site access, and a click-to-copy
-setup command. The **Inspector** tab keeps the Elements/Network/Console/
-Cookies panels and their filters. The sidebar sits beside the content at every
-tab-strip placement (top/left/right) and does not cover native views.
+`⌘⇧A` toggles the dockable Agent panel (`Web` | `API` | `MCP`), which uses a
+matching Apple-style sidebar toggle icon on its own edge and can be dragged by
+its `⋮⋮` handle to Left, Right, Top, or Bottom — or stacked with the Tab Strip
+on any occupied edge (`agent_panel_edge`, `tabs_position`, `dock_stack_order`).
+- **Web** hosts a persistent `WKWebView` (`companion_view`) for Claude, ChatGPT,
+  or Gemini using the user's browser session (no API key), plus one-click
+  **Copy Page** (`⌘⇧M` Markdown) and **Open in Tab (`↗`)**.
+- **API** streams side-by-side answers from Anthropic Claude (`/v1/messages` +
+  `x-api-key`) or OpenAI-compatible endpoints (OpenAI, OpenRouter, Ollama, LM
+  Studio) using a macOS Keychain key.
+- **MCP** shows live server status, Pause/Resume, active site favicon + policy
+  cycling, agent tabs, per-client shell Grant/Revoke, recent audit rows, and a
+  link to the unified **Settings → AI & Agents** 3-step setup guide.
+
+`⌘⌥I` (or right-click → **Inspect Element**) toggles Apple's native WebKit Web
+Inspector docked inside each tab's dedicated rounded `container` `NSView`, so
+the Inspector stays cleanly inside the browser card without covering Relay's
+sidebars. Local MCP agents continue to read DOM, network, console, cookies, and
+screenshots directly from `relay-bridge`'s `SharedHub`.
 
 ## Keyboard shortcuts
 

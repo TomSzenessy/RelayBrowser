@@ -5,19 +5,20 @@
 //! settings encoding are pure data so they can be tested off-Mac; `app.rs`
 //! only paints them.
 
-/// The three edges a vertical or horizontal strip may occupy.
+/// The four edges a docked panel or tab strip may occupy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Placement {
     #[default]
     Left,
     Top,
     Right,
+    Bottom,
 }
 
 impl Placement {
-    pub const ALL: [Placement; 3] = [Placement::Left, Placement::Top, Placement::Right];
+    pub const ALL: [Placement; 4] = [Placement::Left, Placement::Top, Placement::Right, Placement::Bottom];
 
-    /// `⌘⇧S` order: left, top, right, and back to left.
+    /// `⌘⇧S` order: left, top, right, bottom, and back to left.
     pub fn next(self) -> Self {
         let index = Self::ALL.iter().position(|p| *p == self).unwrap_or(0);
         Self::ALL[(index + 1) % Self::ALL.len()]
@@ -28,6 +29,7 @@ impl Placement {
             Placement::Left => "left",
             Placement::Top => "top",
             Placement::Right => "right",
+            Placement::Bottom => "bottom",
         }
     }
 
@@ -36,6 +38,7 @@ impl Placement {
             Placement::Left => "Left",
             Placement::Top => "Top",
             Placement::Right => "Right",
+            Placement::Bottom => "Bottom",
         }
     }
 
@@ -46,12 +49,13 @@ impl Placement {
             "left" => Some(Placement::Left),
             "top" => Some(Placement::Top),
             "right" => Some(Placement::Right),
+            "bottom" => Some(Placement::Bottom),
             _ => None,
         }
     }
 
     pub fn is_vertical(self) -> bool {
-        self != Placement::Top
+        matches!(self, Placement::Left | Placement::Right)
     }
 }
 
@@ -120,15 +124,15 @@ mod tests {
     fn rotation_visits_every_edge_and_returns() {
         let mut p = Placement::Left;
         let mut seen = vec![p];
-        for _ in 0..2 {
+        for _ in 0..3 {
             p = p.next();
             seen.push(p);
         }
-        assert_eq!(seen, vec![Placement::Left, Placement::Top, Placement::Right]);
+        assert_eq!(seen, vec![Placement::Left, Placement::Top, Placement::Right, Placement::Bottom]);
         assert_eq!(p.next(), Placement::Left);
         for p in Placement::ALL {
             assert_eq!(Placement::parse(p.as_str()), Some(p));
-            assert_eq!(p.is_vertical(), p != Placement::Top);
+            assert_eq!(p.is_vertical(), matches!(p, Placement::Left | Placement::Right));
         }
     }
 
